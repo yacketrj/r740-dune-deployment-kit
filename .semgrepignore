@@ -1,0 +1,6 @@
+# Generated/CI artifacts - never expected in a clean checkout, excluded
+# defensively.
+.security-reports/
+
+# Third-party / vendored content, if any is ever added under this path.
+vendor/

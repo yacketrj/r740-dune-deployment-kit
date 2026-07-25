@@ -1,0 +1,20 @@
+# Gitleaks configuration for r740-dune-deployment-kit
+#
+# This repo contains infrastructure deployment scripts/docs for self-hosting
+# Dune: Awakening. It intentionally documents example/placeholder values
+# (RFC1918 private IPs, example VLAN subnets) which are NOT secrets and
+# should never trigger findings. Real secrets (Funcom tokens, DB passwords,
+# SSH keys, API tokens) must NEVER be committed here - see .gitignore and
+# docs/00-START-HERE.md's handling notes for how secrets are meant to be
+# generated/stored (password manager, .env files that are gitignored) rather
+# than checked into this repo.
+
+[allowlist]
+  description = "Documentation placeholder values - not real secrets"
+  regexes = [
+    # Example/placeholder subnets used throughout docs/02-network-setup.md
+    '''192\.168\.(10|20|21|30)\.\d{1,3}''',
+  ]
+  paths = [
+    '''docs/.*\.md$''',
+  ]

@@ -1,0 +1,35 @@
+# Secrets - should never exist in this repo, ignored defensively
+.env
+*.env
+!*.env.example
+*.token
+*.key
+!scripts/*.key
+secrets/
+runtime/secrets/
+
+# Backups - real backup files should never be committed here; this repo
+# ships scripts that PRODUCE/STAGE backups elsewhere, not the backups
+# themselves
+*.backup
+*.backup.yaml
+*.dump
+*.sql
+
+# Security tooling output
+.security-reports/
+.cache_ggshield/
+gitleaks-report.json
+
+# Editor/OS noise
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Local test/scratch artifacts
+/tmp/
+*.log
+
+# Node (in case pre-commit or other tooling ever adds a package.json here)
+node_modules/

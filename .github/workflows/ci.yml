@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck all scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck -S warning scripts/*.sh tests/*.sh
+
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n syntax check
+        run: |
+          for f in scripts/*.sh tests/*.sh; do
+            echo "Checking $f"
+            bash -n "$f"
+          done
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  personal-identifier-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block known personal IPs/hostnames
+        run: bash tests/no-personal-identifiers.sh
+
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for broken relative links in docs
+        run: |
+          fail=0
+          for f in docs/*.md README.md; do
+            [ -f "$f" ] || continue
+            grep -oE '\]\((scripts|docs)/[^)]+\)' "$f" | sed -E 's/\]\(//; s/\)$//' | while read -r ref; do
+              if [ ! -f "$ref" ]; then
+                echo "BROKEN LINK in $f: $ref"
+                fail=1
+              fi
+            done
+          done
+          exit "$fail"
+
+  ci-gate:
+    if: ${{ always() }}
+    needs:
+      - shellcheck
+      - bash-syntax
+      - gitleaks
+      - personal-identifier-guard
+      - markdown-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every check to pass
+        env:
+          SHELLCHECK: ${{ needs.shellcheck.result }}
+          BASH_SYNTAX: ${{ needs.bash-syntax.result }}
+          GITLEAKS: ${{ needs.gitleaks.result }}
+          PERSONAL_GUARD: ${{ needs.personal-identifier-guard.result }}
+          MARKDOWN_LINT: ${{ needs.markdown-lint.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for result in "$SHELLCHECK" "$BASH_SYNTAX" "$GITLEAKS" "$PERSONAL_GUARD" "$MARKDOWN_LINT"; do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more required checks did not pass."
+            exit 1
+          fi
+          echo "All required checks passed."

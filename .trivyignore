@@ -1,0 +1,4 @@
+# No suppressions defined. If Trivy flags a finding in this repo, fix it
+# rather than suppressing it - this repo is meant to become a public
+# community guide, and every finding should be resolved, not hidden, before
+# that happens.

@@ -1,0 +1,19 @@
+# GitGuardian Shield configuration
+# See: https://docs.gitguardian.com/ggshield-docs/reference/config
+
+# Ignore known test/cache/report artifacts - none of these should exist in
+# a clean checkout of this repo, but excluded defensively in case local
+# tooling ever generates them here.
+paths-ignore:
+  - "**/.cache_ggshield/**"
+  - "**/.security-reports/**"
+  - "**/node_modules/**"
+  - "**/.git/**"
+
+# This repo should never contain real Funcom tokens, DB passwords, SSH
+# private keys, or cloud provider credentials. No matches-ignore entries
+# are defined by design - if ggshield flags something here, treat it as a
+# real finding and remove/rotate it, do not add an allowlist entry to
+# suppress it without first confirming it is genuinely a documentation
+# placeholder (see .gitleaks.toml for the one class of accepted placeholder
+# value: example RFC1918 subnets in docs/).
