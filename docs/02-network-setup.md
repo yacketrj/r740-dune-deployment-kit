@@ -39,24 +39,45 @@ subnet as-is and just add VLANs 20/21/30 as the new ones — the exact Trusted
 subnet doesn't matter, what matters is that Prod/Dev/Mgmt are separate
 VLANs from it and from each other.
 
-## Step 2: Assign Physical Ports
+## Step 2: Proxmox Bridge Configuration (DO THIS FIRST)
 
-Under **Settings → Networks → Port Manager** (or per-port config on the
-UCG-Fiber's switch ports):
+Before cabling, configure the Proxmox bridge as **VLAN-aware** so VM
+network interfaces with `tag=` actually receive the correct VLAN:
 
-- Pick one LAN port and tag it for VLAN 20 (Prod) — this is where the R740's
-  first NIC port connects
-- Pick another LAN port and tag it for VLAN 21 (Dev) — R740's second NIC port
-- Pick another and tag it for VLAN 30 (Mgmt) — R740's third NIC port (or
-  iDRAC's dedicated port, if your R740 has a separate iDRAC NIC — check
-  the back of the chassis; if iDRAC has its own port, use that for VLAN 30
-  instead of consuming a 4th data NIC port for it)
-- Leave remaining ports on the default Trusted-LAN VLAN for your existing
-  devices
+```bash
+# On the Proxmox host, edit /etc/network/interfaces
+# Add bridge-vlan-aware yes to vmbr0:
+auto vmbr0
+iface vmbr0 inet manual
+    bridge-ports eno1
+    bridge-stp off
+    bridge-fd 0
+    bridge-vlan-aware yes
+    bridge-vids 10 20 21 30
+# After editing, apply:
+ifreload -a
+```
 
-This uses 3 of the R740's 4 onboard RJ45 ports (Prod, Dev, Mgmt), leaving
-1 spare — fine for now, gives you headroom for a future LACP bond or a
-second Mgmt path later if you want it.
+**Without this setting, VLAN tags on VM network interfaces are silently
+ignored and both VMs fall onto the same untagged broadcast domain —
+breaking the entire inter-VLAN security model with no visible symptom.**
+
+## Step 3: Assign the UCG-Fiber Port as a Trunk
+
+Use a single LAN port on the UCG-Fiber configured as a **trunk port**
+carrying all four VLANs tagged:
+
+- Pick one UCG-Fiber LAN port and set it to carry VLANs 10, 20, 21, 30
+  tagged (802.1Q trunk)
+- Connect the R740's vmbr0 physical port (eno1 or equivalent) to this
+  UCG-Fiber trunk port
+- The remaining three R740 NIC ports are free for future LACP bonding,
+  a dedicated management path, or a failover link
+
+**Important:** This is a trunk-port topology — one cable, multiple tagged
+VLANs. Do NOT configure three separate access ports. The VM NIC config
+uses `tag=20` and `tag=21` which emit 802.1Q-tagged frames. An access
+port would drop them.
 
 ## Step 3: Firewall Rules — Inter-VLAN Isolation
 

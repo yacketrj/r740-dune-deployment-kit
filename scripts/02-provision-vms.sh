@@ -16,15 +16,16 @@
 #           - Ubuntu Server 24.04 LTS ISO uploaded to Proxmox local storage
 #             (Datacenter -> local storage -> ISO Images -> Upload)
 #
-# SIZING RATIONALE (see project conversation history for full derivation):
-#   dune-prod: ~80GB RAM, 24 vCPU, pinned to physical socket 0
-#              (2x Sietch @16GB + 2x DeepDesert @16GB + Overmap @2GB +
-#               support stack ~5GB = ~71GB measured/configured baseline,
-#               rounded up with headroom given real measured CPU hunger)
-#   dune-dev:  ~40GB RAM, 10 vCPU, pinned to physical socket 1
-#              (1x Sietch @16GB + dynamic DD @16GB peak + Overmap @2GB +
-#               support ~5GB, sized for peak not idle since Proxmox VM RAM
-#               is a hard allocation, not a live cgroup negotiation)
+# SIZING RATIONALE (2026-08-07 revision — 2x Sietch @40p + 4x DD + dynamics):
+#   dune-prod: 152 GB RAM, 40 vCPU, pinned to physical socket 0 (all 20 cores)
+#              Always-on baseline: 2 Sietch @16GB (32) + 4 DD @16GB (64) +
+#              Overmap 3GB + Arrakeen+Harko always-on 6GB + support+bot 6GB = 111 GB
+#              Dynamic peak: ~30 GB (10 concurrent dungeons/overlands @ 3 GB)
+#              CPU peak: ~52 vCPU (2 Sietch @40p loaded + 4 DD + 10 dynamic maps)
+#              Headroom: 11 GB / CPU oversubscription safe (Proxmox scheduler)
+#   dune-dev:  50 GB RAM, 20 vCPU, pinned to physical socket 1 (cores 20-29)
+#              1 Sietch @16GB + 1 DD peak @16GB + Overmap 3GB + support 5GB
+#              + dynamic peak 10GB = 50 GB (tight but dev-only, no SLA)
 #
 # USAGE: bash 02-provision-vms.sh
 # =============================================================================
@@ -39,17 +40,17 @@ PROD_VMID=101
 PROD_NAME="dune-prod"
 PROD_BRIDGE="vmbr0"          # bridge carrying VLAN 20 - adjust to your bridge name
 PROD_VLAN=20
-PROD_MEM=81920               # 80GB in MiB
-PROD_CORES=24
-PROD_DISK_GB=250
+PROD_MEM=155648              # 152 GB in MiB (2 Sietch @ 16 GB + 4 DD @ 16 GB + Overmap 3 GB + hubs 6 GB + support 5 GB + dynamic peak 30 GB + 11 GB buffer)
+PROD_CORES=40
+PROD_DISK_GB=300
 
 DEV_VMID=102
 DEV_NAME="dune-dev"
 DEV_BRIDGE="vmbr0"           # bridge carrying VLAN 21 - adjust to your bridge name
 DEV_VLAN=21
-DEV_MEM=40960                # 40GB in MiB
-DEV_CORES=10
-DEV_DISK_GB=250
+DEV_MEM=51200                # 50 GB in MiB (1 Sietch @ 16 GB + DD peak 16 GB + Overmap 3 GB + support 5 GB + dynamic 10 GB)
+DEV_CORES=20
+DEV_DISK_GB=300
 
 echo "=== Provisioning dune-prod (VMID $PROD_VMID) ==="
 
@@ -85,7 +86,7 @@ echo
 # 20 cores/socket), doubled for hyperthreads by the kernel's own scheduling
 # (we pin at the core level, not the thread level, and let Proxmox/KVM manage
 # thread affinity within that set).
-echo "Pinning dune-prod to physical socket 0..."
+echo "Pinning dune-prod to physical socket 0 (all 20 cores, 40 threads)..."
 qm set "$PROD_VMID" --affinity 0-19
 echo
 
@@ -110,12 +111,12 @@ qm create "$DEV_VMID" \
 echo "dune-dev VM shell created."
 echo
 
-echo "Pinning dune-dev to physical socket 1..."
+echo "Pinning dune-dev to physical socket 1 (half: cores 20-29, 20 threads)..."
 echo "NOTE: if your R740 reports fewer than 40 total physical cores visible"
 echo "here (e.g. NUMA node boundaries differ from this assumption), check"
 echo "'lscpu | grep -E \"Socket|NUMA\"' and adjust the affinity range below"
 echo "manually before/after this script runs."
-qm set "$DEV_VMID" --affinity 20-39
+qm set "$DEV_VMID" --affinity 20-29
 
 echo
 echo "=== Both VM shells created ==="

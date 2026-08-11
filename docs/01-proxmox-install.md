@@ -30,8 +30,23 @@ You need an 8GB+ USB flash drive.
 2. Open Rufus, select the USB drive under "Device"
 3. Click "SELECT" and choose the Proxmox ISO you downloaded
 4. Leave partition scheme as default (GPT for UEFI systems, which the R740 is)
-5. Click "START", accept the "write in ISO mode" prompt if asked
-6. Wait for it to finish (~5-10 minutes)
+5. Click "START". If Rufus asks about downloading a different version of
+   Syslinux/GRUB, click **No**.
+6. Rufus will then ask you to choose between **ISO Image mode** and **DD
+   Image mode** — you **must select DD Image mode**, not ISO mode. The
+   Proxmox VE ISO is a hybrid ISO/IMG image with its own embedded GPT
+   partition table; Rufus's ISO mode rebuilds the filesystem from scratch
+   and destroys that embedded boot structure, which reliably produces a
+   **"Boot failed"** error on UEFI/GPT systems like the R740. This is
+   confirmed in Proxmox's own installation-media documentation
+   (`pve.proxmox.com/wiki/Prepare_Installation_Media`). DD mode does a raw
+   sector copy instead, preserving the image exactly as Proxmox built it.
+7. Wait for it to finish (~5-10 minutes)
+
+**Alternative (simpler, no mode prompt to get wrong)**: use
+[Etcher](https://etcher.io) instead of Rufus — it always does a raw
+sector-level write with no ISO/DD mode choice, so this specific mistake
+isn't possible.
 
 **On Linux/Mac**, use `dd` from a terminal (replace `/dev/sdX` with your
 actual USB device — find it with `lsblk` or `diskutil list`, and BE CAREFUL,

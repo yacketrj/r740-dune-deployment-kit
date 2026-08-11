@@ -24,6 +24,12 @@ cd "$DUNE_DOCKER_DIR"
 
 STAGING_DIR="/tmp/opencode/dune-migration-final"
 mkdir -p "$STAGING_DIR"
+# Restrict access: the backup contains the live game database -- other
+# local users on a shared VM must not be able to read it.  /tmp is
+# typically 1777 and new files default to 0644, so a chmod 700 on the
+# directory + 600 on each staged file is defense in depth, not just
+# convention.
+chmod 700 "$STAGING_DIR"
 
 echo "=== Final Pre-Migration Backup ==="
 echo
@@ -63,6 +69,8 @@ sha256sum "$LATEST_BACKUP" > "$STAGING_DIR/$(basename "$LATEST_BACKUP").sha256"
 
 grep -v -i "token\|password\|secret" .env > "$STAGING_DIR/env-reference-redacted.txt"
 cp runtime/addons/state.json "$STAGING_DIR/addon-state-reference.json" 2>/dev/null || true
+
+chmod 600 "$STAGING_DIR"/*
 
 echo
 echo "=== Staged files ready for transfer ==="
