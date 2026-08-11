@@ -26,6 +26,15 @@ deliberately ordered to avoid touching anything already working
 lowest-risk step. Read through once before starting so you know where
 the safe stopping points are if you need to pause partway through.
 
+**Status on this deployment (2026-08-11):** Step 1 (VLAN creation) has
+been completed and independently verified via the UniFi Integration
+API — Prod, Dev, and Mgmt networks exist on the live gateway. The
+existing Default/Trusted-LAN network was confirmed already correctly
+configured and was left untouched. Step 3's target port was identified
+(port 3 on the UCG-Max, confirmed via live port-state change when the
+R740's data NIC was connected) but the trunk-port profile itself had
+not yet been applied as of this note. Steps 4 onward not yet started.
+
 ## Initial Setup
 
 1. Connect the UCG-Max's WAN port (the 2.5GbE RJ45 port labeled/default
@@ -42,32 +51,42 @@ the safe stopping points are if you need to pause partway through.
 it already has an AP mesh and household devices behind it), Initial
 Setup is already done. Skip straight to Step 1.
 
-## Step 1: Create the 4 VLANs
+## Step 1: Create 3 New VLANs (Trusted-LAN Likely Already Exists)
 
-Go to **Settings → Networks → Create New Network** for each of the
-following. For each network, set "Network Purpose" to a **Corporate/Standard**
-network (not Guest — Guest networks have extra client-isolation restrictions
-you don't need here, and add complexity to inter-VM communication if you
-ever want it).
+**Check first whether "Trusted-LAN" already exists before creating
+anything.** Every UniFi gateway ships with a built-in **"Default"**
+network (`Settings → Networks`), pre-configured as VLAN 1, that serves
+as the out-of-box LAN — if this gateway has ever been set up at all
+(true here — it already has a mesh and household devices behind it),
+this Default network almost certainly **is** your Trusted-LAN already,
+serving whatever subnet your existing devices are already using (e.g.
+`192.168.68.0/24`). Confirmed directly against a live UCG-Max via its
+Integration API during this project: the existing "Default" network
+was already VLAN 1 at `192.168.68.0/24`, already serving every existing
+device including iDRAC — no separate "Trusted-LAN" network needed to
+be created at all.
+
+**Do not delete, rename, or renumber the existing Default network** to
+force it to match the VLAN ID "10" used as a placeholder below —
+renumbering an existing network modifies something every current
+device depends on (forces a DHCP-lease renewal across the household)
+for purely cosmetic benefit. Just use Default/VLAN 1 (or whatever your
+actual existing gateway assigned) as "Trusted-LAN" in Step 4's firewall
+zone policies — the specific VLAN ID doesn't matter, only that it's
+distinct from Prod/Dev/Mgmt below, which it already is.
+
+**Create only these 3 new networks.** Go to **Settings → Networks →
+Create New Network** for each. For each network, set "Network Purpose"
+to a **Corporate/Standard** network (not Guest — Guest networks have
+extra client-isolation restrictions you don't need here, and add
+complexity to inter-VM communication if you ever want it).
 
 | Name | VLAN ID | Subnet | Purpose |
 |---|---|---|---|
-| Trusted-LAN | 10 | **your existing subnet** (e.g. `192.168.68.0/22`) | Your existing devices, PC, phones, AP mesh |
+| *(existing) Default* | *(whatever it already is, e.g. 1)* | *(your existing subnet, e.g.* `192.168.68.0/24`*)* | Your existing devices, PC, phones, AP mesh — **do not recreate, already exists** |
 | Prod | 20 | 192.168.20.0/24 | dune-prod VM |
 | Dev | 21 | 192.168.21.0/24 | dune-dev VM |
 | Mgmt | 30 | 192.168.30.0/24 | Proxmox host, iDRAC |
-
-**Keep Trusted-LAN on whatever subnet your existing devices are already
-using** (e.g. `192.168.68.0/22`, seen on this network) rather than
-renumbering to match a fresh `192.168.10.0/24` — as long as it doesn't
-overlap Prod/Dev/Mgmt above (a `/22` at `.68.0` spans `.68.0`–`.71.255`,
-which doesn't), there's no reason to change it. Renumbering would force
-every existing device (mesh APs, phones, laptops — anything with a
-current DHCP lease or static reservation) to drop and renew on the new
-range, a brief but real disruption for the whole household with no
-actual benefit — the VLAN *ID* (10) and the fact that it's a distinct
-VLAN from Prod/Dev/Mgmt is what provides the isolation this design
-needs, not the specific subnet number.
 
 **This is unrelated to ongoing connectivity issues, if you have any.**
 If devices are dropping or reconnecting unpredictably independent of
@@ -136,7 +155,8 @@ UniFi Network version) to:
 
 - **Native/Untagged Network**: leave unset, or set to none — this port
   should carry no untagged traffic
-- **Tagged Networks**: select all four — Trusted-LAN (10), Prod (20),
+- **Tagged Networks**: select all four — the existing Default/Trusted-LAN
+  network (whatever VLAN ID it already has, e.g. 1), Prod (20),
   Dev (21), Mgmt (30)
 
 This makes the port an 802.1Q trunk carrying all four VLANs tagged.
