@@ -29,8 +29,8 @@ On each VM:
 grep ADMIN_BIND_HOST .env
 ```
 Should be `127.0.0.1` or a private VLAN IP, never `0.0.0.0` exposed with a
-WAN port-forward pointed at it. Cross-check against your UCG-Fiber port
-forward list (`docs/02-network-setup.md` Step 4) — there should be **no**
+WAN port-forward pointed at it. Cross-check against your UCG-Max port
+forward list (`docs/02-network-setup.md` Step 5) — there should be **no**
 forward rule for port 8088 on either VM, period.
 
 ## 3. Cloudflare Tunnel / Access for remote console access
@@ -51,7 +51,7 @@ had no additional access gate in front of it (bare hostname → :8088). Add
    independent layer, not a replacement for the console's own auth
 
 Alternatively, skip the public hostname entirely and only reach the console
-via the UniFi Teleport/WireGuard VPN set up in `02-network-setup.md` Step 5
+via the UniFi Teleport/WireGuard VPN set up in `02-network-setup.md` Step 6
 — simpler, one less moving part, and arguably better given the console
 mounts the Docker socket (see item 5 below).
 
@@ -95,15 +95,15 @@ From the `dune-dev` VM, try to reach `dune-prod`'s IP and vice versa:
 ping -c 3 <dune-prod-ip>      # should fail/timeout
 curl -m 5 http://<dune-prod-ip>:8088   # should fail/timeout
 ```
-If either succeeds, go back to `02-network-setup.md` Step 3 and fix the
-inter-VLAN block rules before going further — this is the isolation that
-contains blast radius if one VM is ever compromised.
+If either succeeds, go back to `02-network-setup.md` Step 4 and fix the
+inter-VLAN firewall zone policies before going further — this is the
+isolation that contains blast radius if one VM is ever compromised.
 
 ## 8. Confirm iDRAC/Proxmox management plane has no WAN route
 
 From outside your network entirely (phone on cellular), confirm you
 **cannot** reach the Proxmox web UI or iDRAC directly — only via the VPN set
-up in `02-network-setup.md` Step 5. This is your hypervisor-level admin
+up in `02-network-setup.md` Step 6. This is your hypervisor-level admin
 plane; it should never be internet-facing under any circumstance.
 
 ## 9. Rotate the Funcom tokens' file permissions
