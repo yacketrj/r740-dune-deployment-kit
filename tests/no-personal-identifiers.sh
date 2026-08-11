@@ -36,15 +36,22 @@ echo "== Personal identifier guard =="
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
   DIFF_CONTENT="$(git diff --cached -U0 2>/dev/null || true)"
-  if [ -n "${CI:-}" ] || [ -z "$DIFF_CONTENT" ]; then
-    # In CI or when there are no staged changes (e.g. CI always has
-    # zero staged changes but a populated working tree): scan the
-    # entire working tree, not just staged content. Otherwise a CI
-    # job that runs this script would silently pass because it scans
-    # empty $DIFF_CONTENT — a false negative.
-    SCAN_TARGET="tree"
-  else
+  if [ -n "$DIFF_CONTENT" ]; then
     SCAN_TARGET="staged"
+  elif [ -n "${CI:-}" ]; then
+    # In CI, scan only the PR diff — not the full tree.  Committed
+    # docs legitimately reference real deployment values (IPs, domain
+    # names).  A full-tree scan would always fail on those existing
+    # commits, which is not useful.  We want to catch NEW introductions
+    # in the PR, just like the pre-commit hook does locally.
+    BASE="${GITHUB_BASE_REF:-main}"
+    git fetch origin "$BASE" --depth=1 2>/dev/null || true
+    DIFF_CONTENT="$(git diff "origin/$BASE...HEAD" -U0 2>/dev/null || true)"
+    SCAN_TARGET="ci-diff"
+  else
+    # Not CI, no staged changes: scan the full working tree (e.g.
+    # run manually outside a git-workflow context).
+    SCAN_TARGET="tree"
   fi
 else
   SCAN_TARGET="tree"
@@ -52,13 +59,13 @@ fi
 
 found=0
 for pattern in "${DENYLIST[@]}"; do
-  if [ "$SCAN_TARGET" = "staged" ]; then
+  if [ "$SCAN_TARGET" = "staged" ] || [ "$SCAN_TARGET" = "ci-diff" ]; then
     if printf '%s' "$DIFF_CONTENT" | grep -qE "$pattern"; then
-      echo "BLOCKED: staged changes contain a known personal identifier matching: $pattern"
+      echo "BLOCKED: $SCAN_TARGET changes contain a known personal identifier matching: $pattern"
       found=1
     fi
   else
-    if grep -rqE "$pattern" --exclude-dir=.git . 2>/dev/null; then
+    if grep -rqE "$pattern" --exclude-dir=.git --exclude="no-personal-identifiers.sh" . 2>/dev/null; then
       echo "BLOCKED: working tree contains a known personal identifier matching: $pattern"
       found=1
     fi

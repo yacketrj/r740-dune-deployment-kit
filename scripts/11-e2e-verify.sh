@@ -377,8 +377,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  TOTAL CHECKS:   $CHECKS" | tee -a "$REPORT"
 echo "  PASSED:         $PASSES" | tee -a "$REPORT"
 echo "  WARNINGS:       $WARNINGS" | tee -a "$REPORT"
-echo "  CRITICAL FAILS: $CRITICAL" | tee -a "$REPORT"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$REPORT"
+  echo "  CRITICAL FAILS: $CRITICAL" | tee -a "$REPORT"
+  echo "  TOTAL ISSUES:   $TOTAL_ISSUES" | tee -a "$REPORT"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$REPORT"
 echo "" | tee -a "$REPORT"
 
 if [ "$CRITICAL" -gt 0 ]; then
