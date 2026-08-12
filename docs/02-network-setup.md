@@ -26,14 +26,20 @@ deliberately ordered to avoid touching anything already working
 lowest-risk step. Read through once before starting so you know where
 the safe stopping points are if you need to pause partway through.
 
-**Status on this deployment (2026-08-11):** Step 1 (VLAN creation) has
-been completed and independently verified via the UniFi Integration
-API — Prod, Dev, and Mgmt networks exist on the live gateway. The
+**Status on this deployment (2026-08-12):** Steps 1 and 3 are complete
+and independently verified. Step 1: Prod, Dev, and Mgmt networks exist
+on the live gateway (confirmed via the UniFi Integration API); the
 existing Default/Trusted-LAN network was confirmed already correctly
-configured and was left untouched. Step 3's target port was identified
-(port 3 on the UCG-Max, confirmed via live port-state change when the
-R740's data NIC was connected) but the trunk-port profile itself had
-not yet been applied as of this note. Steps 4 onward not yet started.
+configured and was left untouched. Step 3: port 3 on the UCG-Max
+(identified via a live port-state change when the R740's data NIC was
+connected) was configured as a trunk via the UniFi web UI and verified
+via the legacy internal API — `forward: customize`,
+`tagged_vlan_mgmt: custom`, `native_networkconf_id: ""` (no
+native/untagged network, as intended). Port 2 (iDRAC) was independently
+confirmed unchanged (`forward: all`, no `tagged_vlan_mgmt` field) to
+rule out any accidental cross-port effect. Port 3's physical link
+remained UP throughout at the same speed, confirming the VLAN change
+didn't disrupt the physical link layer. Steps 4 onward not yet started.
 
 ## Initial Setup
 
