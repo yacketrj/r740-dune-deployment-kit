@@ -26,20 +26,42 @@ deliberately ordered to avoid touching anything already working
 lowest-risk step. Read through once before starting so you know where
 the safe stopping points are if you need to pause partway through.
 
-**Status on this deployment (2026-08-12):** Steps 1 and 3 are complete
-and independently verified. Step 1: Prod, Dev, and Mgmt networks exist
-on the live gateway (confirmed via the UniFi Integration API); the
-existing Default/Trusted-LAN network was confirmed already correctly
-configured and was left untouched. Step 3: port 3 on the UCG-Max
-(identified via a live port-state change when the R740's data NIC was
-connected) was configured as a trunk via the UniFi web UI and verified
-via the legacy internal API — `forward: customize`,
-`tagged_vlan_mgmt: custom`, `native_networkconf_id: ""` (no
-native/untagged network, as intended). Port 2 (iDRAC) was independently
-confirmed unchanged (`forward: all`, no `tagged_vlan_mgmt` field) to
-rule out any accidental cross-port effect. Port 3's physical link
-remained UP throughout at the same speed, confirming the VLAN change
-didn't disrupt the physical link layer. Steps 4 onward not yet started.
+**Status on this deployment (2026-08-12):** Steps 1, 3, and 4 are
+complete and independently verified.
+
+Step 1: Prod, Dev, and Mgmt networks exist on the live gateway
+(confirmed via the UniFi Integration API); the existing
+Default/Trusted-LAN network was confirmed already correctly configured
+and was left untouched.
+
+Step 3: port 3 on the UCG-Max (identified via a live port-state change
+when the R740's data NIC was connected) was configured as a trunk via
+the UniFi web UI and verified via the legacy internal API —
+`forward: customize`, `tagged_vlan_mgmt: custom`,
+`native_networkconf_id: ""` (no native/untagged network, as intended).
+Port 2 (iDRAC) was independently confirmed unchanged (`forward: all`,
+no `tagged_vlan_mgmt` field) to rule out any accidental cross-port
+effect. Port 3's physical link remained UP throughout at the same
+speed, confirming the VLAN change didn't disrupt the physical link
+layer.
+
+Step 4: this gateway was running UniFi Network 10.5.67 but had **not**
+yet migrated to zone-based firewalling (confirmed via the Integration
+API returning `"Zone Based Firewall is not configured"` on the
+firewall/zones and firewall/policies endpoints, despite the app
+version being well past the 9.0.108 release that introduced it) — the
+one-click **Security → Traffic & Firewall Rules → Upgrade** migration
+was run first via the web UI. Three custom zones were then created via
+the API (Prod-Zone, Dev-Zone, Mgmt-Zone), each containing exactly its
+corresponding network, moving them out of the built-in Internal zone
+which now correctly contains only the Default/Trusted-LAN network. All
+7 directional policies from the table below were created and verified
+present with the correct source zone, destination zone, and action via
+a follow-up GET request (not just trusted from the POST response) —
+paginate past the default 25-result page limit if checking manually,
+since the migration itself auto-generates ~20 built-in per-zone
+policies that push custom ones past the first page. Steps 5 onward not
+yet started.
 
 ## Initial Setup
 
