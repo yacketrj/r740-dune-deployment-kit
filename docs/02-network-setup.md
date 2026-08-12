@@ -60,7 +60,30 @@ present with the correct source zone, destination zone, and action via
 a follow-up GET request (not just trusted from the POST response) —
 paginate past the default 25-result page limit if checking manually,
 since the migration itself auto-generates ~20 built-in per-zone
-policies that push custom ones past the first page. Steps 5 onward not
+policies that push custom ones past the first page.
+
+Step 5 (partial): discovered **two pre-existing WAN port forwards**
+(`DA-UDP` 7777-7810/UDP, `DA-TCP` 31982/TCP) already configured,
+pointing at `192.168.68.92` — a device on the old flat Trusted-LAN,
+almost certainly left over from before this VLAN migration. **These
+two were deliberately left untouched**, since that device may still be
+an actively-serving game server and modifying/removing its forwards
+without first confirming its current status would risk disrupting
+real, in-progress player sessions — consistent with this project's
+rule to never touch a live system without confirming status first.
+Only the missing third forward was added: `DA-RMQ-HTTP` (31983/TCP) ->
+`192.168.20.10:31983`, confirmed required (not internal-only) per the
+upstream Core project's own setup script (`runtime/scripts/init.sh`'s
+"Public hosting reminder" explicitly lists TCP 31983 alongside 31982
+and the UDP game range) and its server-gateway container
+(`runtime/scripts/start-server-gateway.sh`), which advertises this
+port bound to the public `SERVER_IP` directly to Funcom's live
+services — it is a genuinely public-facing port, not confined to
+internal container-to-container traffic. This new forward is purely
+additive and does not affect the two existing, possibly-live forwards.
+**The two stale forwards still need to be updated or replaced to point
+at `192.168.20.10` once `192.168.68.92`'s current status is confirmed**
+— tracked as follow-up work, not done in this pass. Steps 6 onward not
 yet started.
 
 ## Initial Setup
@@ -254,6 +277,29 @@ itself, and blocking it can break basic network function in
 hard-to-diagnose ways.
 
 ## Step 5: WAN Port Forwards (Prod ONLY)
+
+**Check for pre-existing forwards from a previous non-VLAN setup
+before creating anything new.** If this gateway has ever hosted a game
+server before this migration, port forwards for the game/RMQ ports may
+already exist, pointing at whatever IP that previous setup used (e.g.
+a device still on the old flat Trusted-LAN subnet) rather than the new
+Prod VLAN IP. **Do not blindly delete or edit an existing forward
+without first confirming the device it currently points at isn't an
+actively-serving game server** — if it might still have players
+connected, treat it exactly like any other live system per this
+project's rules: confirm status before touching it. It's always safe
+to *add* a new, correctly-targeted forward alongside a stale one
+(purely additive, doesn't affect existing traffic); reconciling/
+removing the stale entry can wait until the old device is confirmed
+safe to retire.
+
+**All three ports below are required, including 31983** — this is not
+an internal-only port that can be skipped. Confirmed via the upstream
+Core project's own setup wizard (`runtime/scripts/init.sh`'s "Public
+hosting reminder" lists TCP 31983 alongside 31982 and the UDP game
+range) and its server-gateway container, which advertises this port
+bound to the public server IP directly to Funcom's live services as
+part of the standard player-connection path.
 
 Go to **Settings → Firewall & Security → Port Forwarding → Create New
 Port Forward**. Add these three rules, all pointing at **dune-prod's VM IP**
