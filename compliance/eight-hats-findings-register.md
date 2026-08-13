@@ -76,7 +76,7 @@ Token may still carry KV read/write scopes. New token creation procedure documen
 ### H-13: Steam OAuth port 3101 missing from tunnel ingress
 **Status:** ✅ Resolved (documented in PROMPT-03 Phase 3.1)  
 **Hat:** Network, Cloud Security  
-Tunnel config now includes `acp-setup.darkdante.org path=/auth/steam → localhost:3101`.
+Tunnel config now includes `ACP_SETUP_TUNNEL_HOSTNAME path=/auth/steam → localhost:3101`.
 
 ---
 
@@ -151,11 +151,26 @@ Skeletal 9-line DR section in backup-recovery.md. No step-by-step rebuild with s
 **Hat:** GRC  
 Evidence templates created: OCI decommissioning (`compliance/evidence/decommissions/2026-08-07-oci-acp-bot-vnic.md`), go-live verification report location.
 
-### M-13: Real OCI IP (129.146.238.118) in docs intended to become public
-**Status:** 🔧 Code needed | 🐛 #15  
+### M-13: Real OCI IP in docs intended to become public
+**Status:** ✅ Resolved (2026-08-13) | 🐛 needs its own issue — the `#15`
+reference this finding originally cited actually points to a different
+finding (M-1, Dev VM RAM headroom) on GitHub; that cross-reference was
+wrong from when this register was first written and should not be
+trusted for this finding specifically.
 **Hat:** GRC  
-Decommissioned IP appears in 5+ locations across docs. Must be sanitized before repo goes public.  
-**Fix:** Replace with `OCI_BOT_IP` placeholder. Add to `tests/no-personal-identifiers.sh` denylist. Fix after OCI decommissioning is confirmed.
+**Correction:** the OCI instance is a live, currently-running production
+service as of this writing — NOT decommissioned. The original finding
+text incorrectly assumed decommissioning as a precondition for the fix
+("fix after OCI decommissioning is confirmed"); that assumption was wrong
+and the fix was correctly independent of decommissioning status. The real
+IP and the personal-domain subdomains (see this repo's own personal-identifier
+guard denylist for the exact values) appeared in 8+ locations across
+`docs/03-runbook-day-of.md`, `scripts/07-wsl-decommission.sh`,
+`scripts/11-e2e-verify.sh`, `prompts/PROMPT-00`, `PROMPT-03`, `PROMPT-04`,
+and this register itself. All replaced with placeholders
+(`OCI_BOT_IP`, `CONSOLE_TUNNEL_HOSTNAME`, `ACP_SETUP_TUNNEL_HOSTNAME`,
+`ACP_LANDING_HOSTNAME`), already present in
+`tests/no-personal-identifiers.sh`'s denylist.
 
 ### M-14: IGW port range (7888-7921) not forwarded — undocumented why
 **Status:** ✅ Resolved  

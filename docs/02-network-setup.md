@@ -326,7 +326,7 @@ rules to point at **dune-prod's VM IP**:
 This is intentional — the admin console is reached via VPN only (Step 6),
 never directly from the internet. This directly closes the CRIT-01-class
 exposure identified earlier in this project (the live gaming-PC setup
-currently has `console.darkdante.org` pointed at the console over a
+currently has its console tunnel hostname pointed at the console over a
 Cloudflare Tunnel with no additional access gate — don't reproduce that
 here without at least Cloudflare Access in front of it, see
 `04-post-standup-hardening.md`).

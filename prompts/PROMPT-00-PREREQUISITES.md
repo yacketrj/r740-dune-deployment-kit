@@ -1,11 +1,11 @@
 # PROMPT-00: Prerequisites — Gather Before Racking Hardware
 
-This prompt runs on YOUR DEV MACHINE (darkdante@tabr-tau) before the R740
-is physically set up. It gathers all tokens, keys, ISOs, and credentials
-needed during the deployment so you're not hunting for them on stand-up day.
+This prompt runs on YOUR DEV MACHINE before the R740 is physically set up.
+It gathers all tokens, keys, ISOs, and credentials needed during the
+deployment so you're not hunting for them on stand-up day.
 
 ## Target Machine
-Your current dev machine (Ubuntu 24.04, darkdante user).
+Your current dev machine (Ubuntu 24.04).
 
 ## Pre-Requisites
 - You have a password manager with the following stored (or will generate
@@ -41,6 +41,14 @@ sha256sum /tmp/opencode/r740-isos/ubuntu-24.04.1-live-server-amd64.iso
 ```
 
 ### 4. Prepare ACP Bot Secrets Backup
+
+**This step describes a FUTURE, not-yet-scheduled bot migration.** The ACP
+bot is a live, currently-running production service on its existing OCI
+VPS as of this writing — this is not something to act on until that
+migration is explicitly planned separately from the R740 game-server
+stand-up. `OCI_BOT_IP` below is a placeholder — substitute your own real
+value from your password manager/infra notes when actually executing this.
+
 Copy the bot's secrets from the current OCI deployment or from secure
 backup so they're ready to transfer to the R740. Create a secrets bundle:
 
@@ -48,11 +56,16 @@ backup so they're ready to transfer to the R740. Create a secrets bundle:
 mkdir -p ~/r740-bot-backup/secrets
 
 # If you can SSH to the OCI instance:
-ssh ubuntu@129.146.238.118 "cat ~/arrakis-control-panel/.env" \
+ssh ubuntu@OCI_BOT_IP "cat ~/arrakis-control-panel/.env" \
   > ~/r740-bot-backup/secrets/bot-env.txt
 
-ssh ubuntu@129.146.238.118 "sudo cp ~/arrakis-control-panel/data/acp.db /tmp/ && sudo chmod 644 /tmp/acp.db" \
-  && scp ubuntu@129.146.238.118:/tmp/acp.db ~/r740-bot-backup/secrets/
+# NOTE: chmod 600 (not 644) on the remote temp copy -- the SQLite DB
+# contains per-guild adapter tokens; a world-readable temp copy on a
+# shared host is the same class of exposure this project's own #28
+# finding flagged for the local staging directory.
+ssh ubuntu@OCI_BOT_IP "sudo cp ~/arrakis-control-panel/data/acp.db /tmp/ && sudo chmod 600 /tmp/acp.db" \
+  && scp ubuntu@OCI_BOT_IP:/tmp/acp.db ~/r740-bot-backup/secrets/ \
+  && ssh ubuntu@OCI_BOT_IP "shred -u /tmp/acp.db"
 
 # Or, if you already have the .env backed up locally:
 # Copy it from your secure backup location to ~/r740-bot-backup/secrets/

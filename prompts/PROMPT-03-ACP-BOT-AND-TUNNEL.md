@@ -5,7 +5,7 @@ This prompt runs ON YOUR DEV MACHINE, targeting the dune-prod VM
 Tunnel, applies security hardening, and runs end-to-end verification.
 
 ## Target Machines
-- Your dev machine (darkdante@tabr-tau)
+- Your dev machine
 - dune-prod VM (dune@192.168.20.10)
 
 ## Pre-Requisites
@@ -116,15 +116,15 @@ credentials-file: /home/dune/.cloudflared/<tunnel-id>.json
 
 ingress:
   # Console admin — MUST have Cloudflare Access policy
-  - hostname: console.darkdante.org
+  - hostname: CONSOLE_TUNNEL_HOSTNAME
     service: http://localhost:8088
 
   # ACP setup portal + live stats API
-  - hostname: acp-setup.darkdante.org
+  - hostname: ACP_SETUP_TUNNEL_HOSTNAME
     service: http://localhost:3100
 
   # Steam OAuth callback (was missing — network engineer finding F3)
-  - hostname: acp-setup.darkdante.org
+  - hostname: ACP_SETUP_TUNNEL_HOSTNAME
     path: /auth/steam
     service: http://localhost:3101
 
@@ -147,19 +147,19 @@ VM access.
 1. Cloudflare Zero Trust Dashboard → Access → Applications → **Add Application**
 2. Type: **Self-hosted**
 3. Application name: `Dune Console`
-4. Subdomain: `console.darkdante.org`
+4. Subdomain: `CONSOLE_TUNNEL_HOSTNAME`
 5. Identity providers: Accept all (or add your email provider)
 6. **Create policy:**
    - Policy name: `Admin Only`
    - Action: **Allow**
    - Include → Emails → `your-email@example.com`
    - (Add any additional trusted operators)
-7. Save policy → **repeat for `acp-setup.darkdante.org`** (at minimum,
+7. Save policy → **repeat for `ACP_SETUP_TUNNEL_HOSTNAME`** (at minimum,
    protect the `/auth/steam` path)
 8. Save and close
 
 **VERIFY:** Open an incognito/private browser window and navigate to
-`https://console.darkdante.org`. You MUST see a Cloudflare Access login
+`https://CONSOLE_TUNNEL_HOSTNAME`. You MUST see a Cloudflare Access login
 page (email/PIN prompt) BEFORE reaching the Dune Console login. If you
 see the console login directly, Access is NOT configured.
 
@@ -231,8 +231,8 @@ Expected: `{"ok": true, ...}`
 ### 5.3 Cloudflare Tunnel Verification
 ```bash
 # From your dev machine:
-curl -s https://acp-setup.darkdante.org/api/live-stats | jq .players_online
-curl -s -o /dev/null -w '%{http_code}' https://console.darkdante.org
+curl -s https://ACP_SETUP_TUNNEL_HOSTNAME/api/live-stats | jq .players_online
+curl -s -o /dev/null -w '%{http_code}' https://CONSOLE_TUNNEL_HOSTNAME
 ```
 Expected: live stats returns JSON with a `players_online` field.
 Console returns `302` or `200` (redirect to Access login is OK).
@@ -267,7 +267,7 @@ git -C ~/projects/acp/arrakis-control-panel remote add deploy \
 - [ ] ACP bot cloned, installed, running on dune-prod VM
 - [ ] Systemd service `acp-bot.service` active and enabled
 - [ ] Cloudflare Tunnel ingress rules configured (incl. Steam port 3101)
-- [ ] Cloudflare Access MANDATORY policy in front of console.darkdante.org
+- [ ] Cloudflare Access MANDATORY policy in front of CONSOLE_TUNNEL_HOSTNAME
 - [ ] SQLite daily backup timer created and active (C-4)
 - [ ] Bot responds to slash commands in Discord
 - [ ] All adapter endpoints verified

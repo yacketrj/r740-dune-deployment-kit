@@ -2,8 +2,8 @@
 # =============================================================================
 # 11-e2e-verify.sh — Full Deployment Verification Suite
 #
-# RUN THIS: from your dev machine (darkdante@tabr-tau) AFTER the full
-#           deployment is complete (PROMPT-01 through PROMPT-03 executed).
+# RUN THIS: from your dev machine, AFTER the full deployment is complete
+#           (PROMPT-01 through PROMPT-03 executed).
 #
 # Validates: hardware, Proxmox, VMs, Docker, game servers, ACP bot,
 #            Cloudflare Tunnel, security hardening, database backups,
@@ -22,11 +22,20 @@ WARNINGS=0
 PASSES=0
 CHECKS=0
 
+# NOTE: CONSOLE_URL, SETUP_URL, and ACP_LANDING_URL below are placeholders --
+# this repo's tests/no-personal-identifiers.sh guard intentionally blocks
+# real hostnames/IPs from being committed (see that script's own comments
+# for why). Export your own real values as environment variables before
+# running this script, e.g.:
+#   CONSOLE_URL=https://your-real-console-hostname \
+#   SETUP_URL=https://your-real-acp-setup-hostname \
+#   ACP_LANDING_URL=https://your-real-acp-landing-hostname \
+#   bash scripts/11-e2e-verify.sh
 DUNE_PROD="dune@192.168.20.10"
 DUNE_DEV="dune@192.168.21.10"
 PROXMOX="root@192.168.30.5"
-CONSOLE_URL="https://console.darkdante.org"
-SETUP_URL="https://acp-setup.darkdante.org"
+CONSOLE_URL="${CONSOLE_URL:-https://CONSOLE_TUNNEL_HOSTNAME}"
+SETUP_URL="${SETUP_URL:-https://ACP_SETUP_TUNNEL_HOSTNAME}"
 PUBLIC_IP="${PUBLIC_IP:-$(curl -s https://api.ipify.org 2>/dev/null || echo "unknown")}"
 
 mkdir -p "$(dirname "$REPORT")"
@@ -264,18 +273,18 @@ check "T1" CRITICAL "cloudflared service active" \
   "$DUNE_PROD" "systemctl is-active cloudflared" "active"
 
 check "T2" WARN "Tunnel config references console hostname" \
-  "$DUNE_PROD" "grep -c 'console.darkdante.org' /etc/cloudflared/config.yml 2>/dev/null || echo 0" "[1-9]"
+  "$DUNE_PROD" "grep -c \"\${CONSOLE_URL#https://}\" /etc/cloudflared/config.yml 2>/dev/null || echo 0" "[1-9]"
 
 check "T3" WARN "Tunnel config references acp-setup hostname" \
-  "$DUNE_PROD" "grep -c 'acp-setup.darkdante.org' /etc/cloudflared/config.yml 2>/dev/null || echo 0" "[1-9]"
+  "$DUNE_PROD" "grep -c \"\${SETUP_URL#https://}\" /etc/cloudflared/config.yml 2>/dev/null || echo 0" "[1-9]"
 
-check_local "T4" CRITICAL "console.darkdante.org reachable" \
+check_local "T4" CRITICAL "console hostname reachable" \
   "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 $CONSOLE_URL 2>/dev/null || echo 000" "[23][0-9][0-9]"
 
 check_local "T5" CRITICAL "acp-setup live stats endpoint returns JSON" \
   "curl -s --connect-timeout 10 $SETUP_URL/api/live-stats 2>/dev/null | jq -r '.players_online // \"missing\"' 2>/dev/null || echo 'missing'" "[0-9]"
 
-check_local "T6" WARN "console.darkdante.org has Cloudflare Access enforced (expect non-200 on first hit)" \
+check_local "T6" WARN "console hostname has Cloudflare Access enforced (expect non-200 on first hit)" \
   "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 $CONSOLE_URL 2>/dev/null" "302\|303\|403\|401"
 
 # =============================================================================
@@ -360,11 +369,13 @@ check "D4" WARN "Recent DB backup exists (< 48 hours old)" \
 # =============================================================================
 log_section "11. ACP LANDING & DNS"
 
-check_local "L1" WARN "acp.darkdante.org reachable" \
-  "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 https://acp.darkdante.org 2>/dev/null || echo 000" "[23][0-9][0-9]"
+ACP_LANDING_URL="${ACP_LANDING_URL:-https://ACP_LANDING_HOSTNAME}"
+
+check_local "L1" WARN "acp-landing reachable" \
+  "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 $ACP_LANDING_URL 2>/dev/null || echo 000" "[23][0-9][0-9]"
 
 check_local "L2" WARN "acp landing stats API returns data" \
-  "curl -s --connect-timeout 10 https://acp.darkdante.org/api/stats 2>/dev/null | jq -r '.players_online // \"missing\"' 2>/dev/null || echo 'missing'" "[0-9]"
+  "curl -s --connect-timeout 10 $ACP_LANDING_URL/api/stats 2>/dev/null | jq -r '.players_online // \"missing\"' 2>/dev/null || echo 'missing'" "[0-9]"
 
 # =============================================================================
 # SUMMARY

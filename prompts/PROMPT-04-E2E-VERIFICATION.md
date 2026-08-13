@@ -54,7 +54,7 @@ From a device on cellular data (NOT your home WiFi):
 
 ### 2.2 Console Access (behind Cloudflare Access)
 From a cellular device or incognito browser:
-1. Navigate to `https://console.darkdante.org`
+1. Navigate to `https://CONSOLE_TUNNEL_HOSTNAME`
 2. **Verify you see the Cloudflare Access login page** (email/PIN prompt)
 3. Complete the Access login
 4. **Verify you reach the Dune Console login page**
@@ -62,12 +62,12 @@ From a cellular device or incognito browser:
 6. Confirm the console loads, server status displays, maps tab works
 
 ### 2.3 Setup Portal
-1. Navigate to `https://acp-setup.darkdante.org/setup`
+1. Navigate to `https://ACP_SETUP_TUNNEL_HOSTNAME/setup`
 2. Verify the setup wizard loads
-3. Verify live stats: `https://acp-setup.darkdante.org/api/live-stats`
+3. Verify live stats: `https://ACP_SETUP_TUNNEL_HOSTNAME/api/live-stats`
 
 ### 2.4 ACP Landing
-1. Navigate to `https://acp.darkdante.org`
+1. Navigate to `https://ACP_LANDING_HOSTNAME`
 2. Verify the landing page loads
 3. Verify the stats widget shows player counts (may be 0 at first)
 
@@ -122,7 +122,7 @@ After players join, re-run the stats command above and compare:
 
 ### 5.1 Final Check Before Announcement
 - [ ] All CRITICAL checks from 11-e2e-verify.sh pass
-- [ ] Cloudflare Access enforced on `console.darkdante.org`
+- [ ] Cloudflare Access enforced on `CONSOLE_TUNNEL_HOSTNAME`
 - [ ] Game ports reachable from WAN (cellular test passed)
 - [ ] Discord bot responds to all slash commands
 - [ ] Setup portal and landing page accessible

@@ -58,14 +58,15 @@ forward rule for port 8088 on either VM, period.
 
 ## 3. Cloudflare Tunnel / Access for remote console access
 
-If you want `console.darkdante.org` to keep working after migration, do NOT
+If you want your console tunnel hostname (`CONSOLE_TUNNEL_HOSTNAME` —
+substitute your own real subdomain) to keep working after migration, do NOT
 just repoint the existing tunnel config at the new IP as-is — the old config
 had no additional access gate in front of it (bare hostname → :8088). Add
 **Cloudflare Access** (free tier supports this) in front of the tunnel:
 
 1. In the Cloudflare Zero Trust dashboard, go to **Access → Applications →
    Add an Application**
-2. Select "Self-hosted", point it at the `console.darkdante.org` hostname
+2. Select "Self-hosted", point it at your `CONSOLE_TUNNEL_HOSTNAME`
 3. Add a policy requiring your email (or a small allowlist of trusted
    emails) to authenticate via one-time PIN or an identity provider before
    the tunnel even forwards the request through
