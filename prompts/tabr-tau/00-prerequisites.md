@@ -33,11 +33,13 @@ wget -P /tmp/opencode/r740-isos/ \
 sha256sum /tmp/opencode/r740-isos/proxmox-ve_8.2-1.iso
 ```
 
-### 3. Download Ubuntu Server 24.04 LTS ISO
+### 3. Download Ubuntu Server 26.04 LTS ISO
 ```bash
 wget -P /tmp/opencode/r740-isos/ \
-  https://releases.ubuntu.com/24.04/ubuntu-24.04.1-live-server-amd64.iso
-sha256sum /tmp/opencode/r740-isos/ubuntu-24.04.1-live-server-amd64.iso
+  https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso
+sha256sum /tmp/opencode/r740-isos/ubuntu-26.04-live-server-amd64.iso
+# Verify against the published checksum:
+# https://releases.ubuntu.com/26.04/SHA256SUMS
 ```
 
 ### 4. Prepare ACP Bot Secrets Backup
@@ -115,7 +117,7 @@ sudo dd if=/tmp/opencode/r740-isos/proxmox-ve_8.2-1.iso \
 
 ### 8. Final Checklist Before Moving to r740xd/01
 - [ ] Proxmox VE ISO downloaded and verified
-- [ ] Ubuntu Server 24.04 ISO downloaded and verified
+- [ ] Ubuntu Server 26.04 ISO downloaded and verified
 - [ ] Bootable Proxmox USB created
 - [ ] Bot secrets backed up to `~/r740-bot-backup/secrets/`
 - [ ] `values.env` filled in with real values

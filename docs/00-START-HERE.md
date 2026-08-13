@@ -127,7 +127,7 @@ says "see `docs/0N-...md`" for the full explanation of why a step exists.
    fails, fix CPU type before proceeding to real VMs. (Also covered as
    Phase 1 of `prompts/r740xd/01-proxmox-and-vms.md`.)
 5. Run `scripts/02-provision-vms.sh` on Proxmox to create `dune-prod` and
-   `dune-dev` VM shells, then install Ubuntu Server 24.04 LTS in each via the
+   `dune-dev` VM shells, then install Ubuntu Server 26.04 LTS in each via the
    Proxmox console (this part is interactive, no script covers OS install).
    (`prompts/r740xd/01-proxmox-and-vms.md` covers this end to end.)
 6. Inside each VM, run `scripts/03-vm-guest-bootstrap.sh` to install Docker
