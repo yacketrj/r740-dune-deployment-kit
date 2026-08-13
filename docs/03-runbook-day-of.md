@@ -4,7 +4,7 @@ Print this or keep it open on a second device. Check off each step.
 
 ## Morning
 
-- [ ] Confirm UCG-Fiber VLANs/firewall/port-forwards from
+- [ ] Confirm UCG-Max VLANs/firewall/port-forwards from
       `02-network-setup.md` are all in place and verified (should already
       be done by now if you followed the pre-work checklist)
 - [ ] Confirm Proxmox VE is installed and reachable at its management IP
@@ -54,7 +54,7 @@ Print this or keep it open on a second device. Check off each step.
       advertised-vs-bound IP mismatches before going further (this is the
       same class of warning seen on the old gaming-PC setup — don't let it
       slide through unexamined here)
-- [ ] Confirm UCG-Fiber port forwards (7777-7810 UDP, 31982/31983 TCP) point
+- [ ] Confirm UCG-Max port forwards (7777-7810 UDP, 31982/31983 TCP) point
       at `dune-prod`'s actual static IP
 - [ ] From OUTSIDE your LAN (phone on cellular data, or ask a friend), test
       actual reachability — don't rely solely on internal `dune ports`/`dune
