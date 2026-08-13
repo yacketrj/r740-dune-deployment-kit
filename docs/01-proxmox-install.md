@@ -80,7 +80,7 @@ select the USB device.
    manager — this is the master credential for the whole hypervisor
 6. **Network configuration**: this is your Proxmox **management** interface,
    which should land on VLAN 30 (Management) per the network design. If your
-   switch/UCG-Fiber isn't VLAN-configured yet at this point, just use a
+   switch/UCG-Max isn't VLAN-configured yet at this point, just use a
    temporary IP on your regular LAN for now — you can move it to the
    management VLAN after `02-network-setup.md` is done.
 7. Confirm and let it install (~10 minutes), then reboot.

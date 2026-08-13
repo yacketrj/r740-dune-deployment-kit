@@ -14,7 +14,7 @@ This kit is built around:
 - **[dune-awakening-selfhost-docker](https://github.com/yacketrj/dune-awakening-selfhost-docker)**
   — the Docker-based self-host console/orchestrator for Dune: Awakening
   dedicated servers
-- A UniFi-based router/firewall (e.g. Ubiquiti UCG-Fiber or similar) for
+- A UniFi-based router/firewall (e.g. Ubiquiti UCG-Max or similar) for
   VLAN segmentation, firewall isolation between environments, and WAN port
   forwarding
 

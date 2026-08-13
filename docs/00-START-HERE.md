@@ -20,19 +20,19 @@ Dell R740 (Proxmox VE hypervisor)
 └── (ACP Discord bot stays on the OCI VPS — out of scope, do not touch)
 ```
 
-Network: UCG-Fiber router, 4 VLANs (Trusted / Prod / Dev / Management),
+Network: UCG-Max router, 4 VLANs (Trusted / Prod / Dev / Management),
 only Prod's game ports are forwarded to the internet. Admin consoles (port
 8088) are never exposed to WAN on either VM.
 
 ## Prerequisites Checklist (do these BEFORE 7/30)
 
-- [ ] UCG-Fiber router arrived, physically installed, basic setup done
+- [ ] UCG-Max router arrived, physically installed, basic setup done
 - [ ] Proxmox VE install USB prepared (see `01-proxmox-install.md`)
 - [ ] 2 new Funcom Self-Host Service Tokens generated (one per account, for
       Prod and Dev respectively) — save both strings in a password manager
 - [ ] GitHub OAuth token on the OCI ACP box rotated (separate from this
       project, but do this before 7/30 so it's off your plate)
-- [ ] R740 racked, powered, network cabled to the UCG-Fiber's LAN ports
+- [ ] R740 racked, powered, network cabled to the UCG-Max's LAN ports
 
 ## Directory Map
 
@@ -41,7 +41,7 @@ r740-deployment/
 ├── docs/
 │   ├── 00-START-HERE.md              <- you are here
 │   ├── 01-proxmox-install.md         <- hypervisor install (manual, BIOS-level)
-│   ├── 02-network-setup.md           <- UCG-Fiber VLAN/firewall config (manual, UI-based)
+│   ├── 02-network-setup.md           <- UCG-Max VLAN/firewall config (manual, UI-based)
 │   ├── 03-runbook-day-of.md          <- the actual 7/30 sequence, step by step
 │   └── 04-post-standup-hardening.md  <- security checklist after both VMs are live
 └── scripts/
@@ -57,7 +57,7 @@ r740-deployment/
 ## Order of Operations
 
 1. Read `01-proxmox-install.md`, install Proxmox on the R740.
-2. Read `02-network-setup.md`, configure the UCG-Fiber's VLANs and firewall
+2. Read `02-network-setup.md`, configure the UCG-Max's VLANs and firewall
    rules (do this in parallel with #1 if you have two people, or before/after —
    order between these two doesn't matter, both must be done before VM traffic
    needs to flow).
