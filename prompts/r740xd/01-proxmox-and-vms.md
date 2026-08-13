@@ -3,7 +3,7 @@
 This prompt runs ON THE PROXMOX HOST (via SSH or the web console at
 `https://<r740-mgmt-ip>:8006`) after booting from the Proxmox USB.
 It installs Proxmox VE, creates the two VMs, and installs Ubuntu Server
-24.04 on each.
+26.04 on each.
 
 ## Target Machine
 The Dell R740 Proxmox host, freshly booted from the Proxmox VE installer
@@ -55,12 +55,12 @@ apt update && apt full-upgrade -y
 
 ### 1.4 Upload ISO Files
 Via the Proxmox web UI: Datacenter → local → ISO Images → Upload
-Upload both ISOs (Proxmox + Ubuntu Server 24.04) if not already present.
+Upload both ISOs (Proxmox + Ubuntu Server 26.04) if not already present.
 
 Or via SCP from your dev machine:
 ```bash
 # From dev machine:
-scp /tmp/opencode/r740-isos/ubuntu-24.04.1-live-server-amd64.iso \
+scp /tmp/opencode/r740-isos/ubuntu-26.04-live-server-amd64.iso \
   root@<PROXMOX_MGMT_IP>:/var/lib/vz/template/iso/
 ```
 
@@ -132,7 +132,7 @@ qm create 101 \
   --net0 virtio,bridge=vmbr0,tag=20 \
   --scsihw virtio-scsi-pci \
   --scsi0 local-lvm:300 \
-  --ide2 local:iso/ubuntu-24.04.1-live-server-amd64.iso,media=cdrom \
+  --ide2 local:iso/ubuntu-26.04-live-server-amd64.iso,media=cdrom \
   --boot order=scsi0 \
   --ostype l26 \
   --agent enabled=1
@@ -150,7 +150,7 @@ qm create 102 \
   --net0 virtio,bridge=vmbr0,tag=21 \
   --scsihw virtio-scsi-pci \
   --scsi0 local-lvm:300 \
-  --ide2 local:iso/ubuntu-24.04.1-live-server-amd64.iso,media=cdrom \
+  --ide2 local:iso/ubuntu-26.04-live-server-amd64.iso,media=cdrom \
   --boot order=scsi0 \
   --ostype l26 \
   --agent enabled=1
@@ -166,7 +166,7 @@ qm set 102 --onboot 1 --startup order=2
 For EACH VM (do dune-prod first, then dune-dev):
 
 1. In Proxmox web UI: select VM → Console → Start
-2. Follow Ubuntu Server 24.04 installer:
+2. Follow Ubuntu Server 26.04 installer:
    - **Language**: English
    - **Keyboard**: US
    - **Network**: Manual IPv4
@@ -228,8 +228,8 @@ grep avx2 /proc/cpuinfo   # AVX2 visible in guest
 - [ ] Proxmox VE installed on the R740
 - [ ] No-subscription repo configured
 - [ ] AVX2 validated inside a test VM
-- [ ] dune-prod VM (VMID 101): 40 vCPU / 152 GB RAM, Ubuntu 24.04
-- [ ] dune-dev VM (VMID 102): 20 vCPU / 50 GB RAM, Ubuntu 24.04
+- [ ] dune-prod VM (VMID 101): 40 vCPU / 152 GB RAM, Ubuntu 26.04
+- [ ] dune-dev VM (VMID 102): 20 vCPU / 50 GB RAM, Ubuntu 26.04
 - [ ] Both VMs have Docker + Docker Compose plugin installed
 - [ ] `dune-awakening-selfhost-docker` cloned on both VMs
 - [ ] You can SSH into both VMs as `dune@<IP>`

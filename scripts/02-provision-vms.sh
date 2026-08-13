@@ -6,14 +6,14 @@
 # PURPOSE:  Create the dune-prod and dune-dev VM shells with the correct
 #           CPU type, memory, vCPU pinning, and network bridge assignment.
 #           This does NOT install an OS - after this script, you attach the
-#           Ubuntu Server 24.04 ISO and install the OS interactively through
+#           Ubuntu Server 26.04 ISO and install the OS interactively through
 #           the Proxmox console (no way to script an OS install reliably
 #           here, and you shouldn't want to - you want to see it happen).
 #
 # PREREQ:   - 01-validate-avx2.sh has passed
 #           - VLANs 20 (Prod) and 21 (Dev) exist on your network/bridge
 #             config (see docs/02-network-setup.md)
-#           - Ubuntu Server 24.04 LTS ISO uploaded to Proxmox local storage
+#           - Ubuntu Server 26.04 LTS ISO uploaded to Proxmox local storage
 #             (Datacenter -> local storage -> ISO Images -> Upload)
 #
 # SIZING RATIONALE (2026-08-07 revision — 2x Sietch @40p + 4x DD + dynamics):
@@ -53,7 +53,7 @@ set -euo pipefail
 # --- Adjust these if your environment differs ------------------------------
 STORAGE="local-lvm"          # where VM disks live; check `pvesm status` if unsure
 ISO_STORAGE="local"
-UBUNTU_ISO="ubuntu-24.04-live-server-amd64.iso"   # must already be uploaded
+UBUNTU_ISO="ubuntu-26.04-live-server-amd64.iso"   # must already be uploaded
 
 PROD_VMID=101
 PROD_NAME="dune-prod"
@@ -176,7 +176,7 @@ echo "=== Both VM shells created ==="
 echo
 echo "NEXT STEPS (manual, via Proxmox web UI):"
 echo "1. Open the web UI, select VM $PROD_VMID ($PROD_NAME), click Console"
-echo "2. Start the VM, install Ubuntu Server 24.04 LTS interactively"
+echo "2. Start the VM, install Ubuntu Server 26.04 LTS interactively"
 echo "   - Set hostname: dune-prod"
 echo "   - Set a static IP on the VLAN 20 subnet (e.g. 192.168.20.10/24,"
 echo "     gateway 192.168.20.1) - this is the IP your router forwards to"

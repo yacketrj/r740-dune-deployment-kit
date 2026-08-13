@@ -3,7 +3,7 @@
 # 03-vm-guest-bootstrap.sh
 #
 # RUN THIS: INSIDE each VM (dune-prod AND dune-dev), after Ubuntu Server
-#           24.04 is installed and you can SSH in. Run it once per VM.
+#           26.04 is installed and you can SSH in. Run it once per VM.
 # PURPOSE:  Confirm AVX2 is visible inside the guest (final sanity check),
 #           install Docker, clone the dune-awakening-selfhost-docker repo,
 #           and prep the directory structure. Stops BEFORE running `dune

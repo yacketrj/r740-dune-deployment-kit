@@ -14,9 +14,9 @@ Print this or keep it open on a second device. Check off each step.
 ## Provisioning
 
 - [ ] Run `scripts/02-provision-vms.sh` on the Proxmox host
-- [ ] Install Ubuntu Server 24.04 LTS on `dune-prod` (static IP on VLAN 20,
+- [ ] Install Ubuntu Server 26.04 LTS on `dune-prod` (static IP on VLAN 20,
       OpenSSH enabled)
-- [ ] Install Ubuntu Server 24.04 LTS on `dune-dev` (static IP on VLAN 21,
+- [ ] Install Ubuntu Server 26.04 LTS on `dune-dev` (static IP on VLAN 21,
       OpenSSH enabled)
 - [ ] SSH into `dune-prod`, run `scripts/03-vm-guest-bootstrap.sh`
 - [ ] SSH into `dune-dev`, run `scripts/03-vm-guest-bootstrap.sh`
