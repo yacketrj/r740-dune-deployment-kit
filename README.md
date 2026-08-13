@@ -126,12 +126,23 @@ pre-commit run --all-files
 
 ## Status
 
-This kit is actively being used for a real deployment as of July 2026 and
+This kit is actively being used for a real deployment as of August 2026 and
 is **not yet genericized** for general community use — it still reflects
 one specific setup's naming conventions, sizing decisions, and topology.
 The eventual goal is to turn this into a broader "how to self-host Dune:
 Awakening Prod/Dev on your own hardware" community guide once the current
 deployment is validated in production.
+
+**2026-08-07 update:** the ACP Discord bot was migrated from an OCI VPS to
+the dune-prod VM, eliminating a $300/month cloud hosting cost. The bot shares
+the VM with the game server stack, calling the console API over localhost.
+
+**Sizing revision (2026-08-07):** VM allocations updated for the final
+production configuration — 2 Sietch dimensions (40 players each), 4 Deep
+Desert instances, and auto-scaling dynamic maps (dungeons, overlands, story
+zones). dune-prod: 40 vCPU / 152 GB RAM (socket 0, all 20 cores). dune-dev:
+20 vCPU / 50 GB RAM (socket 1, cores 20-29). Compute headroom: 20 threads,
+106 GB RAM remaining for Proxmox host and future expansion.
 
 ## License
 
@@ -142,6 +153,11 @@ MIT — see [LICENSE](LICENSE).
 - [dune-awakening-selfhost-docker](https://github.com/yacketrj/dune-awakening-selfhost-docker) —
   the Docker-based self-host console this kit deploys
 - [Arrakis Control Panel](https://github.com/yacketrj/Arrakis-Control-Panel) —
-  a self-hosted Discord control panel for Dune: Awakening servers
+  the self-hosted Discord bot for Dune: Awakening servers. As of 2026-08-07,
+  the production bot runs on the dune-prod VM (VMID 101) of this very R740 —
+  the same VM that hosts the production game server stack. See
+  `systemd/acp-bot.service` and `compliance/runbooks/backup-recovery.md` in
+  that repo for the R740 deployment configuration. Previously hosted on an
+  OCI VPS (`acp-bot-vnic`); migrated to eliminate $300/month cloud costs.
 - [dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) —
   a read-only operations/observability addon for the console above

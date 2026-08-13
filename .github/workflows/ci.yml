@@ -61,6 +61,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for broken relative links in docs
         run: |
+          shopt -s lastpipe
+          set +m
           fail=0
           for f in docs/*.md README.md; do
             [ -f "$f" ] || continue
