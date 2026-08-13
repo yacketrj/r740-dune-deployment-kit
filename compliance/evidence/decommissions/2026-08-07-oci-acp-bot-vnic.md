@@ -9,6 +9,25 @@ same VM, calling console API over localhost.
 
 ---
 
+## Connection Reference
+
+SSH access to the OCI instance (now decommissioned):
+
+| Field | Value |
+|---|---|
+| Host | `acp-bot-oci` (alias) / `129.146.238.118` |
+| User | `ubuntu` |
+| SSH key | `~/.ssh/ssh-key-2026-07-18.key` (RSA 2048-bit) |
+| Key fingerprint | `SHA256:TQtdpVJgSfCNAWmwks80ggVN4E1Z02ACow0M6Pi83A0` |
+| SSH config | `~/.ssh/config` — \`Host 129.146.238.118 acp-bot-oci\` block |
+| Key created | 2026-07-18, specifically for OCI provisioning |
+
+This key was used solely for the OCI `acp-bot-vnic` instance and is not
+reused for any other system. The default `id_ed25519` key is used for all
+other hosts (GitHub, R740 VMs, etc.).
+
+---
+
 ## Pre-Decommission Verification
 
 ### 1. Bot Migration Confirmed
