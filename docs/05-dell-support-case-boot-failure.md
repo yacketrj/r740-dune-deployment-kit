@@ -1,11 +1,39 @@
 # Dell ProSupport Case: PowerEdge R740xd — Persistent "No bootable devices" / UEFI boot failure across all boot media
 
-**Status as of 2026-08-12:** Unresolved. Every reasonable software/firmware/config
-avenue has been exhausted and independently verified via the iDRAC Redfish API
-and Virtual Console. This document is the case writeup intended for submission
-to Dell ProSupport, and is checked into this repo (not `/tmp` or any other
-non-persistent location) so it survives reboots and remains available for
-follow-up.
+**Status as of 2026-08-13: Operationally resolved. Dell's formal RCA report
+has not yet been received.** Proxmox VE is confirmed installed and running
+on this exact host (`pveversion`: `pve-manager/9.2.2`, service tag `DMYV0S2`
+still matches) as of this update. Resolution occurred via a live Dell
+ProSupport AnyDesk remote session -- **do not treat any specific root cause
+below as confirmed** until Dell's written report arrives; this section will
+be updated again once it does.
+
+**Operator's working theory, pending Dell's written confirmation:** a missed
+step in properly mounting the installer ISO via iDRAC Virtual Media -- i.e.
+the extensive troubleshooting documented below (sections 1-10) may have been
+chasing a real symptom with an operational, not hardware, root cause. This
+is explicitly a working theory, not a verified finding -- everything in
+"What This Rules Out" below was independently confirmed at the time via the
+Redfish API and remains accurate as a record of what was tested; it does not
+necessarily mean those causes are still believed to be ruled out if the
+actual root cause turns out to be procedural rather than hardware-level.
+
+The original 2026-08-12 case writeup below is preserved as-is (not rewritten
+retroactively) since it's the actual case history submitted for support and
+has genuine value as a troubleshooting reference for anyone hitting a
+similar "No bootable devices" symptom on iDRAC9/R740-class hardware --
+several of the negative results (ISO-agnostic failure, USB-vs-Virtual-Media
+parity, firmware-update-independent) remain useful data points regardless of
+the final root cause.
+
+---
+
+**Original status as of 2026-08-12 (preserved for history):** Unresolved.
+Every reasonable software/firmware/config avenue has been exhausted and
+independently verified via the iDRAC Redfish API and Virtual Console. This
+document is the case writeup intended for submission to Dell ProSupport, and
+is checked into this repo (not `/tmp` or any other non-persistent location)
+so it survives reboots and remains available for follow-up.
 
 ## System Identification
 
@@ -280,3 +308,28 @@ known issues for `7.00.00.184`.
   steps assuming F-keys may need to be issued via Redfish/racadm rather than
   interactively, or confirm a working alternative input method during the
   support session.
+
+## Resolution (2026-08-13)
+
+Resolved via a live Dell ProSupport remote session conducted over AnyDesk.
+Proxmox VE 9.2.2 is now confirmed installed and running on this host.
+
+**Root cause: not yet confirmed by Dell in writing.** The operator's working
+theory is a missed step in the virtual-media ISO-mount procedure (see status
+banner at the top of this document) rather than a genuine hardware fault —
+but this is not yet independently verified against a written Dell RCA.
+
+**Action items once Dell's written report arrives:**
+- [ ] Update this section with Dell's confirmed root cause (do not leave the
+  working theory above standing in as fact once the real answer is known —
+  see this project's Strict Requirement 12: documentation must reflect
+  verified reality, not assumption).
+- [ ] If the root cause turns out to be a genuine hardware defect (not a
+  procedural miss), re-open a tracking issue and evaluate whether the fix
+  applied during the AnyDesk session is durable or whether the underlying
+  fault could recur.
+- [ ] If the root cause is confirmed as a virtual-media mounting step this
+  document's own troubleshooting (sections 1-10 above) missed, consider
+  adding a corrected quick-reference to `docs/01-proxmox-install.md`'s
+  Virtual Media instructions so a future re-install (e.g. after a disk
+  failure) doesn't require re-discovering the same fix.
