@@ -37,19 +37,19 @@ Moving bot from independent OCI VPS onto game server VM eliminates operational i
 Strict Requirement 13 mandates CHANGELOG. Created below in this session.
 
 ### H-6: Discord OAuth client secret not rotated post-migration
-**Status:** ✅ Resolved (documented in PROMPT-03 Phase 1.2)  
+**Status:** ✅ Resolved (documented in `prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1.2)  
 **Hat:** Cloud Security  
 `DISCORD_CLIENT_SECRET` was on OCI instance. Rotation procedure documented. Operator must execute.
 
 ### H-7: ACP_SECRETS_KEY status unknown — plaintext secrets at risk
-**Status:** ✅ Resolved (documented in PROMPT-03 Phase 1.3)  
+**Status:** ✅ Resolved (documented in `prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1.3)  
 **Hat:** Cloud Security  
 If unset, per-guild adapter tokens in acp.db are plaintext. Generation + shred procedure documented.
 
 ### H-8: Postgres password rotation instructions in hardening doc are wrong
 **Status:** ✅ Resolved (fixed in C-3)  
 **Hat:** DBA, Security  
-Hardening doc previously said append to .env and restart. Now uses console API's changeDunePassword endpoint. Fixed in `04-post-standup-hardening.md` and `PROMPT-02` Phase 4.1.
+Hardening doc previously said append to .env and restart. Now uses console API's changeDunePassword endpoint. Fixed in `04-post-standup-hardening.md` and `prompts/r740xd/02-game-servers.md` Phase 4.1.
 
 ### H-9: No game server database restore runbook
 **Status:** 🔧 Code needed | 🐛 #4  
@@ -69,12 +69,12 @@ Defaults (128MB shared_buffers, 4MB work_mem) grossly undersized.
 Post-migration verification was human-only. `11-e2e-verify.sh` now provides 70+ automated checks including game port reachability, container health, DB integrity, and Sietch validation.
 
 ### H-12: Cloudflare API token over-scoped after KV removal
-**Status:** ✅ Resolved (documented in PROMPT-03 Cloud finding CLOUD-04)  
+**Status:** ✅ Resolved (documented in `prompts/r740xd/03-bot-deploy-and-tunnel.md` Cloud finding CLOUD-04)  
 **Hat:** Cloud Security  
 Token may still carry KV read/write scopes. New token creation procedure documented.
 
 ### H-13: Steam OAuth port 3101 missing from tunnel ingress
-**Status:** ✅ Resolved (documented in PROMPT-03 Phase 3.1)  
+**Status:** ✅ Resolved (documented in `prompts/r740xd/03-bot-deploy-and-tunnel.md` Phase 2.1)  
 **Hat:** Network, Cloud Security  
 Tunnel config now includes `ACP_SETUP_TUNNEL_HOSTNAME path=/auth/steam → localhost:3101`.
 
@@ -166,8 +166,10 @@ and the fix was correctly independent of decommissioning status. The real
 IP and the personal-domain subdomains (see this repo's own personal-identifier
 guard denylist for the exact values) appeared in 8+ locations across
 `docs/03-runbook-day-of.md`, `scripts/07-wsl-decommission.sh`,
-`scripts/11-e2e-verify.sh`, `prompts/PROMPT-00`, `PROMPT-03`, `PROMPT-04`,
-and this register itself. All replaced with placeholders
+`scripts/11-e2e-verify.sh`, and the flat `prompts/PROMPT-00`, `PROMPT-03`,
+`PROMPT-04` files that existed at the time (since split into
+`prompts/tabr-tau/` and `prompts/r740xd/` — see #50), and this register
+itself. All replaced with placeholders
 (`OCI_BOT_IP`, `CONSOLE_TUNNEL_HOSTNAME`, `ACP_SETUP_TUNNEL_HOSTNAME`,
 `ACP_LANDING_HOSTNAME`), already present in
 `tests/no-personal-identifiers.sh`'s denylist.

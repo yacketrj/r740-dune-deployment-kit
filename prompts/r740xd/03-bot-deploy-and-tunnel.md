@@ -1,71 +1,28 @@
-# PROMPT-03: ACP Bot Deployment + Cloudflare Tunnel
+# R740XD-03: ACP Bot Deployment + Cloudflare Tunnel
 
-This prompt runs ON YOUR DEV MACHINE, targeting the dune-prod VM
-(192.168.20.10). It deploys the ACP Discord bot, configures the Cloudflare
-Tunnel, applies security hardening, and runs end-to-end verification.
+This prompt is run FROM your dev machine (all steps are `ssh`/`scp`
+commands targeting the VM — there's no separate "log into the console and
+type these" step), but every actual change it makes lands ON the dune-prod
+VM (`192.168.20.10`). It deploys the ACP Discord bot, configures the
+Cloudflare Tunnel, applies security hardening, and runs end-to-end
+verification.
 
 ## Target Machines
-- Your dev machine
-- dune-prod VM (dune@192.168.20.10)
+- dune-prod VM (`dune@192.168.20.10`) — everything below changes state here
+- Your dev machine — only used as the SSH client; also needed for the
+  Cloudflare Zero Trust dashboard (browser-based) in Phase 3.2
 
 ## Pre-Requisites
-- PROMPT-02-GAME-SERVERS completed — both battlegroups initialized
-- Bot secrets backed up to `~/r740-bot-backup/secrets/` from PROMPT-00
-- Cloudflare Zero Trust dashboard accessible in your browser
-- Discord Developer Portal accessible in your browser
+- `r740xd/02-game-servers.md` completed — both battlegroups initialized
+- `tabr-tau/01-bot-secrets-rotation.md` completed — bot secrets already
+  rotated off the values transferred from OCI; this prompt's Phase 1
+  clone step expects rotated values already committed to dune-prod's
+  `.env`, not the original OCI-sourced ones
+- Cloudflare Zero Trust dashboard accessible in your browser (Phase 3.2)
 
-## Phase 1: Rotate Secrets Migrated from OCI (C-6 fix)
+## Phase 1: Clone and Deploy the Bot
 
-### 1.1 Rotate Discord Bot Token
-The bot token was copied from the decommissioned OCI instance. It may
-exist on orphaned OCI volumes or in backup copies. Rotate immediately:
-
-1. Discord Developer Portal → Your Application → Bot → **Reset Token**
-2. Copy the new token string
-3. Update on dune-prod:
-   ```bash
-   ssh dune@192.168.20.10
-   cd ~/arrakis-control-panel
-   sed -i "s/^DISCORD_BOT_TOKEN=.*/DISCORD_BOT_TOKEN=<NEW_TOKEN>/" .env
-   ```
-
-### 1.2 Rotate Discord OAuth Client Secret (CLOUD-03 fix)
-If multi-tenant mode uses `DISCORD_CLIENT_SECRET`:
-
-1. Discord Developer Portal → OAuth2 → **Reset Client Secret**
-2. Update `.env` on dune-prod:
-   ```bash
-   sed -i "s/^DISCORD_CLIENT_SECRET=.*/DISCORD_CLIENT_SECRET=<NEW_SECRET>/" .env
-   ```
-
-### 1.3 Generate ACP_SECRETS_KEY (CLOUD-08 fix)
-If `ACP_MULTI_TENANT=true` and `ACP_SECRETS_KEY` is unset, per-guild
-adapter tokens in the SQLite database are stored in plaintext:
-
-```bash
-ssh dune@192.168.20.10
-cd ~/arrakis-control-panel
-KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-echo "ACP_SECRETS_KEY=${KEY}" >> .env
-echo "ACP_SECRETS_KEY generated. Existing plaintext tokens in acp.db will"
-echo "need re-provisioning via the setup portal."
-```
-
-### 1.4 Shred Backup Copies of Secrets
-After rotation, delete the secrets backup on both machines:
-```bash
-# On dev machine:
-shred -u ~/r740-bot-backup/secrets/bot-env.txt
-shred -u ~/r740-bot-backup/secrets/acp.db
-rm -rf ~/r740-bot-backup/secrets/
-
-# On dune-prod VM:
-ssh dune@192.168.20.10 "shred -u ~/r740-bot-backup/secrets/* && rm -rf ~/r740-bot-backup/"
-```
-
-## Phase 2: Clone and Deploy the Bot
-
-### 2.1 Clone the Repository
+### 1.1 Clone the Repository
 ```bash
 ssh dune@192.168.20.10 << 'ENDSSH'
 git clone https://github.com/yacketrj/arrakis-control-panel.git ~/arrakis-control-panel
@@ -75,20 +32,21 @@ cp .env.example .env
 
 # Set the essential values (update with your real values)
 sed -i "s|^DUNE_CONSOLE_API_URL=.*|DUNE_CONSOLE_API_URL=http://localhost:8088|" .env
-# DISCORD_BOT_TOKEN already set from Phase 1.1
-# DISCORD_CLIENT_ID already set from PROMPT-00
-# DUNE_DISCORD_ADAPTER_TOKEN already set from PROMPT-00
+# DISCORD_BOT_TOKEN: use the ROTATED value from tabr-tau/01-bot-secrets-rotation.md,
+#   not the original value transferred from OCI in tabr-tau/00-prerequisites.md
+# DISCORD_CLIENT_ID already set from tabr-tau/00-prerequisites.md
+# DUNE_DISCORD_ADAPTER_TOKEN already set from tabr-tau/00-prerequisites.md
 ENDSSH
 ```
 
-### 2.2 Register Slash Commands
+### 1.2 Register Slash Commands
 ```bash
 ssh dune@192.168.20.10 "cd ~/arrakis-control-panel && npm run register"
 ```
 
 **VERIFY:** The command output shows registration success with no errors.
 
-### 2.3 (Optional) Install Local Pre-Commit Hooks
+### 1.3 (Optional) Install Local Pre-Commit Hooks
 
 **Only needed if you plan to edit the bot's code directly on this VM**
 (debugging, quick fixes) rather than exclusively pushing from your dev
@@ -110,7 +68,7 @@ ENDSSH
 Skip this step entirely if this VM will only ever receive deploys via
 `git push deploy` and no one edits code on it directly.
 
-### 2.3 Install and Enable Systemd Service
+### 1.4 Install and Enable Systemd Service
 ```bash
 ssh dune@192.168.20.10 << 'ENDSSH'
 sudo cp ~/arrakis-control-panel/systemd/acp-bot.service /etc/systemd/system/
@@ -127,9 +85,9 @@ ssh dune@192.168.20.10 "journalctl -u acp-bot -n 30 --no-pager"
 ```
 The bot should show "Ready!" and connect to Discord's gateway.
 
-## Phase 3: Configure Cloudflare Tunnel
+## Phase 2: Configure Cloudflare Tunnel
 
-### 3.1 Add Ingress Rules (C-8 fix — Access is MANDATORY)
+### 2.1 Add Ingress Rules (C-8 fix — Access is MANDATORY)
 Edit `/etc/cloudflared/config.yml` on the dune-prod VM:
 
 ```yaml
@@ -154,12 +112,23 @@ ingress:
   - service: http_status:404
 ```
 
+**Coordinate this change carefully**: the same Cloudflare account's
+tunnel/DDNS infrastructure is shared with other independent services
+(e.g. the ACP landing page and other sites using the same Cloudflare DDNS
+setup) — verify you are only adding new ingress rules for these
+hostnames, not modifying shared tunnel config that other services depend
+on.
+
 Restart the tunnel:
 ```bash
 ssh dune@192.168.20.10 "sudo systemctl restart cloudflared && sudo systemctl status cloudflared"
 ```
+This restarts the ENTIRE tunnel daemon, not just these ingress rules —
+confirm current status of every hostname/service sharing this tunnel
+before restarting, per this project's own Requirement 23 on documenting
+network ingress points.
 
-### 3.2 Enforce Cloudflare Access (C-8 — was "recommended", now MANDATORY)
+### 2.2 Enforce Cloudflare Access (C-8 — was "recommended", now MANDATORY)
 
 **This step is NOT optional.** Without it, anyone who discovers the
 hostname can reach the admin console login page. The console mounts the
@@ -185,9 +154,9 @@ VM access.
 page (email/PIN prompt) BEFORE reaching the Dune Console login. If you
 see the console login directly, Access is NOT configured.
 
-## Phase 4: Configure Database Backup (C-4 fix)
+## Phase 3: Configure Database Backup (C-4 fix)
 
-### 4.1 ACP SQLite Daily Backup
+### 3.1 ACP SQLite Daily Backup
 Create a systemd timer on the dune-prod VM:
 
 ```bash
@@ -233,13 +202,13 @@ ENDSSH
 ssh dune@192.168.20.10 "ls -la ~/arrakis-control-panel/data/backups/ && systemctl list-timers acp-db-backup.timer"
 ```
 
-## Phase 5: End-to-End Verification
+## Phase 4: End-to-End Verification
 
-### 5.1 Discord Bot Smoke Test
+### 4.1 Discord Bot Smoke Test
 Run `/dune server health` in your Discord server. The bot must respond
 with server status within 5 seconds.
 
-### 5.2 Adapter Endpoint Verification
+### 4.2 Adapter Endpoint Verification
 ```bash
 ssh dune@192.168.20.10 << 'ENDSSH'
 # Test that the bot can reach the console adapter
@@ -250,7 +219,7 @@ ENDSSH
 ```
 Expected: `{"ok": true, ...}`
 
-### 5.3 Cloudflare Tunnel Verification
+### 4.3 Cloudflare Tunnel Verification
 ```bash
 # From your dev machine:
 curl -s https://ACP_SETUP_TUNNEL_HOSTNAME/api/live-stats | jq .players_online
@@ -259,15 +228,16 @@ curl -s -o /dev/null -w '%{http_code}' https://CONSOLE_TUNNEL_HOSTNAME
 Expected: live stats returns JSON with a `players_online` field.
 Console returns `302` or `200` (redirect to Access login is OK).
 
-### 5.4 Firewall Isolation Verification
+### 4.4 Firewall Isolation Verification
 From dune-dev VM, confirm Prod is unreachable:
 ```bash
 ssh dune@192.168.21.10 "ping -c 3 -W 2 192.168.20.10; echo EXIT=\$?"
 ```
 Expected: ping fails (non-zero exit). If it succeeds, VLAN isolation is
-broken — go back to Phase 2.0 of PROMPT-01 and fix `bridge-vlan-aware`.
+broken — go back to Phase 2.0 of `r740xd/01-proxmox-and-vms.md` and fix
+`bridge-vlan-aware`.
 
-## Phase 6: Deploy Remote Setup (for future git push deploys)
+## Phase 5: Deploy Remote Setup (for future git push deploys)
 
 ```bash
 ssh dune@192.168.20.10 << 'ENDSSH'
@@ -282,10 +252,6 @@ git -C ~/projects/acp/arrakis-control-panel remote add deploy \
 ```
 
 ## State After Completion
-- [ ] Discord bot token rotated (C-6)
-- [ ] OAuth client secret rotated if multi-tenant (CLOUD-03)
-- [ ] ACP_SECRETS_KEY generated if multi-tenant (CLOUD-08)
-- [ ] Old secrets backup copies shredded
 - [ ] ACP bot cloned, installed, running on dune-prod VM
 - [ ] Systemd service `acp-bot.service` active and enabled
 - [ ] Cloudflare Tunnel ingress rules configured (incl. Steam port 3101)
@@ -295,3 +261,6 @@ git -C ~/projects/acp/arrakis-control-panel remote add deploy \
 - [ ] All adapter endpoints verified
 - [ ] VLAN isolation verified
 - [ ] Deploy remote configured
+
+## After This Prompt Completes
+Proceed to `tabr-tau/04-e2e-verification.md` for the full go-live checklist.

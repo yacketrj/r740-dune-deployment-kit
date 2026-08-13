@@ -1,16 +1,20 @@
-# PROMPT-02: Game Server Initialization
+# R740XD-02: Game Server Initialization
 
-This prompt runs ON YOUR DEV MACHINE and targets both VMs. It initializes
-both battlegroups, configures map topology, imports the Dev database backup
-from the gaming PC, and applies the hardening checklist.
+This prompt is run FROM your dev machine (all steps are `ssh` commands)
+and targets both VMs — everything it changes lands on the R740's VMs, not
+your dev machine itself. It initializes both battlegroups, configures map
+topology, imports the Dev database backup from the gaming PC, and applies
+the hardening checklist.
 
 ## Target Machines
 - dune-dev VM (dune@192.168.21.10) — initialized FIRST with backup import
 - dune-prod VM (dune@192.168.20.10) — clean battlegroup init SECOND
 
 ## Pre-Requisites
-- PROMPT-01 completed — both VMs have Docker + `dune-awakening-selfhost-docker` cloned
-- PROMPT-00 completed — Funcom tokens generated, values.env filled
+- `r740xd/01-proxmox-and-vms.md` completed — both VMs have Docker +
+  `dune-awakening-selfhost-docker` cloned
+- `tabr-tau/00-prerequisites.md` completed — Funcom tokens generated,
+  values.env filled
 - For Dev: gaming PC backup transferred per `scripts/06-pre-migration-backup.sh`
 - Read `scripts/04-init-dev-battlegroup.sh` and `scripts/05-init-prod-battlegroup.sh`
 
@@ -275,5 +279,6 @@ ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/d
 - [ ] `dune ports` clean — no IP mismatch warnings
 
 ## Next Prompt
-Proceed to `PROMPT-03-ACP-BOT-AND-TUNNEL.md` to deploy the ACP bot,
+Proceed to `tabr-tau/01-bot-secrets-rotation.md` to rotate the ACP bot's
+secrets, then `r740xd/03-bot-deploy-and-tunnel.md` to deploy the bot,
 configure the Cloudflare Tunnel, and harden the services.

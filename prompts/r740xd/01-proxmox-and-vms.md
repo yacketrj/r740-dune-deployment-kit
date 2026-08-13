@@ -1,4 +1,4 @@
-# PROMPT-01: Proxmox Install + VM Provisioning
+# R740XD-01: Proxmox Install + VM Provisioning
 
 This prompt runs ON THE PROXMOX HOST (via SSH or the web console at
 `https://<r740-mgmt-ip>:8006`) after booting from the Proxmox USB.
@@ -12,9 +12,9 @@ USB. Access via:
 - SSH: `ssh root@<PROXMOX_MGMT_IP>` (after enabling during install)
 
 ## Pre-Requisites
-- PROMPT-00-PREREQUISITES completed (ISOs downloaded, values.env filled)
-- R740 racked, powered, network cabled to UCG-Fiber
-- UCG-Fiber VLANs configured per `docs/02-network-setup.md`
+- `tabr-tau/00-prerequisites.md` completed (ISOs downloaded, values.env filled)
+- R740 racked, powered, network cabled to UCG-Max
+- UCG-Max VLANs configured per `docs/02-network-setup.md`
 - Read `docs/01-proxmox-install.md` for the full step-by-step
 
 ## State Before Starting
@@ -106,7 +106,7 @@ ifreload -a
 If empty, the bridge is NOT VLAN-aware and inter-VM isolation does not
 exist — STOP and fix before continuing.
 
-**Cabling:** Use ONE UCG-Fiber LAN port configured as a trunk (tagged for
+**Cabling:** Use ONE UCG-Max LAN port configured as a trunk (tagged for
 VLANs 10/20/21/30). Connect one R740 NIC to it. The three remaining NICs
 are spare.
 
@@ -235,7 +235,7 @@ grep avx2 /proc/cpuinfo   # AVX2 visible in guest
 - [ ] You can SSH into both VMs as `dune@<IP>`
 
 ## Next Prompt
-Proceed to `PROMPT-02-GAME-SERVERS.md` to initialize both battlegroups.
+Proceed to `r740xd/02-game-servers.md` to initialize both battlegroups.
 
 ## Rollback
 At this stage, nothing on the gaming PC has been touched. To abort:

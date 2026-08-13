@@ -1,12 +1,14 @@
-# PROMPT-04: End-to-End Verification & Go-Live
+# TABR-TAU-04: End-to-End Verification & Go-Live
 
 This prompt runs ON YOUR DEV MACHINE after ALL deployment phases are
-complete (PROMPT-00 through PROMPT-03). It runs the full automated
+complete (`tabr-tau/00-prerequisites.md` through
+`r740xd/03-bot-deploy-and-tunnel.md`). It runs the full automated
 verification suite, performs manual checks that can't be automated,
 and walks through the go-live cutover sequence.
 
 ## Pre-Requisites
-- PROMPT-01 through PROMPT-03 fully executed
+- `r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`
+  fully executed, including `tabr-tau/01-bot-secrets-rotation.md` in between
 - Both VMs online with game servers running
 - ACP bot deployed and connected to Discord
 - Cloudflare Tunnel configured with Access enforced

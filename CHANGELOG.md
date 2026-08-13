@@ -41,8 +41,51 @@ introduced them, in Keep a Changelog style, newest first.
   claiming otherwise. Corrected to the actual interleaved CPU lists,
   verified against this host directly. Also fixes a vCPU-count/affinity-
   range mismatch on Dev (20 vCPUs vs. a 10-CPU affinity range). (#1)
+- Real OCI VPS IP and the personal-domain tunnel subdomains (see this
+  repo's own personal-identifier guard denylist for the exact values)
+  were committed across 8 files in `prompts/PROMPT-00/03/04`,
+  `docs/03-runbook-day-of.md`,
+  `scripts/07-wsl-decommission.sh`, `scripts/11-e2e-verify.sh`, and
+  `compliance/`. Confirmed with the operator this infrastructure is live
+  and active — genericized to placeholders (`OCI_BOT_IP`,
+  `CONSOLE_TUNNEL_HOSTNAME`, `ACP_SETUP_TUNNEL_HOSTNAME`,
+  `ACP_LANDING_HOSTNAME`), already present in
+  `tests/no-personal-identifiers.sh`'s denylist. Also corrected several
+  docs that read as though the OCI-to-R740 bot migration had already
+  happened — it has not; the bot is a live, currently-running production
+  service. (#30)
+- `compliance/eight-hats-findings-register.md` M-13: corrected a wrong
+  issue cross-reference (cited #15, which is actually a different
+  finding — M-1) and removed an incorrect "fix after decommissioning is
+  confirmed" precondition. (#30)
+- `compliance/evidence/decommissions/2026-08-07-oci-acp-bot-vnic.md`:
+  corrected from reading as a completed decommissioning record to an
+  explicit unexecuted template. (#30)
+- `prompts/PROMPT-00`'s OCI secrets-backup step used `chmod 644`
+  (world-readable) on a temp copy of the bot's SQLite DB on the remote
+  host — same exposure class as #28's local-staging finding. Fixed to
+  `chmod 600` + `shred` after transfer. (#30)
 
 ### Added
+
+- `prompts/tabr-tau/01-bot-secrets-rotation.md` and
+  `prompts/r740xd/03-bot-deploy-and-tunnel.md` — split out of the former
+  flat `PROMPT-03-ACP-BOT-AND-TUNNEL.md`, which mixed dev-machine secret
+  rotation with VM-side bot deployment/tunnel config in one file. Part of
+  the broader `prompts/tabr-tau/` vs `prompts/r740xd/` restructuring by
+  execution machine (#50). (#30, #50)
+- `dune update auto enable` and `dune ip-change-restart enable` added to
+  `prompts/r740xd/02-game-servers.md` — two real upstream automation
+  mechanisms (confirmed against `dune-awakening-selfhost-docker`'s
+  `runtime/scripts/update.sh` and `ip-change-restart.sh`) that were never
+  wired into any deployment prompt, despite `restart-schedule` and
+  `db auto` already being present. `ip-change-restart` is directly
+  relevant to this repo's own L-7 finding (single static IPv4, no
+  failover). (#30)
+- Optional `pre-commit install` step added to
+  `prompts/r740xd/03-bot-deploy-and-tunnel.md` for the case where the
+  bot repo is edited directly on dune-prod rather than exclusively via
+  `git push deploy`. (#30)
 
 - This `CHANGELOG.md` (closes a Requirement 13 gap — every repo in this
   account's workstream must maintain one).
@@ -50,8 +93,9 @@ introduced them, in Keep a Changelog style, newest first.
   checks across hardware, Proxmox, VMs, Docker, game servers, ACP bot,
   Cloudflare Tunnel, network isolation, WAN ports, security hardening, and
   database integrity. (#30)
-- `prompts/PROMPT-00` through `PROMPT-04` — the sequenced rebuild/setup
-  prompts referenced by the disaster-recovery runbook (#11). (#30)
+- `prompts/tabr-tau/` and `prompts/r740xd/` — the sequenced rebuild/setup
+  prompts referenced by the disaster-recovery runbook (#11), split by
+  which physical machine each prompt actually runs on (#50). (#30, #50)
 - `compliance/eight-hats-findings-register.md` — consolidated eight-hats
   review findings from the 2026-08-07 review session, cross-referenced to
   issues #1, #4-#26. **Known gap in this file, not yet corrected:** its own

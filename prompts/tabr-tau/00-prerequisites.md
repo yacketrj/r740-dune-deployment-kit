@@ -1,4 +1,4 @@
-# PROMPT-00: Prerequisites — Gather Before Racking Hardware
+# TABR-TAU-00: Prerequisites — Gather Before Racking Hardware
 
 This prompt runs on YOUR DEV MACHINE before the R740 is physically set up.
 It gathers all tokens, keys, ISOs, and credentials needed during the
@@ -21,7 +21,7 @@ Your current dev machine (Ubuntu 24.04).
 ```bash
 ls ~/projects/dune/dune-awakening-selfhost-docker/runtime/scripts/dune
 ls ~/projects/acp/arrakis-control-panel/package.json
-ls ~/r740-deployment/prompts/PROMPT-00-PREREQUISITES.md
+ls ~/r740-deployment/prompts/tabr-tau/00-prerequisites.md
 ```
 
 ### 2. Download Proxmox VE ISO
@@ -113,7 +113,7 @@ sudo dd if=/tmp/opencode/r740-isos/proxmox-ve_8.2-1.iso \
   of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-### 8. Final Checklist Before Moving to PROMPT-01
+### 8. Final Checklist Before Moving to r740xd/01
 - [ ] Proxmox VE ISO downloaded and verified
 - [ ] Ubuntu Server 24.04 ISO downloaded and verified
 - [ ] Bootable Proxmox USB created
@@ -124,5 +124,5 @@ sudo dd if=/tmp/opencode/r740-isos/proxmox-ve_8.2-1.iso \
 - [ ] R740 racked, powered, network cabled to UCG-Fiber
 
 ## After This Prompt Completes
-Proceed to `PROMPT-01-PROXMOX-AND-VMS.md` which runs ON THE PROXMOX HOST
+Proceed to `r740xd/01-proxmox-and-vms.md` which runs ON THE PROXMOX HOST
 after booting from the USB you just created.
