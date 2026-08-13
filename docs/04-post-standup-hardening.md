@@ -6,21 +6,44 @@ after the 7/30 cutover — not weeks later.
 ## 1. Rotate default database password (both VMs)
 
 The upstream project falls back to a hardcoded `dune`/`dune` Postgres
-credential if `DUNE_DB_PASSWORD` isn't explicitly set (this is a filed,
-unresolved CRITICAL finding in the upstream repo as of this project's
-research). On EACH VM:
+credential in three independent locations if `DUNE_DB_PASSWORD` isn't
+explicitly set. On EACH VM, use the console API's password-change endpoint
+— **do NOT just append to `.env` and restart or you will break the
+connection** (the console connects with the new password but the Postgres
+role still has the old one):
 
 ```bash
 cd ~/dune-awakening-selfhost-docker
 NEWPASS="$(openssl rand -base64 32)"
-echo "DUNE_DB_PASSWORD=${NEWPASS}" >> .env
-# then restart the postgres-dependent stack per the project's own docs/CLI
-# so the new password takes effect - check `dune restart postgres` or
-# equivalent, and confirm `dune db health` still passes afterward.
+
+# The console API handles BOTH: ALTER ROLE in Postgres + update .env
+curl -s -X POST http://localhost:8088/api/database/password \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: $(curl -s http://localhost:8088/api/auth/state | jq -r '.csrfToken')" \
+  -b "asc_session=$(curl -s -X POST http://localhost:8088/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d "{\"password\":\"$(grep ADMIN_PASSWORD .env | cut -d= -f2)\"}" \
+    -c - | grep asc_session | awk '{print $NF}')" \
+  -d "{\"password\":\"${NEWPASS}\"}"
 ```
 
-Use a **different** generated password on Prod vs. Dev — don't reuse one
-across both.
+If the console API is not accessible (e.g. first-time setup), use the
+direct `psql` path instead:
+
+```bash
+docker exec -i dune-postgres psql -U dune -d dune \
+  -c "ALTER ROLE dune WITH PASSWORD '${NEWPASS}';"
+echo "DUNE_DB_PASSWORD=${NEWPASS}" >> .env
+```
+
+Then restart the stack so game containers pick up the new password:
+```bash
+docker compose restart
+```
+
+**Verify:** `dune db health` must return healthy with no authentication
+errors after the restart. Use a **different** generated password on
+Prod vs. Dev — don't reuse one across both.
 
 ## 2. Confirm the admin console is NOT reachable from WAN
 

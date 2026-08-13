@@ -52,30 +52,30 @@ runtime/scripts/dune sietches set-max Survival_1 2
 runtime/scripts/dune sietches set-active Survival_1 2
 
 echo
-echo "=== Deep Desert dual-instance configuration ==="
+echo "=== Deep Desert configuration (4 concurrent instances) ==="
 echo
-echo "WARNING: running 2 concurrent Deep Desert instances is an UNVALIDATED"
-echo "configuration pattern per this project's own research - no confirmed"
-echo "report of anyone else running this exact setup was found. It is"
-echo "strongly recommended to have already tested this on the Dev VM first"
-echo "via:"
-echo "    runtime/scripts/dune deepdesert dual enable"
-echo "and confirmed 'dune sietches validate' / 'dune ready' still pass"
-echo "cleanly there, BEFORE applying it here on Prod."
+echo "This sets max_dimensions=4 and active_dimensions=4 for DeepDesert_1."
+echo "At 16 GB per instance, 4 DD instances consume 64 GB of the 152 GB VM."
 echo
-read -r -p "Have you already validated 'deepdesert dual enable' on Dev, and want to proceed on Prod now? [y/N]: " dd_confirm
+echo "WARNING: 4 concurrent Deep Desert instances is an UNVALIDATED"
+echo "configuration pattern. The 'deepdesert dual' helper only enables 2."
+echo "For 4, we set dimensions directly via the sietch commands below."
+echo "Strongly recommend validating on the Dev VM first."
+echo
+read -r -p "Have you already validated 4 DD instances on Dev, and want to proceed on Prod? [y/N]: " dd_confirm
 case "$dd_confirm" in
   y|Y|yes|YES)
-    runtime/scripts/dune deepdesert dual enable
-    echo "Deep Desert dual mode enabled. Validating..."
+    runtime/scripts/dune sietches set-max DeepDesert_1 4
+    runtime/scripts/dune sietches set-active DeepDesert_1 4
+    echo "Deep Desert configured for 4 concurrent instances. Validating..."
     runtime/scripts/dune sietches validate
     ;;
   *)
-    echo "Skipping Deep Desert dual-instance config for now."
-    echo "Prod will run with the default single dynamic Deep Desert until"
-    echo "you've validated the dual pattern on Dev. Re-run just this step"
-    echo "later with:"
-    echo "    runtime/scripts/dune deepdesert dual enable"
+    echo "Skipping 4-instance Deep Desert config for now."
+    echo "Prod will start with default single dynamic Deep Desert."
+    echo "Re-run later with:"
+    echo "    runtime/scripts/dune sietches set-max DeepDesert_1 4"
+    echo "    runtime/scripts/dune sietches set-active DeepDesert_1 4"
     ;;
 esac
 

@@ -35,9 +35,17 @@ DENYLIST=(
 echo "== Personal identifier guard =="
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  # In a git repo: scan only staged content (pre-commit hook context)
-  SCAN_TARGET="staged"
   DIFF_CONTENT="$(git diff --cached -U0 2>/dev/null || true)"
+  if [ -n "${CI:-}" ] || [ -z "$DIFF_CONTENT" ]; then
+    # In CI or when there are no staged changes (e.g. CI always has
+    # zero staged changes but a populated working tree): scan the
+    # entire working tree, not just staged content. Otherwise a CI
+    # job that runs this script would silently pass because it scans
+    # empty $DIFF_CONTENT — a false negative.
+    SCAN_TARGET="tree"
+  else
+    SCAN_TARGET="staged"
+  fi
 else
   SCAN_TARGET="tree"
 fi

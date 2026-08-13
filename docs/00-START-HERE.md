@@ -11,18 +11,40 @@ WSL2 stack afterward.
 ```
 Dell R740 (Proxmox VE hypervisor)
 ├── VM: dune-prod   — new Funcom token (account #1), fresh battlegroup
-│                      2x Sietch (Survival_1), 2x Deep Desert, Overmap
-│                      Socket 0, ~80GB RAM hard alloc, 24-28 vCPU
+│                      2x Sietch (Survival_1, 40 players each),
+│                      4x Deep Desert, Overmap, dynamic maps
+│                      Socket 0 (40 threads), 152 GB RAM hard alloc
 ├── VM: dune-dev    — new Funcom token (account #2), fresh battlegroup
 │                      1x Sietch, dynamic Deep Desert, Overmap
-│                      Socket 1, ~40GB RAM hard alloc, 8-10 vCPU
+│                      Socket 1 (half, 20 threads), 50 GB RAM hard alloc
 │                      Seeded from a real DB backup/import (see script 06)
-└── (ACP Discord bot stays on the OCI VPS — out of scope, do not touch)
+└── (ACP Discord bot runs on dune-prod VM alongside the game stack —
+      migrated from OCI VPS 2026-08-07 to eliminate $300/month costs)
 ```
 
 Network: UCG-Max router, 4 VLANs (Trusted / Prod / Dev / Management),
 only Prod's game ports are forwarded to the internet. Admin consoles (port
 8088) are never exposed to WAN on either VM.
+
+## Hardware Specification
+
+| Component | Detail |
+|---|---|
+| Server | Dell PowerEdge R740 |
+| CPU | 2× Intel Xeon Gold 6248 (20c/40t each, 2.5 GHz base / 3.9 GHz turbo) |
+| RAM | 256 GB DDR4 |
+| Storage | 2× 1.92TB SATA SSD (RAID1 via PERC H730P + CacheVault) |
+| Network | 4× 1GbE RJ45 (quad-port rNDC) |
+| Internet | 2.5 Gbps symmetric fiber, single static public IPv4 |
+| Router | Ubiquiti UCG-Fiber (10G SFP+, 5 Gbps IDS/IPS) |
+
+## VM Allocation
+
+| VM | vCPU | RAM | Disk | Socket | Notes |
+|---|---|---|---|---|---|
+| dune-prod | 40 (0-19) | 152 GB | 300 GB | Socket 0 | 2 Sietch (40p/ea), 4 Deep Desert, Overmap, dynamics |
+| dune-dev | 20 (20-29) | 50 GB | 300 GB | Socket 1 | 1 Sietch, 1 Deep Desert, Overmap, dynamics |
+| _free_ | 20 (30-39) | 54 GB | — | Socket 1 | Proxmox overhead + future expansion |
 
 ## Prerequisites Checklist (do these BEFORE 7/30)
 
