@@ -88,6 +88,28 @@ ssh dune@192.168.20.10 "cd ~/arrakis-control-panel && npm run register"
 
 **VERIFY:** The command output shows registration success with no errors.
 
+### 2.3 (Optional) Install Local Pre-Commit Hooks
+
+**Only needed if you plan to edit the bot's code directly on this VM**
+(debugging, quick fixes) rather than exclusively pushing from your dev
+machine via `git push deploy` (the intended workflow — see Phase 6). The
+bot repo already ships its own `.pre-commit-config.yaml`
+(gitleaks/ggshield/trivy) that travels with the clone; this just activates
+it locally so a direct commit on this VM gets the same scan coverage your
+dev machine's commits already get, rather than only catching issues later
+in CI:
+
+```bash
+ssh dune@192.168.20.10 << 'ENDSSH'
+cd ~/arrakis-control-panel
+python3 -m pip install --user pre-commit 2>/dev/null || sudo apt-get install -y pipx python3-pip && python3 -m pip install --user pre-commit
+pre-commit install
+ENDSSH
+```
+
+Skip this step entirely if this VM will only ever receive deploys via
+`git push deploy` and no one edits code on it directly.
+
 ### 2.3 Install and Enable Systemd Service
 ```bash
 ssh dune@192.168.20.10 << 'ENDSSH'

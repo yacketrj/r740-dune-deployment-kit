@@ -212,6 +212,53 @@ ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/d
 ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune db auto enable"  
 ```
 
+### 4.5 Enable Auto-Update
+
+Applies self-host-kit updates automatically on a schedule rather than
+relying on someone remembering to run `dune update install latest`
+manually. Review the kit's own changelog/release notes before enabling
+this on Prod if you'd rather review updates before they apply — `apply 0`
+below only notifies without actually installing, `apply 1` installs.
+
+```bash
+# enable [interval-minutes] [apply 0|1] [notify 0|1] [notify-minutes] [wait-empty 0|1] [max-wait-minutes]
+# (default check interval is 60 minutes if omitted -- shown explicitly
+# below for clarity, not because it differs from the default)
+# Dev: apply automatically (low risk, no players depending on uptime)
+ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune update auto enable 60 1 1 15 0 360"
+
+# Prod: notify only, don't auto-apply -- review updates before they land
+# on the live battlegroup (adjust to 'apply 1' later once you're
+# comfortable trusting unattended updates on Prod specifically)
+ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune update auto enable 60 0 1 15 0 360"
+```
+
+**VERIFY:**
+```bash
+ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune update auto status"
+ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune update auto status"
+```
+
+### 4.6 Enable IP-Change-Restart
+
+This project's own findings register already flags "single static IPv4
+with no failover" (L-7) as an accepted risk -- this doesn't fix that, but
+it does make sure that if your ISP ever *does* rotate your public IP
+(common on non-business tiers even with a "static" plan), the game server
+restarts and re-advertises the new IP to FLS automatically instead of
+silently becoming unreachable until someone notices.
+
+```bash
+ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune ip-change-restart enable"
+ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune ip-change-restart enable"
+```
+
+**VERIFY:**
+```bash
+ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune ip-change-restart status"
+ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune ip-change-restart status"
+```
+
 ## State After Completion
 - [ ] Dev battlegroup: initialized, backup imported, Sietch validates, DB healthy
 - [ ] 4 Deep Desert instances validated on Dev (mechanical gate C-11 fixed)
@@ -222,6 +269,9 @@ ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/d
 - [ ] Strong admin passwords set on both VMs
 - [ ] Restart schedules enabled (6-hourly)
 - [ ] DB auto-backup enabled on both VMs
+- [ ] Auto-update enabled on both VMs (Dev auto-applies, Prod notify-only
+      by default — adjust once comfortable trusting unattended Prod updates)
+- [ ] IP-change-restart enabled on both VMs
 - [ ] `dune ports` clean — no IP mismatch warnings
 
 ## Next Prompt
