@@ -139,8 +139,26 @@ check "V3" CRITICAL "dune-prod memory (expect 152 GB)" \
 check "V4" CRITICAL "dune-prod cores (expect 40)" \
   "$PROXMOX" "qm config 101 | grep '^cores:'" "40"
 
-check "V5" CRITICAL "dune-prod CPU affinity to socket 0" \
-  "$PROXMOX" "qm config 101 | grep '^affinity:'" "0-19"
+## V5/V10 fix (issue #62, 2026-08-14): scripts/02-provision-vms.sh detects
+## each NUMA node's real CPU list at runtime via `lscpu -p=CPU,NODE`
+## because this host's actual topology is interleaved (socket 0 = all
+## even logical CPU IDs, socket 1 = all odd IDs), not two contiguous
+## blocks -- see that script's own header comment. The exact CPU list is
+## therefore host-specific and can't be hardcoded as a fixed range like
+## the previous "0-19"/"20-29" (which would now always fail once VMs are
+## actually pinned with the corrected values). Check the structural
+## property instead: every CPU ID in dune-prod's affinity is even
+## (socket 0), every CPU ID in dune-dev's affinity is odd (socket 1).
+## NOTE: this deliberately rejects any "-" range syntax (e.g. a stale
+## "0-19") as MIXED/invalid up front -- scripts/02-provision-vms.sh always
+## emits a flat comma list of individual detected CPU IDs, never a range,
+## so a "-" appearing here means either a manually-typed contiguous range
+## (exactly the bug this fix replaces) or Proxmox's own range-compaction
+## of a list that happens to be contiguous, neither of which this repo's
+## provisioning path should ever produce -- treat both as a real finding
+## worth investigating rather than silently passing.
+check "V5" CRITICAL "dune-prod CPU affinity: all-even CPU IDs (this host's socket 0 under its interleaved NUMA topology -- exact IDs are host-specific, see scripts/02-provision-vms.sh)" \
+  "$PROXMOX" "AFF=\$(qm config 101 | sed -n 's/^affinity: *//p'); if [ -z \"\$AFF\" ]; then echo NO_AFFINITY; elif echo \"\$AFF\" | grep -q '-'; then echo RANGE_SYNTAX_UNEXPECTED; elif echo \"\$AFF\" | tr ',' '\n' | grep -qE '[13579]\$'; then echo MIXED; else echo ALL_EVEN; fi" "ALL_EVEN"
 
 check "V6" WARN "dune-prod bridge VLAN-aware" \
   "$PROXMOX" "grep 'bridge-vlan-aware' /etc/network/interfaces" "yes"
@@ -154,8 +172,8 @@ check "V8" CRITICAL "dune-dev memory (expect 50 GB)" \
 check "V9" CRITICAL "dune-dev cores (expect 20)" \
   "$PROXMOX" "qm config 102 | grep '^cores:'" "20"
 
-check "V10" CRITICAL "dune-dev CPU affinity to socket 1" \
-  "$PROXMOX" "qm config 102 | grep '^affinity:'" "20-29"
+check "V10" CRITICAL "dune-dev CPU affinity: all-odd CPU IDs (this host's socket 1 under its interleaved NUMA topology -- exact IDs are host-specific, see scripts/02-provision-vms.sh)" \
+  "$PROXMOX" "AFF=\$(qm config 102 | sed -n 's/^affinity: *//p'); if [ -z \"\$AFF\" ]; then echo NO_AFFINITY; elif echo \"\$AFF\" | grep -q '-'; then echo RANGE_SYNTAX_UNEXPECTED; elif echo \"\$AFF\" | tr ',' '\n' | grep -qE '[02468]\$'; then echo MIXED; else echo ALL_ODD; fi" "ALL_ODD"
 
 check "V11" WARN "VM auto-start enabled and ordered" \
   "$PROXMOX" "qm config 101 | grep '^onboot:\|^startup:' | wc -l" "2"
