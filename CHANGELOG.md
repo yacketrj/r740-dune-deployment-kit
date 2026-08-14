@@ -69,6 +69,14 @@ introduced them, in Keep a Changelog style, newest first.
   file has only ever lived at
   `~/projects/meta/Arrakis-Project/archive/INCIDENT-INDEX.md`. This
   prompt was never updated to match that correction. (#69)
+- `prompts/tabr-tau/04-e2e-verification.md` Phase 6.1's `cp` command
+  targeted `compliance/evidence/go-live/`, a directory that did not
+  exist anywhere in the repo (git doesn't track empty directories, and
+  unlike `compliance/evidence/decommissions/` this one had no tracked
+  file yet to keep it present) — would have failed with "No such file
+  or directory" if run verbatim on a fresh clone. Added a `mkdir -p`
+  before the `cp`, plus a `.gitkeep` so the directory exists from a
+  fresh clone even before this step runs. (#71)
 
 ### Fixed
 
