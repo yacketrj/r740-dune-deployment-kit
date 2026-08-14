@@ -23,7 +23,6 @@ Dell R740 (Proxmox VE hypervisor)
       stack, migrating from its current OCI VPS to eliminate cloud costs
       -- this has NOT happened yet as of this writing. The bot is a live,
       currently-running production service on OCI right now. See
-      `prompts/tabr-tau/01-bot-secrets-rotation.md` and
       `prompts/r740xd/03-bot-deploy-and-tunnel.md` for the planned,
       not-yet-executed migration procedure.)
 ```
@@ -88,12 +87,21 @@ r740-deployment/
 │                                         fill in real values, keep it open
 │                                         alongside the prompts below
 ├── prompts/                          <- step-by-step execution prompts,
-│                                         split by WHICH MACHINE runs them
-│   ├── tabr-tau/                     <- runs on your dev machine
+│                                         split into TWO SEPARATE SESSIONS
+│                                         by scope (gathering vs. install/
+│                                         config), not just by machine --
+│                                         see issue #59
+│   ├── tabr-tau/                     <- gathering-only session, on your
+│   │   │                                dev machine -- credentials/config
+│   │   │                                values ONLY, never installs or
+│   │   │                                configures anything
 │   │   ├── 00-prerequisites.md
-│   │   ├── 01-bot-secrets-rotation.md
 │   │   └── 04-e2e-verification.md
-│   └── r740xd/                       <- runs on/against the R740 and its VMs
+│   └── r740xd/                       <- install/config session, on/against
+│       │                                the R740 and its VMs -- ALL actual
+│       │                                setup work happens here, even steps
+│       │                                typed at your dev machine's terminal
+│       │                                (e.g. SSH commands targeting a VM)
 │       ├── 01-proxmox-and-vms.md
 │       ├── 02-game-servers.md
 │       └── 03-bot-deploy-and-tunnel.md
@@ -116,44 +124,57 @@ says "see `docs/0N-...md`" for the full explanation of why a step exists.
 
 ## Order of Operations
 
+**Session boundary (2026-08-14):** `prompts/tabr-tau/*` and
+`prompts/r740xd/*` are meant to be run as two genuinely separate
+sessions. Tabr-Tau sessions (on your dev machine) are strictly for
+gathering credentials/tokens/config values — nothing that installs or
+configures anything. R740xd sessions (on/against the R740 itself,
+including steps executed by typing at your dev machine's terminal but
+targeting the R740 or its VMs via SSH) do all actual installation and
+configuration work. See issue #59 for the audit that established this
+and moved several previously-misplaced steps between files.
+
 1. Read `01-proxmox-install.md`, install Proxmox on the R740.
 2. Read `02-network-setup.md`, configure the UCG-Max's VLANs and firewall
    rules (do this in parallel with #1 if you have two people, or before/after —
    order between these two doesn't matter, both must be done before VM traffic
    needs to flow).
-3. On your dev machine, run through `prompts/tabr-tau/00-prerequisites.md`
-   (ISOs, Funcom tokens, `values.env` filled in).
-4. Run `scripts/01-validate-avx2.sh` on Proxmox — **do not skip this**. If it
-   fails, fix CPU type before proceeding to real VMs. (Also covered as
-   Phase 1 of `prompts/r740xd/01-proxmox-and-vms.md`.)
-5. Run `scripts/02-provision-vms.sh` on Proxmox to create `dune-prod` and
-   `dune-dev` VM shells, then install Ubuntu Server 26.04 LTS in each via the
-   Proxmox console (this part is interactive, no script covers OS install).
-   (`prompts/r740xd/01-proxmox-and-vms.md` covers this end to end.)
-6. Inside each VM, run `scripts/03-vm-guest-bootstrap.sh` to install Docker
-   and clone the repo.
-7. On the gaming PC, the night before or morning of cutover, run
-   `scripts/06-pre-migration-backup.sh` to take the final DB backup and stage
-   it for transfer.
-8. Inside `dune-dev`, run `scripts/04-init-dev-battlegroup.sh` (imports the
-   real backup). Inside `dune-prod`, run `scripts/05-init-prod-battlegroup.sh`
-   (clean build, no import). (`prompts/r740xd/02-game-servers.md` covers
-   both, plus restart-schedule/db-auto/update-auto/ip-change-restart
-   automation setup.)
-9. On your dev machine, run `prompts/tabr-tau/01-bot-secrets-rotation.md`
-   to rotate the ACP bot's secrets — **only when the bot migration is
-   actually being executed**, not as part of the initial game-server
-   stand-up (see the bot-migration warning in `docs/03-runbook-day-of.md`).
-10. Run `prompts/r740xd/03-bot-deploy-and-tunnel.md` to deploy the bot and
-    configure the Cloudflare Tunnel — same timing caveat as step 9.
-11. Follow `03-runbook-day-of.md` for the exact cutover sequence (port
-    forwards, cloudflared repoint, external reachability test).
-12. Follow `04-post-standup-hardening.md` before considering either VM
-    "production."
-13. Run `prompts/tabr-tau/04-e2e-verification.md` (or
-    `scripts/11-e2e-verify.sh` directly) for the full automated go-live
-    verification suite.
-14. Burn in for at least a few days. Only then run
+3. **Start a Tabr-Tau session** on your dev machine, run
+   `prompts/tabr-tau/00-prerequisites.md` (credentials, Funcom tokens,
+   `values.env` filled in, bot secrets staged locally). This session's
+   job ends there — it does not touch the R740 or any VM.
+4. **Start a separate R740xd session**, on/against the R740 itself.
+   `prompts/r740xd/01-proxmox-and-vms.md` covers everything from here
+   through both VMs being bootstrapped: ISO acquisition (Phase 0),
+   Proxmox install, `scripts/01-validate-avx2.sh` (**do not skip this** —
+   if it fails, fix CPU type before proceeding), `scripts/02-provision-vms.sh`
+   to create both VM shells, interactive Ubuntu Server 26.04 install on
+   each (no script covers this — you want to see it happen), and
+   `scripts/03-vm-guest-bootstrap.sh` inside each VM.
+5. On the gaming PC, the night before or morning of cutover, run
+   `scripts/06-pre-migration-backup.sh` to take the final DB backup and
+   stage it for transfer.
+6. Continuing the R740xd session (or a fresh one),
+   `prompts/r740xd/02-game-servers.md` covers both battlegroup
+   initializations (`scripts/04-init-dev-battlegroup.sh` importing the
+   real backup, `scripts/05-init-prod-battlegroup.sh` clean-build) plus
+   restart-schedule/db-auto/update-auto/ip-change-restart automation
+   setup.
+7. **Only when the bot migration is actually being executed** — not as
+   part of the initial game-server stand-up (see the bot-migration
+   warning in `docs/03-runbook-day-of.md`) — run
+   `prompts/r740xd/03-bot-deploy-and-tunnel.md`, which rotates the ACP
+   bot's secrets, deploys the bot, and configures the Cloudflare Tunnel,
+   all within the same R740xd session.
+8. Follow `03-runbook-day-of.md` for the exact cutover sequence (port
+   forwards, cloudflared repoint, external reachability test).
+9. Follow `04-post-standup-hardening.md` before considering either VM
+   "production."
+10. **Start a Tabr-Tau session again** for
+    `prompts/tabr-tau/04-e2e-verification.md` (or run
+    `scripts/11-e2e-verify.sh` directly) — the full automated go-live
+    verification suite, run from the dev machine.
+11. Burn in for at least a few days. Only then run
     `scripts/07-wsl-decommission.sh` on the gaming PC.
 
 ## Rollback Points
