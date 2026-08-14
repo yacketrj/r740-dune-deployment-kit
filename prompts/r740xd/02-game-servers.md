@@ -40,6 +40,29 @@ All checksums must report "OK". If any fail, stop and do not import —
 report the failure to the user rather than proceeding with a possibly
 corrupt backup.
 
+### 1.1 Transfer and Restore runtime/secrets/ and runtime/generated/ (issue #80)
+
+`scripts/06-pre-migration-backup.sh` also stages `runtime-secrets.tar.gz`
+and `runtime-generated.tar.gz` in the same staging directory. Decide
+per-value whether Dev needs the gaming PC's credentials/config carried
+forward, or whether it should get its own fresh `runtime/secrets/` from
+`dune init` below (issue #80's fix intentionally leaves this a manual
+decision, not a blanket copy) — ask the user if unclear. If restoring
+onto Dev:
+```bash
+scp /tmp/opencode/dune-migration-final/runtime-secrets.tar.gz \
+    /tmp/opencode/dune-migration-final/runtime-generated.tar.gz \
+    dune@192.168.21.10:~/dune-awakening-selfhost-docker/runtime/
+ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker/runtime && \
+    tar -xzf runtime-secrets.tar.gz && tar -xzf runtime-generated.tar.gz && \
+    chmod 600 secrets/* && rm runtime-secrets.tar.gz runtime-generated.tar.gz"
+```
+If restoring, do this BEFORE running `dune init` in Phase 2 below, so
+`init` sees the carried-forward `runtime/secrets/funcom-token.txt`
+rather than prompting fresh. If Dev should get fresh credentials
+instead, skip this step entirely and let `dune init` create
+`runtime/secrets/` from scratch.
+
 ## Phase 2: Initialize Dev Battlegroup (WITH backup import)
 
 ### 2.1 Run dune init

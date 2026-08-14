@@ -30,6 +30,14 @@ Print this or keep it open on a second device. Check off each step.
       `dune-dev`'s `runtime/backups/db/` directory
 - [ ] On `dune-dev`, verify the checksum matches before importing:
       `sha256sum <file> ` vs the transferred `.sha256`
+- [ ] Decide whether Dev should carry forward the gaming PC's
+      `runtime/secrets/` and `runtime/generated/` (issue #80), or get
+      fresh values from `dune init` below — if carrying forward, `scp`
+      + extract `runtime-secrets.tar.gz` and `runtime-generated.tar.gz`
+      from the same staging directory onto `dune-dev` BEFORE running
+      `dune init`, and `chmod 600` the extracted secrets files
+      (`runtime/addons/` is intentionally not part of this — addons are
+      easily reinstalled)
 
 ## Battlegroup Initialization
 
