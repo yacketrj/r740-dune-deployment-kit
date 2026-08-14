@@ -3,6 +3,121 @@
 **Date:** 2026-08-07 | **Review scope:** Full R740 deployment (Proxmox → VMs → game servers → ACP bot → Cloudflare)  
 **Status key:** ✅ Resolved | 📝 Documented | 🔧 Code needed | 🐛 Issue filed | ⏳ Deferred
 
+**Correction (2026-08-14):** this register's CRITICAL section was
+missing entirely from the earliest version of this file that ever
+landed on `main` — despite the Summary table at the bottom always
+having claimed 11 CRITICAL findings. Every issue-number citation
+throughout the HIGH/MEDIUM/LOW sections below was also wrong (a
+consistent off-by-one and worse, verified 2026-08-14 by cross-checking
+every `🐛 #N` citation against the real GitHub issue at that number) —
+both defects are fixed in this pass. 7 of the original 11 CRITICAL
+findings were reconstructable from real fix-references already
+scattered across this repo's `prompts/`/`docs/` (C-2, C-3, C-4, C-6,
+C-7, C-8, C-11); the remaining ~4 CRITICAL findings' actual content was
+never captured anywhere recoverable and could not be reconstructed —
+see the note in the CRITICAL section below rather than fabricating
+content to hit the original count of 11.
+
+---
+
+## CRITICAL Findings (11 originally claimed — 7 recoverable, ~4 lost)
+
+### C-2: Game containers run `--privileged --seccomp=unconfined --network host`
+**Status:** 🔧 Code needed | 🐛 #3  
+**Hat:** Security, Architect  
+Inherited from upstream, required by Funcom's closed-source binary. A
+remote code execution exploit provides root-equivalent VM compromise.  
+**Fix (per issue #3):** Document this as an accepted risk with
+compensating controls (host-level egress filtering, auditd for breakout
+detection, verified VLAN isolation) — not something this kit can
+eliminate given the upstream binary's requirements.
+
+### C-3: Postgres password rotation instructions in hardening doc were wrong
+**Status:** ✅ Resolved  
+**Hat:** DBA, Security  
+The hardening doc previously said to append a new password to `.env`
+and restart — this does not actually rotate the live Postgres role's
+password, only the app's expectation of it, leaving them out of sync.  
+**Fix:** Corrected to use the console API's `changeDunePassword`
+endpoint, which handles both the `ALTER ROLE` and the `.env` update
+atomically. See `docs/04-post-standup-hardening.md` and
+`prompts/r740xd/02-game-servers.md` Phase 4.1.
+
+### C-4: No automated backup for the ACP bot's SQLite database
+**Status:** ✅ Resolved  
+**Hat:** DBA, GRC  
+The bot's `acp.db` (per-guild adapter tokens, link state) had no backup
+mechanism at all, unlike the game server's Postgres DB.  
+**Fix:** Daily systemd timer (`acp-db-backup.timer`) created, documented
+in `prompts/r740xd/03-bot-deploy-and-tunnel.md` Phase 3.1 and verified
+in `prompts/tabr-tau/04-e2e-verification.md`.
+
+### C-6: Discord bot secrets copied verbatim from the OCI instance, never rotated
+**Status:** ✅ Resolved (documented, operator must execute)  
+**Hat:** Cloud Security  
+Secrets transferred during the planned bot migration (token, OAuth
+client secret, `ACP_SECRETS_KEY`) would otherwise carry over unrotated
+from a host being decommissioned — anyone with residual access to the
+old host's backups would retain live credential access indefinitely.  
+**Fix:** Full rotation procedure documented in
+`prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1 — must be executed
+as part of the migration, not treated as optional.
+
+### C-7: `deploy-post-receive.sh` had no working-tree dirty guard
+**Status:** ✅ Resolved | 🐛 #2, closed 2026-08-14 (fixed in
+`arrakis-control-panel` PR #165 — `deploy-post-receive.sh` has never
+existed in *this* repo; this finding was filed here by mistake during
+the original eight-hats review, a process note worth remembering: an
+issue's severity/finding-code can be right even when the repo it's
+filed against is wrong)  
+**Hat:** Architect, Security  
+`git reset --hard` with no pre-check for local modifications — a
+debugging session SSH'd into the deploy target would have its
+in-progress work silently discarded by the next deploy.  
+**Fix:** Added an explicit dirty-tree check before the reset, refusing
+to deploy if the working tree has uncommitted changes.
+
+### C-8: Cloudflare Access was "recommended", not enforced, for the admin console
+**Status:** ✅ Resolved  
+**Hat:** Security, Cloud Security  
+The admin console mounts the Docker socket — reaching its login page is
+one password away from root-equivalent VM access. Treating Cloudflare
+Access as optional left a real path to that exposure.  
+**Fix:** Documented as MANDATORY, not optional, in
+`prompts/r740xd/03-bot-deploy-and-tunnel.md` Phase 2.2, with an explicit
+verification step (confirm an incognito browser hits the Access login
+wall, not the console login, before considering the console safe).
+
+### C-11: 4 concurrent Deep Desert instances is an unvalidated configuration
+**Status:** ✅ Resolved (mechanical gate added)  
+**Hat:** QA, Architect  
+No confirmed report existed of anyone else running 4 concurrent Deep
+Desert instances — deploying this configuration straight to Prod without
+validation risked an unknown failure mode under real load.  
+**Fix:** `prompts/r740xd/02-game-servers.md` Phase 2.3 requires
+validating 4 instances on Dev first (10-minute stability run, captured
+evidence) as a mechanical gate before the same configuration is applied
+to Prod in Phase 4.
+
+### C-1, and 3 more CRITICAL findings — content permanently lost
+**Status:** ⏳ Unrecoverable  
+**Hat:** N/A  
+This register's CRITICAL section was empty in the earliest version that
+ever landed in this repo's git history — the Summary table's claim of
+"11 CRITICAL findings" was never backed by actual written content for
+at least 4 of them (the 7 above account for C-2/C-3/C-4/C-6/C-7/C-8/C-11
+specifically; whichever findings were originally numbered C-1, C-5,
+C-9, C-10, or similar were never captured anywhere this correction pass
+could find — no cross-references to them exist in any commit, doc, or
+script comment in this repo's history). If the original eight-hats
+review session that produced this register still has any record of
+them (chat history, a draft that was never committed), they should be
+added here properly cited; otherwise this gap is permanent and this
+note stands as the honest record of that loss, per this project's own
+Requirement 12 (documentation must reflect verified reality, not
+assumption) — fabricating plausible-sounding findings to hit the
+original count of 11 would be worse than an honest gap.
+
 ---
 
 ## HIGH Findings (13)
@@ -14,13 +129,17 @@ Guest uses `--numa 1` but physical host has 2 sockets. 152 GB may be allocated f
 **Fix:** Add `--numa0 cpus=0-39,hostnodes=0,memory=155648,policy=bind` to `02-provision-vms.sh` line 71. Document NUMA topology in `01-proxmox-install.md`.
 
 ### H-2: Prod VM CPU oversubscribed by ~30% at peak
-**Status:** 📝 Documented | 🐛 #2  
+**Status:** 📝 Documented (no GitHub issue filed — accepted-risk finding,
+mitigation is monitoring-based, not a code change; correction 2026-08-14:
+previously cited `#2`, which is actually issue C-7, unrelated to this
+finding)  
 **Hat:** Architect  
 52 vCPU peak vs 40 threads allocated. SMT contention under single-threaded game workloads.  
 **Mitigation:** Monitor CPU steal time. Increase to 48 vCPU if contention observed. Documented as accepted risk in architecture docs.
 
 ### H-3: Bot co-location is an undocumented risk acceptance
-**Status:** 📝 Documented | 🐛 #3  
+**Status:** 📝 Documented | 🐛 #14 (correction 2026-08-14: previously
+cited `#3`, which is actually issue C-2, unrelated to this finding)  
 **Hat:** Architect, GRC, Security  
 Moving bot from independent OCI VPS onto game server VM eliminates operational isolation. Cost trade-off (~$3,600/yr saved) with zero written risk acceptance.  
 **Fix:** Created formal risk acceptance per GRC-03. See `docs/risk-acceptance-bot-colocation.md`.
@@ -83,7 +202,8 @@ Tunnel config now includes `ACP_SETUP_TUNNEL_HOSTNAME path=/auth/steam → local
 ## MEDIUM Findings (18)
 
 ### M-1: Dev VM has zero RAM headroom — OOM inevitable under load
-**Status:** 📝 Documented | 🐛 #6  
+**Status:** 📝 Documented | 🐛 #15 (correction 2026-08-14: previously
+cited `#6`, which is actually finding M-10)  
 **Hat:** Architect  
 50 GB allocated vs 50 GB estimated peak = zero headroom.  
 **Mitigation:** Increase to 56 GB or document as accepted dev-only risk.
@@ -94,18 +214,21 @@ Tunnel config now includes `ACP_SETUP_TUNNEL_HOSTNAME path=/auth/steam → local
 `acp-bot.service` should add `After=docker.service cloudflared.service` and `Requires=docker.service`. Fixed in the systemd unit template.
 
 ### M-3: --cpu host blocks future live migration
-**Status:** 📝 Documented | 🐛 #7  
+**Status:** 📝 Documented (no GitHub issue filed — accepted permanent
+constraint, not a code change; correction 2026-08-14: previously cited
+`#7`, which is actually finding M-9)  
 **Hat:** Architect  
 Required for AVX2 passthrough. Document as permanent constraint.
 
 ### M-4: No host-level firewall on either VM
-**Status:** 🔧 Code needed | 🐛 #8  
+**Status:** 🔧 Code needed | 🐛 #8 (verified correct 2026-08-14)  
 **Hat:** Security  
 VLAN isolation is single layer. Add UFW/nftables rules as defense-in-depth.  
 **Fix:** Add to hardening checklist: install `ufw`, allow SSH + game ports, deny all else. Add verification to 11-e2e-verify.sh.
 
 ### M-5: No egress filtering from VMs
-**Status:** 🔧 Code needed | 🐛 #9  
+**Status:** 🔧 Code needed | 🐛 #12 (correction 2026-08-14: previously
+cited `#9`, which is actually finding M-7)  
 **Hat:** Security  
 Compromised container can initiate outbound C2. Add iptables egress rules restricting outbound to known services (Discord API, Steam, Funcom, Cloudflare).  
 **Fix:** Document egress allowlist in hardening doc. Add iptables rules to initialization script.
@@ -117,31 +240,36 @@ Missing: `ProtectProc=invisible`, `ProcSubset=pid`, `CapabilityBoundingSet=`, `P
 **Fix:** Add to `systemd/acp-bot.service` in ACP repo. Document rationale per directive.
 
 ### M-7: No SSH hardening beyond default install
-**Status:** 🔧 Code needed | 🐛 #10  
+**Status:** 🔧 Code needed | 🐛 #9 (correction 2026-08-14: previously
+cited `#10`, which is actually finding M-8)  
 **Hat:** Security  
 Missing: `PasswordAuthentication no`, `AllowUsers dune`, `MaxAuthTries 3`, fail2ban.  
 **Fix:** Add to `03-vm-guest-bootstrap.sh` or separate hardening script. Add to 11-e2e-verify.sh.
 
 ### M-8: No intrusion detection, file integrity monitoring, or audit logging
-**Status:** 🔧 Code needed | 🐛 #11  
+**Status:** 🔧 Code needed | 🐛 #10 (correction 2026-08-14: previously
+cited `#11`, which is actually finding M-11)  
 **Hat:** Security  
 Zero HIDS/NIDS. No auditd, AIDE, osquery, fail2ban, or log forwarding.  
 **Fix:** Document minimum viable monitoring stack (auditd + fail2ban) in hardening doc. Create install script.
 
 ### M-9: No Proxmox-level VM backup or snapshot strategy
-**Status:** 🔧 Code needed | 🐛 #12  
+**Status:** 🔧 Code needed | 🐛 #7 (correction 2026-08-14: previously
+cited `#12`, which is actually finding M-5)  
 **Hat:** Security, DBA  
 Backups exist only for game DB + bot SQLite. VM disks have no snapshot schedule. `vzdump` with QEMU guest agent is available (agent enabled).  
 **Fix:** Add weekly `vzdump 101 102 --mode snapshot --compress zstd` cron on Proxmox host. Document retention policy.
 
 ### M-10: No credential rotation schedule exists
-**Status:** 📝 Documented | 🐛 #13  
+**Status:** 📝 Documented | 🐛 #6 (correction 2026-08-14: previously
+cited `#13`, which is actually finding M-18, already closed)  
 **Hat:** GRC  
 No rotation cadence for any of 10+ credentials (Proxmox root, VM users, Funcom tokens, Discord tokens, DB passwords, SSH key).  
 **Fix:** Create `docs/07-credential-rotation.md` with inventory, recommended cadences, and last-rotation tracking.
 
 ### M-11: No full "R740 dies" rebuild procedure
-**Status:** 📝 Documented | 🐛 #14  
+**Status:** 📝 Documented | 🐛 #11 (correction 2026-08-14: previously
+cited `#14`, which is actually finding H-3)  
 **Hat:** GRC  
 Skeletal 9-line DR section in backup-recovery.md. No step-by-step rebuild with sequenced commands.  
 **Fix:** Create `docs/08-disaster-recovery-full-rebuild.md` with hardware procurement → rack → BIOS → Proxmox → VMs → Docker → dune init → bot → tunnel → verification.
@@ -197,7 +325,9 @@ IGW is server-to-server only, stays within Docker bridge. Documented in network 
 **Fix:** Remove `|| true`. Report failure explicitly but don't abort (ready check can have warnings).
 
 ### M-18: CI markdown-lint subshell variable scoping bug
-**Status:** 🔧 Code needed | 🐛 #16  
+**Status:** ✅ Resolved | 🐛 #13, closed (correction 2026-08-14:
+previously cited `#16`, which is actually finding L-1; this finding's
+own fix landed and #13 was closed via PR #30)  
 **Hat:** QA  
 `ci.yml:73-80` uses `grep | while read` which creates subshell — `fail=` assignment lost.  
 **Fix:** Use process substitution `while read ... done < <(grep ...)` or rewrite without pipe.
@@ -206,34 +336,54 @@ IGW is server-to-server only, stays within Docker bridge. Documented in network 
 
 ## LOW Findings (15) — All Deferred with Issues
 
+**Correction (2026-08-14):** every issue number in this table was off
+by exactly +1 against the real GitHub issue at that number (e.g. L-1
+cited `#17`, which is actually L-2; the real issue for L-1 is `#16`).
+Corrected below after verifying every number against the real issue
+title at that number.
+
 | # | Finding | Issue |
 |---|---|---|
-| L-1 | Single physical host — RAID1 covers disk not controller/PSU/motherboard | 🐛 #17 |
-| L-2 | Game assets path (`~/game-assets/`) not replicated to VMs | 🐛 #18 |
-| L-3 | ISO storage variable drift between script and prompt | 🐛 #19 |
-| L-4 | R740 BIOS side-channel surface (Spectre/Meltdown) not mitigated | 🐛 #20 |
-| L-5 | No network monitoring defined (SNMP, UniFi API, external probes) | 🐛 #21 |
-| L-6 | Firewall established/related rule position may break inter-VLAN blocks | 🐛 #22 |
-| L-7 | Single static IPv4 with no failover — accepted, needs documentation | 🐛 #23 |
-| L-8 | DNS hardcoded to 1.1.1.1 — no split-horizon for internal services | 🐛 #24 |
-| L-9 | Proxmox credential recovery path undocumented | 🐛 #25 |
+| L-1 | Single physical host — RAID1 covers disk not controller/PSU/motherboard | 🐛 #16 |
+| L-2 | Game assets path (`~/game-assets/`) not replicated to VMs | 🐛 #17 |
+| L-3 | ISO storage variable drift between script and prompt | 🐛 #18 |
+| L-4 | R740 BIOS side-channel surface (Spectre/Meltdown) not mitigated | 🐛 #19 |
+| L-5 | No network monitoring defined (SNMP, UniFi API, external probes) | 🐛 #20 |
+| L-6 | Firewall established/related rule position may break inter-VLAN blocks | 🐛 #21 |
+| L-7 | Single static IPv4 with no failover — accepted, needs documentation | 🐛 #22 |
+| L-8 | DNS hardcoded to 1.1.1.1 — no split-horizon for internal services | 🐛 #23 |
+| L-9 | Proxmox credential recovery path undocumented | 🐛 #24 |
 | L-10 | "Dual Deep Desert" UI language misleading for 4-instance deployment | 🐛 Core# |
 | L-11 | Deep Desert instances show identical names in embeds/console | 🐛 Core# |
 | L-12 | Setup portal uses raw `alert()` for errors, destroys DOM on success | 🐛 ACP# |
-| L-13 | No Cloudflare service monitoring/alerting (tunnel, Pages, Access) | 🐛 #26 |
+| L-13 | No Cloudflare service monitoring/alerting (tunnel, Pages, Access) | 🐛 #25 |
 | L-14 | Dynamic map despawn leaves orphaned `player_state` rows | 🐛 Core# |
-| L-15 | No test for `07-wsl-decommission.sh` — destroys without verifying | 🐛 #27 |
+| L-15 | No test for `07-wsl-decommission.sh` — destroys without verifying | 🐛 #26 |
 
 ---
 
 ## Summary
 
-| Severity | Total | Resolved | Documented | Needs Code | Issue Created |
-|---|---|---|---|---|---|
-| CRITICAL | 11 | 7 | 2 | 2 | ✅ |
-| HIGH | 13 | 8 | 2 | 3 | ✅ |
-| MEDIUM | 18 | 5 | 3 | 10 | ✅ |
-| LOW | 15 | 0 | 0 | 15 | ✅ |
-| **TOTAL** | **57** | **20** | **7** | **30** | **57** |
+**Corrected 2026-08-14** — see the CRITICAL section header and the LOW
+table note above for the two defects fixed in this pass (missing
+CRITICAL content, systematically wrong issue-number citations
+throughout). The table below reflects only what is actually documented
+in this file as of this correction, not the original, never-substantiated
+claim of 57 total findings across all severities.
 
-**All 57 findings have a resolution path.** 20 are already resolved via documentation/prompts/scripts created during this review. 7 are documented as accepted risks with compensating controls. 30 require code changes and have corresponding GitHub issues filed.
+| Severity | Total (documented) | Resolved | Documented | Needs Code | Unrecoverable |
+|---|---|---|---|---|---|
+| CRITICAL | 7 (of 11 originally claimed) | 6 | 0 | 1 | 4 |
+| HIGH | 13 | 7 | 2 | 4 | 0 |
+| MEDIUM | 18 | 6 | 4 | 8 | 0 |
+| LOW | 15 | 0 | 0 | 15 | 0 |
+| **TOTAL** | **53** (of 57 originally claimed) | **19** | **6** | **28** | **4** |
+
+**53 of the originally-claimed 57 findings have real, verifiable content
+and a resolution path** — either already resolved, documented as an
+accepted risk, or tracked with a correctly-cited GitHub issue (every
+citation independently re-verified 2026-08-14 against the real issue
+title at that number). **4 CRITICAL findings' content is permanently
+lost** (see the CRITICAL section's closing note) — treat "57" as this
+register's original, unverified aspiration, and "53" as its actual,
+audited content going forward.
