@@ -174,8 +174,13 @@ for those steps.
 ### 6.1 Save Verification Report
 Run:
 ```bash
+mkdir -p ~/r740-deployment/compliance/evidence/go-live/
 cp /tmp/opencode/e2e-report-*.txt ~/r740-deployment/compliance/evidence/go-live/
 ```
+The `mkdir -p` is required: `compliance/evidence/go-live/` does not
+exist by default in a fresh clone (issue #71 — git doesn't track empty
+directories, and unlike `compliance/evidence/decommissions/` this one
+has no tracked file yet to keep it present).
 
 ### 6.2 Complete OCI Decommissioning Evidence
 Fill in and have the user sign
