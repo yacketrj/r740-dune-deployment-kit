@@ -39,6 +39,17 @@ introduced them, in Keep a Changelog style, newest first.
 - Fixed a duplicated `## Troubleshooting` header in the former
   `tabr-tau/04-e2e-verification.md` (now resolved by the file split
   above).
+- `scripts/11-e2e-verify.sh` checks V5/V10 (CPU affinity) hardcoded the
+  old, already-corrected contiguous-range affinity values (`0-19`,
+  `20-29`) from before `scripts/02-provision-vms.sh`'s NUMA fix, which
+  now pins VMs to a runtime-detected, host-specific, interleaved CPU
+  list instead. As written, both checks would always fail once VMs are
+  actually provisioned with the corrected affinity, falsely reporting
+  the deployment as NOT READY FOR PRODUCTION. Replaced with a structural
+  check (all-even CPU IDs for dune-prod/socket 0, all-odd for
+  dune-dev/socket 1, explicitly rejecting stale range syntax like
+  `0-19`) that doesn't depend on this host's specific CPU numbering.
+  (#62)
 
 ### Fixed
 
@@ -207,4 +218,3 @@ re-added with their own verification (matching this file's existing
 discipline of citing what was actually checked, not just claimed) once
 confirmed against real system state.
 -->
-
