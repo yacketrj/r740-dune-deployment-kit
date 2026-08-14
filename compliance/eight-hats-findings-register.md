@@ -138,11 +138,18 @@ finding)
 **Mitigation:** Monitor CPU steal time. Increase to 48 vCPU if contention observed. Documented as accepted risk in architecture docs.
 
 ### H-3: Bot co-location is an undocumented risk acceptance
-**Status:** 📝 Documented | 🐛 #14 (correction 2026-08-14: previously
-cited `#3`, which is actually issue C-2, unrelated to this finding)  
+**Status:** 🔧 Code needed | 🐛 #14 (correction 2026-08-14: previously
+cited `#3`, which is actually issue C-2, unrelated to this finding.
+Also correcting this entry's own status from "📝 Documented" with a
+past-tense "Fix: Created..." — `docs/risk-acceptance-bot-colocation.md`
+does not exist anywhere in this repo's history; verified via direct
+file search, not assumed. This finding is NOT resolved.)  
 **Hat:** Architect, GRC, Security  
 Moving bot from independent OCI VPS onto game server VM eliminates operational isolation. Cost trade-off (~$3,600/yr saved) with zero written risk acceptance.  
-**Fix:** Created formal risk acceptance per GRC-03. See `docs/risk-acceptance-bot-colocation.md`.
+**Fix (not yet done):** Create a formal risk acceptance doc per issue
+#14's own description — document what's gained (cost), what's traded
+(isolation, blast radius), existing mitigations (VLAN isolation, Proxmox
+backups), and a review trigger.
 
 ### H-4: Master operating docs are stale (Live Systems section)
 **Status:** 🔧 Code needed | 🐛 Arrakis-Project#  
@@ -374,10 +381,10 @@ claim of 57 total findings across all severities.
 | Severity | Total (documented) | Resolved | Documented | Needs Code | Unrecoverable |
 |---|---|---|---|---|---|
 | CRITICAL | 7 (of 11 originally claimed) | 6 | 0 | 1 | 4 |
-| HIGH | 13 | 7 | 2 | 4 | 0 |
+| HIGH | 13 | 7 | 1 | 5 | 0 |
 | MEDIUM | 18 | 6 | 4 | 8 | 0 |
 | LOW | 15 | 0 | 0 | 15 | 0 |
-| **TOTAL** | **53** (of 57 originally claimed) | **19** | **6** | **28** | **4** |
+| **TOTAL** | **53** (of 57 originally claimed) | **19** | **5** | **29** | **4** |
 
 **53 of the originally-claimed 57 findings have real, verifiable content
 and a resolution path** — either already resolved, documented as an
