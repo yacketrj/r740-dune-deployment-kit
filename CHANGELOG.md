@@ -89,6 +89,10 @@ introduced them, in Keep a Changelog style, newest first.
   prompt's commands verbatim in Discord would have failed. Phase 3.1's
   five commands were independently cross-checked against the same real
   command list and are all correct. (#73)
+- `prompts/tabr-tau/00-prerequisites.md`'s SSH-key comment referenced
+  bare "issue #81", which doesn't exist in this repo — it's actually
+  `arrakis-control-panel#81`, unqualified. Qualified the reference
+  explicitly. (#75)
 
 ### Fixed
 

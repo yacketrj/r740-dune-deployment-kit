@@ -53,7 +53,8 @@ machine.
 ### 2. Verify SSH Keys
 Run:
 ```bash
-# The SSH key used for deploy remote (issue #81)
+# The SSH key used for deploy remote (arrakis-control-panel#81 -- a
+# different repo; #81 does not exist in this repo)
 ls -la ~/.ssh/ssh-key-2026-07-18.key
 chmod 600 ~/.ssh/ssh-key-2026-07-18.key
 ```
