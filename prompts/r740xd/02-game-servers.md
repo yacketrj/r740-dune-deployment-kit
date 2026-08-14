@@ -279,6 +279,8 @@ ssh dune@192.168.21.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/d
 - [ ] `dune ports` clean — no IP mismatch warnings
 
 ## Next Prompt
-Proceed to `tabr-tau/01-bot-secrets-rotation.md` to rotate the ACP bot's
-secrets, then `r740xd/03-bot-deploy-and-tunnel.md` to deploy the bot,
-configure the Cloudflare Tunnel, and harden the services.
+Proceed to `r740xd/03-bot-deploy-and-tunnel.md`, which rotates the ACP
+bot's secrets, deploys the bot, configures the Cloudflare Tunnel, and
+hardens the services — all in the same R740xd session (see issue #59:
+secret rotation moved out of a separate `tabr-tau/01` prompt since it's
+R740-side configuration work, not dev-machine gathering).

@@ -3,8 +3,8 @@
 # 11-e2e-verify.sh — Full Deployment Verification Suite
 #
 # RUN THIS: from your dev machine, AFTER the full deployment is complete
-#           (prompts/r740xd/01 through prompts/r740xd/03, plus
-#           prompts/tabr-tau/01, executed).
+#           (prompts/r740xd/01 through prompts/r740xd/03 executed, in
+#           their own separate session).
 #
 # Validates: hardware, Proxmox, VMs, Docker, game servers, ACP bot,
 #            Cloudflare Tunnel, security hardening, database backups,

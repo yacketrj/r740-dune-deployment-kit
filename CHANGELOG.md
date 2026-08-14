@@ -8,6 +8,38 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Changed
+
+- Enforced a genuine session boundary between `prompts/tabr-tau/*`
+  (gathering-only: credentials, tokens, config values — never installs
+  or configures anything) and `prompts/r740xd/*` (all actual
+  installation/configuration work, even when typed at a dev machine's
+  terminal but targeting the R740 or its VMs via SSH) (#59). Found real
+  violations: `tabr-tau/00-prerequisites.md` downloaded ISOs and created
+  a bootable USB (now moved into `r740xd/01-proxmox-and-vms.md`'s new
+  Phase 0, also now technically simpler since ISOs can be pulled directly
+  onto the Proxmox host); `tabr-tau/01-bot-secrets-rotation.md` SSHed
+  into `dune-prod` and edited its `.env` (removed entirely, folded into
+  `r740xd/03-bot-deploy-and-tunnel.md`'s new Phase 1/2.2); `tabr-tau/04-e2e-verification.md`
+  mixed dev-machine-appropriate checks with R740-side SSH work
+  (performance baseline, troubleshooting, split into new
+  `r740xd/04-post-deployment-ops.md`).
+- Corrected `r740xd/01-proxmox-and-vms.md`'s inline VLAN-aware-bridge
+  snippet, which was stale/wrong (`bridge-ports eno1` instead of this
+  deployment's actual `nic0`; `bridge-vids 10 20 21 30` including a
+  VLAN 10 that doesn't exist per the real UniFi network config). Replaced
+  with the actual verified-working config, applied live on 2026-08-14
+  with zero connectivity loss, plus a live-verification method (check
+  actual interface names/VLANs before editing, not from an example).
+- Corrected the same file's manual `qm create` fallback commands, which
+  still used the old, already-fixed-elsewhere wrong NUMA affinity ranges
+  (`--affinity 0-19`, `20-29`) that `scripts/02-provision-vms.sh`
+  corrected weeks earlier in this same repo but was never propagated to
+  this prompt's inline fallback.
+- Fixed a duplicated `## Troubleshooting` header in the former
+  `tabr-tau/04-e2e-verification.md` (now resolved by the file split
+  above).
+
 ### Fixed
 
 - Corrected `docs/05-dell-support-case-boot-failure.md`'s status from a

@@ -1,14 +1,22 @@
-# TABR-TAU-04: End-to-End Verification & Go-Live
+# TABR-TAU-04: End-to-End Verification & Go-Live Cutover
 
-This prompt runs ON YOUR DEV MACHINE after ALL deployment phases are
-complete (`tabr-tau/00-prerequisites.md` through
-`r740xd/03-bot-deploy-and-tunnel.md`). It runs the full automated
-verification suite, performs manual checks that can't be automated,
-and walks through the go-live cutover sequence.
+This prompt runs in its own session, ON YOUR DEV MACHINE, after ALL
+R740xd deployment phases are complete
+(`r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`).
+It runs the full automated verification suite, performs manual checks
+that only make sense from outside the R740's own network (WAN
+reachability, browser-based checks), and walks through the go-live
+announcement.
+
+**Scope note (2026-08-14):** this prompt previously also included
+performance-baseline capture and SSH-based troubleshooting commands —
+those were R740-side operations mistakenly included here and have moved
+to `r740xd/04-post-deployment-ops.md` (issue #59). If you need those,
+start a separate R740xd session for that prompt instead.
 
 ## Pre-Requisites
 - `r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`
-  fully executed, including `tabr-tau/01-bot-secrets-rotation.md` in between
+  fully executed (in their own R740xd session)
 - Both VMs online with game servers running
 - ACP bot deployed and connected to Discord
 - Cloudflare Tunnel configured with Access enforced
@@ -38,7 +46,8 @@ This runs 70+ checks across 11 categories:
 The report is saved to `/tmp/opencode/e2e-report-YYYYMMDD-HHMMSS.txt`.
 
 **CRITICAL failures (any):** DO NOT GO LIVE. Fix the failing checks before
-proceeding.
+proceeding (in a separate R740xd session, if the fix requires touching
+the VMs — this dev-machine session shouldn't apply fixes itself).
 
 **Warnings only:** Review each warning. Warnings about optional hardening
 items (SSH, firewall, metrics) can be addressed post-launch. Warnings about
@@ -97,32 +106,9 @@ Have a player (or a test account) verify:
 If `DUNE_POST_SCHEDULE_TYPE` is set, wait for the next scheduled post
 and verify it appears in the configured channel.
 
-## Phase 4: Performance Baseline
+## Phase 4: Go-Live Cutover
 
-### 4.1 Capture Idle Resource Usage
-```bash
-ssh dune@192.168.20.10 << 'ENDSSH'
-echo "=== IDLE BASELINE $(date) ==="
-free -h | head -2
-echo "---"
-docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null | head -20
-echo "---"
-uptime
-ENDSSH
-```
-
-Save this output — it's your baseline for comparing against when players
-are online.
-
-### 4.2 Monitor During First Player Session
-After players join, re-run the stats command above and compare:
-- Memory usage should remain below 140 GB (92% of 152 GB)
-- No container should show CPU consistently above 80%
-- `dune status` should remain healthy
-
-## Phase 5: Go-Live Cutover
-
-### 5.1 Final Check Before Announcement
+### 4.1 Final Check Before Announcement
 - [ ] All CRITICAL checks from 11-e2e-verify.sh pass
 - [ ] Cloudflare Access enforced on `CONSOLE_TUNNEL_HOSTNAME`
 - [ ] Game ports reachable from WAN (cellular test passed)
@@ -135,11 +121,11 @@ After players join, re-run the stats command above and compare:
 - [ ] SQLite backup timer active (C-4 fix)
 - [ ] At least one player tested connectivity from outside
 
-### 5.2 Update Server Listing (if applicable)
+### 4.2 Update Server Listing (if applicable)
 If your server is listed on community server lists, update the IP address
 to your new public IP.
 
-### 5.3 Announce to Player Base
+### 4.3 Announce to Player Base
 Post in your Discord community:
 ```
 @everyone The server migration to new hardware is complete!
@@ -151,14 +137,14 @@ The server IP remains the same. If you experience any issues,
 please report them in <#support-channel>.
 ```
 
-### 5.4 Monitor First 24 Hours
-- [ ] Watch `dune status` hourly for any warnings
-- [ ] Check `journalctl -u acp-bot -n 50` for any bot errors
-- [ ] Monitor player reports for lag, disconnects, or instability
-- [ ] Check Cloudflare Tunnel health
-- [ ] Verify daily DB backups ran successfully
+## Phase 5: Post-Deployment Ops (start a NEW R740xd session)
 
-## Phase 6: Post-Deployment Evidence
+Performance baseline capture, first-24-hours monitoring, and
+troubleshooting commands all require SSH access to the VMs — that's
+R740-side work. Start a separate session and run
+`r740xd/04-post-deployment-ops.md` for those steps.
+
+## Phase 6: Post-Deployment Evidence (back in this dev-machine session)
 
 ### 6.1 Save Verification Report
 ```bash
@@ -167,6 +153,10 @@ cp /tmp/opencode/e2e-report-*.txt ~/r740-deployment/compliance/evidence/go-live/
 
 ### 6.2 Complete OCI Decommissioning Evidence
 Fill in and sign `~/r740-deployment/compliance/evidence/decommissions/2026-08-07-oci-acp-bot-vnic.md`
+— **only once the OCI-to-R740 bot migration has actually been executed**
+(see `r740xd/03-bot-deploy-and-tunnel.md`); this evidence file itself is
+currently just an unexecuted template (see the file's own status note),
+and this step must not be checked off before that migration is real.
 
 ### 6.3 Update Incident Index
 Add an entry to `~/archive/INCIDENT-INDEX.md`:
@@ -175,46 +165,11 @@ INC-2026-08-07-001 | Low | R740 migration — deployment completed, all e2e chec
 ```
 
 ### 6.4 Archive Gaming PC (after burn-in)
-Only after at least 3 days of stable production with real players:
+Only after at least 3 days of stable production with real players, and
+after `r740xd/04-post-deployment-ops.md`'s monitoring phase looks clean:
 ```bash
 # On the gaming PC:
 bash ~/r740-deployment/scripts/07-wsl-decommission.sh
-```
-
-## Troubleshooting
-
-### dune status shows warnings
-
-## Troubleshooting
-
-### dune status shows warnings
-```bash
-# Check each service individually:
-ssh dune@192.168.20.10 "cd ~/dune-awakening-selfhost-docker && runtime/scripts/dune services && runtime/scripts/dune ports"
-# Common fix: if IP mismatch, update SERVER_IP in .env and restart
-```
-
-### Bot not responding in Discord
-```bash
-ssh dune@192.168.20.10 "journalctl -u acp-bot --since '10 min ago' --no-pager | grep -i error"
-# Common fix: verify DISCORD_BOT_TOKEN in .env, restart service
-```
-
-### Players can't connect
-```bash
-# From dev machine, test each port:
-nc -zu -w 2 <PUBLIC_IP> 7778
-nc -z -w 2 <PUBLIC_IP> 31982
-
-# On the VM, verify ports are listening:
-ssh dune@192.168.20.10 "ss -ulnp | grep '777[7-9]'"
-```
-
-### Cloudflare Access not working
-```bash
-# Test tunnel health:
-ssh dune@192.168.20.10 "systemctl status cloudflared && cloudflared tunnel info"
-# Verify Access policy in Cloudflare Zero Trust dashboard
 ```
 
 ## State After Completion
@@ -222,9 +177,8 @@ ssh dune@192.168.20.10 "systemctl status cloudflared && cloudflared tunnel info"
 - [ ] All CRITICAL checks passing
 - [ ] Manual WAN verification passed (cellular + incognito browser)
 - [ ] Discord bot responding to all slash commands
-- [ ] Performance baseline captured
 - [ ] Player base announced
-- [ ] 24-hour monitoring initiated
-- [ ] OCI decommissioning evidence completed
+- [ ] Post-deployment ops session started (`r740xd/04-post-deployment-ops.md`)
+- [ ] OCI decommissioning evidence completed (only once migration is real)
 - [ ] Incident index updated
 - [ ] Go-live evidence saved under `compliance/evidence/go-live/`

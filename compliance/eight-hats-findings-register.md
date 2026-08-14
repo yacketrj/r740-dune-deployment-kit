@@ -60,8 +60,11 @@ client secret, `ACP_SECRETS_KEY`) would otherwise carry over unrotated
 from a host being decommissioned — anyone with residual access to the
 old host's backups would retain live credential access indefinitely.  
 **Fix:** Full rotation procedure documented in
-`prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1 — must be executed
-as part of the migration, not treated as optional.
+`prompts/r740xd/03-bot-deploy-and-tunnel.md` Phase 1 (moved there
+2026-08-14 from a since-removed `tabr-tau/01-bot-secrets-rotation.md` —
+see issue #59: secret rotation is R740-side configuration work, not
+dev-machine gathering) — must be executed as part of the migration, not
+treated as optional.
 
 ### C-7: `deploy-post-receive.sh` had no working-tree dirty guard
 **Status:** ✅ Resolved | 🐛 #2, closed 2026-08-14 (fixed in
@@ -163,12 +166,14 @@ backups), and a review trigger.
 Strict Requirement 13 mandates CHANGELOG. Created below in this session.
 
 ### H-6: Discord OAuth client secret not rotated post-migration
-**Status:** ✅ Resolved (documented in `prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1.2)  
+**Status:** ✅ Resolved (documented in `prompts/r740xd/03-bot-deploy-and-tunnel.md`
+Phase 1.2 — moved there 2026-08-14, see issue #59)  
 **Hat:** Cloud Security  
 `DISCORD_CLIENT_SECRET` was on OCI instance. Rotation procedure documented. Operator must execute.
 
 ### H-7: ACP_SECRETS_KEY status unknown — plaintext secrets at risk
-**Status:** ✅ Resolved (documented in `prompts/tabr-tau/01-bot-secrets-rotation.md` Phase 1.3)  
+**Status:** ✅ Resolved (documented in `prompts/r740xd/03-bot-deploy-and-tunnel.md`
+Phase 2.2 — moved there 2026-08-14, see issue #59)  
 **Hat:** Cloud Security  
 If unset, per-guild adapter tokens in acp.db are plaintext. Generation + shred procedure documented.
 
