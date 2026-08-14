@@ -4,6 +4,14 @@ This prompt runs on YOUR DEV MACHINE before the R740 is physically set up.
 It gathers all tokens, keys, ISOs, and credentials needed during the
 deployment so you're not hunting for them on stand-up day.
 
+**Status on this deployment (2026-08-14):** Steps 1 and 5 verified
+read-only, directly on the Tabr-Tau dev machine this prompt targets (the
+R740xd-side session has no access to this host's filesystem, SSH keys, or
+network vantage point to run these checks itself). Steps 2/3/4/6/7 remain
+not started — see issue #57 for the full verification record and why each
+of those steps is deliberately deferred (destructive, secret-handling, or
+operator-credential-gated) rather than run automatically.
+
 ## Target Machine
 Your current dev machine (Ubuntu 24.04).
 
@@ -23,6 +31,8 @@ ls ~/projects/dune/dune-awakening-selfhost-docker/runtime/scripts/dune
 ls ~/projects/acp/arrakis-control-panel/package.json
 ls ~/r740-deployment/prompts/tabr-tau/00-prerequisites.md
 ```
+**Verified 2026-08-14:** all three paths present on the Tabr-Tau dev
+machine.
 
 ### 2. Download Proxmox VE ISO
 ```bash
@@ -87,6 +97,7 @@ Verify the bot-env.txt contains at minimum:
 ls -la ~/.ssh/ssh-key-2026-07-18.key
 chmod 600 ~/.ssh/ssh-key-2026-07-18.key
 ```
+**Verified 2026-08-14:** already `600`, no change needed.
 
 ### 6. Gather Network Values
 Fill in `r740-deployment/docs/values.env.example` with your actual values.
@@ -121,9 +132,9 @@ sudo dd if=/tmp/opencode/r740-isos/proxmox-ve_8.2-1.iso \
 - [ ] Bootable Proxmox USB created
 - [ ] Bot secrets backed up to `~/r740-bot-backup/secrets/`
 - [ ] `values.env` filled in with real values
-- [ ] SSH keys verified
+- [x] SSH keys verified (2026-08-14 — already `600`, see Step 5)
 - [ ] 2× Funcom tokens generated and stored in password manager
-- [ ] R740 racked, powered, network cabled to UCG-Fiber
+- [ ] R740 racked, powered, network cabled to UCG-Max
 
 ## After This Prompt Completes
 Proceed to `r740xd/01-proxmox-and-vms.md` which runs ON THE PROXMOX HOST
