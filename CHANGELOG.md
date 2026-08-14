@@ -10,6 +10,15 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Changed
 
+- `docs/values.env.example`'s port-forward section still said "Dev is
+  intentionally NOT forwarded (LAN/VPN-only)" and only listed Prod's
+  variables — stale after PR #85 reversed that decision (Dev now gets
+  real WAN forwards via the multi-server guide's Instance 2, +1000
+  offset, profile). Updated the comment and added
+  `FORWARD_DEV_UDP_GAME_RANGE`/`FORWARD_DEV_TCP_RMQ_GAME`/
+  `FORWARD_DEV_TCP_RMQ_HTTP` (`8777-8810`/`32982`/`32983`), matching the
+  confirmed values in `docs/02-network-setup.md`. (#86)
+
 - `docs/02-network-setup.md` Step 5: reversed the prior "Dev gets no
   port forwards at all... LAN/VPN-only, no public testers" decision.
   Dev now gets real WAN port forwards using a distinct, collision-free
