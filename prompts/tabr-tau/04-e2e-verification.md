@@ -114,11 +114,14 @@ report whether each responds correctly:
 ```
 
 ### 3.2 Player Features
-Ask the user (or a test account) to verify:
+Ask the user (or a test account) to verify (issue #73 — these are
+registered under the `player` subcommand group, not `data`; confirmed
+against `arrakis-control-panel/src/commands.js`'s real
+`commandDefinitions()`):
 ```
-/dune data whoami       → Shows linked character
-/dune data inventory    → Shows inventory items
-/dune data storage      → Shows storage contents
+/dune player whoami      → Shows linked character
+/dune player inventory   → Shows inventory items
+/dune player storage     → Shows storage contents
 ```
 
 ### 3.3 Scheduled Posts (if enabled)

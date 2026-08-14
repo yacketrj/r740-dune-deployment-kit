@@ -77,6 +77,18 @@ introduced them, in Keep a Changelog style, newest first.
   or directory" if run verbatim on a fresh clone. Added a `mkdir -p`
   before the `cp`, plus a `.gitkeep` so the directory exists from a
   fresh clone even before this step runs. (#71)
+- `prompts/tabr-tau/04-e2e-verification.md` Phase 3.2 told the agent to
+  verify `/dune data whoami`, `/dune data inventory`, and
+  `/dune data storage` — these commands don't exist under the `data`
+  subcommand group. Confirmed against `arrakis-control-panel`'s real,
+  currently-registered command set (`src/commands.js`'s
+  `commandDefinitions()`, corroborated by `test/commands.test.js`): the
+  `data` group only has `population`/`backups`/`maps`, and the real
+  character/inventory/storage commands are registered under `player`
+  (`player:whoami`, `player:inventory`, `player:storage`). Running the
+  prompt's commands verbatim in Discord would have failed. Phase 3.1's
+  five commands were independently cross-checked against the same real
+  command list and are all correct. (#73)
 
 ### Fixed
 
