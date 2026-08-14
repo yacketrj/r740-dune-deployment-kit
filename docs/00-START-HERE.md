@@ -153,7 +153,11 @@ and moved several previously-misplaced steps between files.
    `scripts/03-vm-guest-bootstrap.sh` inside each VM.
 5. On the gaming PC, the night before or morning of cutover, run
    `scripts/06-pre-migration-backup.sh` to take the final DB backup and
-   stage it for transfer.
+   stage it for transfer, along with `runtime/secrets/` and
+   `runtime/generated/` tarballs (issue #80 — decide per-value whether
+   Dev's credentials/config should carry forward or start fresh via
+   `dune init`; `runtime/addons/` is intentionally not staged, since
+   addons are easily reinstalled).
 6. Continuing the R740xd session (or a fresh one),
    `prompts/r740xd/02-game-servers.md` covers both battlegroup
    initializations (`scripts/04-init-dev-battlegroup.sh` importing the
