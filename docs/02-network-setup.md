@@ -91,6 +91,14 @@ announced maintenance window) — repointing a live game server's
 forwards while players are connected would disconnect them mid-session
 with no warning. Steps 6 onward not yet started.
 
+**Update (2026-08-14, issue #83):** Step 5's original scope was Prod
+port forwards only, with Dev deliberately left LAN/VPN-only. That
+decision has since been reversed — Dev now also gets real WAN port
+forwards, using a distinct, collision-free port profile (Instance 2 of
+the multi-server guide) so it never shares a numeric port with Prod.
+See Step 5 below for the current, authoritative version of this
+step's scope and the Dev-specific port table.
+
 ## Initial Setup
 
 1. Connect the UCG-Max's WAN port (the 2.5GbE RJ45 port labeled/default
@@ -281,18 +289,41 @@ new zones — this handles DHCP/DNS/management traffic for the UCG-Max
 itself, and blocking it can break basic network function in
 hard-to-diagnose ways.
 
-## Step 5: WAN Port Forwards (Prod ONLY)
+## Step 5: WAN Port Forwards
 
-**This step is a cutover, not an additive setup step — do it last, and
-only when dune-prod is actually ready to take over.** If this gateway
-already has an active game server running on the old flat Trusted-LAN
-(true for this deployment: forwards already exist pointing at a
-currently-live game server), do NOT create a second, parallel set of
-forwards pointing at the new Prod VLAN IP ahead of time — nothing is
-listening there until the new dune-prod VM exists and is actually
-running the game server, so an early forward is dead weight at best,
-and repointing the *existing* forwards early would disconnect real
-players with no warning.
+**Decision reversed (2026-08-14, issue #83):** this step previously said
+"Dev gets no port forwards at all... LAN/VPN-only, no public testers."
+That is no longer the decision — Dev now gets real WAN port forwards
+using a distinct, collision-free port profile so it can be reached
+directly by players/testers, without ever sharing a numeric port with
+Prod. This uses `dune-awakening-selfhost-docker`'s own
+[multi-server / single-public-IP guide](https://github.com/yacketrj/dune-awakening-selfhost-docker/blob/agent/multi-server-single-public-ip-guide/docs/runtime/MULTI-SERVER-SINGLE-PUBLIC-IP.md)
+and its `runtime/scripts/multi-server-config.py` helper (independently
+validated against a real checkout — see issue #83 and the PR that
+resolved it for the validation evidence) rather than an ad hoc port
+choice.
+
+**Instance mapping for this deployment:**
+
+- **dune-prod = Instance 1** — stock/default ports, unchanged from
+  today's values. No `.env` or UserEngine change needed on Prod for
+  this step.
+- **dune-dev = Instance 2** — the standard `+1000` offset from the
+  multi-server guide.
+
+**This step is a cutover for Prod, but an additive setup step for Dev —
+do the Prod cutover last, and only when dune-prod is actually ready to
+take over.** If this gateway already has an active game server running
+on the old flat Trusted-LAN (true for this deployment: forwards already
+exist pointing at a currently-live game server), do NOT create a second,
+parallel set of forwards pointing at the new Prod VLAN IP ahead of
+time — nothing is listening there until the new dune-prod VM exists and
+is actually running the game server, so an early forward is dead weight
+at best, and repointing the *existing* forwards early would disconnect
+real players with no warning. Dev's forwards have no such constraint —
+create them as soon as dune-dev's battlegroup is initialized and its
+Instance 2 profile is applied (see below), since nothing else is using
+those ports.
 
 **All three ports are required, including 31983** — this is not an
 internal-only port that can be skipped. Confirmed via the upstream
@@ -322,6 +353,23 @@ rules to point at **dune-prod's VM IP**:
 | Dune RMQ Game | 31982 | 192.168.20.10 | 31982 | TCP |
 | Dune RMQ HTTP | 31983 | 192.168.20.10 | 31983 | TCP |
 
+**Dev's forwards (Instance 2 — new as of issue #83):** create these as
+soon as dune-dev's battlegroup is initialized and the multi-server
+Instance 2 profile has been applied (`multi-server-config.py apply
+--instance 2 --public-ip <public-ip> --bind-ip 192.168.21.10` from a
+`dune-awakening-selfhost-docker` checkout that has the multi-server
+guide's port-configurability feature — the fork's `main` branch as of
+this writing, not the base v1.3.37 tag, which predates it). Unlike
+Prod's forwards above, these are **additive, not a cutover** — nothing
+else uses these ports, so there's no live-traffic risk in creating them
+as soon as Dev is ready:
+
+| Name | WAN Port(s) | Forward IP | Forward Port(s) | Protocol |
+|---|---|---|---|---|
+| Dune Dev Game Traffic | 8777-8810 | 192.168.21.10 | 8777-8810 | UDP |
+| Dune Dev RMQ Game | 32982 | 192.168.21.10 | 32982 | TCP |
+| Dune Dev RMQ HTTP | 32983 | 192.168.21.10 | 32983 | TCP |
+
 **Do NOT create a port forward for 8088 (admin console) on either VM.**
 This is intentional — the admin console is reached via VPN only (Step 6),
 never directly from the internet. This directly closes the CRIT-01-class
@@ -330,9 +378,6 @@ currently has its console tunnel hostname pointed at the console over a
 Cloudflare Tunnel with no additional access gate — don't reproduce that
 here without at least Cloudflare Access in front of it, see
 `04-post-standup-hardening.md`).
-
-**Dev gets no port forwards at all** — per the original Phase 0 decision,
-Dev is LAN/VPN-only, no public testers.
 
 ## Step 6: VPN Access for Remote Admin
 
