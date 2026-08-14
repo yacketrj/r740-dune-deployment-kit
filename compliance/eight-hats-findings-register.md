@@ -399,3 +399,67 @@ title at that number). **4 CRITICAL findings' content is permanently
 lost** (see the CRITICAL section's closing note) — treat "57" as this
 register's original, unverified aspiration, and "53" as its actual,
 audited content going forward.
+
+---
+
+## 2026-08-14 (separate review) — Issue #88: Prod/Dev VM NTP sync via Proxmox host — REJECTED
+
+This is a standalone Requirement 20 Layer 1 (design, pre-implementation)
+audit, unrelated to the 2026-08-07 review above — recorded here as this
+repo's established home for eight-hats findings, not folded into the
+counts/tables above.
+
+**Proposal:** give dune-prod/dune-dev a single internal NTP source (the
+Proxmox host) instead of each syncing from internet NTP pools directly.
+Required a new firewall policy: `Prod-Zone/Dev-Zone -> Internal: ALLOW,
+UDP/123, destination 192.168.68.127/32` — the first-ever initiated path
+from a battlegroup VM into the Internal zone (where Proxmox lives),
+reversing this project's own documented isolation intent (Step 4, rule
+5: "if a VM is ever compromised, this stops it from pivoting to the
+hypervisor layer").
+
+**Outcome: rejected, unanimously, by every applicable hat.** Full
+findings in issue #88's dispatched review. Summary:
+
+- **Architect:** solves a non-problem — all 4 hosts already synced
+  within 1-4ms of real UTC before this was proposed; no drift issue,
+  no incident. Trades resilience (each VM independently reachable to
+  the internet) for a new single-point dependency and East/West
+  exposure, for zero measured benefit.
+- **Security (CRITICAL):** directly reverses documented threat-model
+  intent with no compensating control. chrony has a real CVE history;
+  granting a `--privileged`, third-party-binary game-server VM (this
+  register's own C-2) a standing network path to the hypervisor's own
+  IP is a permanent, nonzero increase in hypervisor attack surface.
+- **GRC:** no risk-acceptance record existed prior to this entry (now
+  resolved by this entry existing). Separately flagged a process
+  inconsistency: the chrony *server-side* config on Proxmox was applied
+  live, before this review was requested — assessed as inert/low-risk
+  in isolation (nothing could reach it without the firewall rule, and
+  it was independently, cleanly reverted), but noted as a pattern not
+  to repeat: sensitive-host config changes should go through the same
+  review gate as the network change they're paired with, not be
+  treated as pre-approved because they're harmless standing alone.
+- **Network:** the proposed rule's narrowness (UDP/123, single /32) was
+  technically sound as written, but would have needed live
+  verification against the UniFi zone-firewall's actual behavior
+  before being trusted. The discarded alternative (second Proxmox IP
+  on the Mgmt VLAN) was independently found to be *worse*, not
+  equivalent — it dual-homes Proxmox across two zones instead of one,
+  multiplying its attack surface rather than relocating a single
+  exception.
+- Cloud Security / UI / DBA: not applicable, confirmed and stated why
+  in the full review.
+- **QA/Test:** no test plan or rollback procedure existed for the
+  firewall policy itself (only for the already-reverted chrony config),
+  independently sufficient to call this not implementation-ready even
+  setting the reject recommendation aside.
+
+**Remediation:** the already-applied Proxmox chrony server config
+(`/etc/chrony/conf.d/lan-ntp-server.conf`) was reverted the same
+session this review completed (`rm` + `systemctl restart chrony`,
+verified running afterward). No firewall policy change was ever
+applied — issue #88 caught this before implementation, exactly as
+Requirement 20's Layer 1 gate is meant to. Each VM continues syncing
+NTP from internet pools directly, unchanged from before this issue was
+opened.
