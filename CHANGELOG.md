@@ -93,6 +93,16 @@ introduced them, in Keep a Changelog style, newest first.
   bare "issue #81", which doesn't exist in this repo — it's actually
   `arrakis-control-panel#81`, unqualified. Qualified the reference
   explicitly. (#75)
+- `prompts/tabr-tau/00-prerequisites.md` Step 4's key-presence check
+  expected `DISCORD_BOT_TOKEN=` and `DUNE_DISCORD_ADAPTER_TOKEN=`
+  inline, but the real deployment's `.env` uses the `_FILE`-suffixed
+  pattern for both (pointing at secret files elsewhere on the host
+  rather than storing values inline) — found by actually executing this
+  step against the live OCI bot host and diagnosing why two of the four
+  expected keys appeared "missing." The deployment is not
+  misconfigured; the `_FILE` pattern is the better practice per this
+  project's own Requirement 24. Updated the check to accept either
+  form. (#78)
 
 ### Fixed
 

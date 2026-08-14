@@ -125,12 +125,18 @@ chmod 600 ~/r740-bot-backup/secrets/*
 
 Verify `bot-env.txt` contains at minimum the following keys, and report
 which are present/missing (never print the actual secret values back to
-the user in chat):
-- `DISCORD_BOT_TOKEN=`
+the user in chat). Check key *names* only via `grep -q`/`grep -c`, never
+the file's contents:
+- `DISCORD_BOT_TOKEN=` OR `DISCORD_BOT_TOKEN_FILE=` (issue #78 — this
+  deployment uses the `_FILE` pattern for this key, pointing at a
+  secret file elsewhere on the host rather than storing the token
+  inline; both forms are valid, prefer `_FILE` per this project's own
+  Requirement 24)
 - `DISCORD_CLIENT_ID=`
 - `DUNE_CONSOLE_API_URL=` (will be changed to `http://localhost:8088`
   during the actual R740-side deployment, not here)
-- `DUNE_DISCORD_ADAPTER_TOKEN=`
+- `DUNE_DISCORD_ADAPTER_TOKEN=` OR `DUNE_DISCORD_ADAPTER_TOKEN_FILE=`
+  (issue #78 — same `_FILE` pattern as above)
 
 ### 5. Report Final Status Before Moving to r740xd/01
 Report the status of each of the following back to the user as a
