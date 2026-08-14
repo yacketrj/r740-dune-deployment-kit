@@ -63,6 +63,12 @@ introduced them, in Keep a Changelog style, newest first.
   dune-dev/socket 1, explicitly rejecting stale range syntax like
   `0-19`) that doesn't depend on this host's specific CPU numbering.
   (#62)
+- `prompts/tabr-tau/04-e2e-verification.md` Phase 6.3 referenced a stale
+  `~/archive/INCIDENT-INDEX.md` path that never actually existed — per
+  the Arrakis-Project meta-repo README's own 2026-08-12 correction, this
+  file has only ever lived at
+  `~/projects/meta/Arrakis-Project/archive/INCIDENT-INDEX.md`. This
+  prompt was never updated to match that correction. (#69)
 
 ### Fixed
 

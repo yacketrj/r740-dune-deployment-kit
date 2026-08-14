@@ -188,7 +188,11 @@ before that migration is real — verify with the user directly if
 uncertain.
 
 ### 6.3 Update Incident Index
-Add an entry to `~/archive/INCIDENT-INDEX.md`:
+Add an entry to
+`~/projects/meta/Arrakis-Project/archive/INCIDENT-INDEX.md` (issue #69 —
+this file has only ever actually lived in the Arrakis-Project meta-repo,
+never at a bare `~/archive/` path; verify the file exists there before
+assuming any other location):
 ```
 INC-2026-08-07-001 | Low | R740 migration — deployment completed, all e2e checks passed, zero incidents
 ```
