@@ -10,6 +10,19 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Changed
 
+- Rewrote all six `prompts/tabr-tau/*` and `prompts/r740xd/*` deployment
+  prompt files from human-runbook style (numbered steps, "follow the
+  interactive prompts", checklists addressed to a person at a keyboard)
+  to second-person imperative instructions addressed directly to the
+  executing LLM agent. All real operational content (exact commands,
+  IPs/hostnames, verification steps, the tabr-tau/r740xd session
+  boundary from #59, and prior corrections including the #61 boot-order
+  bug and the netplan static-IP installer bug) was preserved unchanged
+  in substance. Also fixed a stale claim found during the rewrite:
+  `tabr-tau/00-prerequisites.md` listed the dev machine's own OS as
+  Ubuntu 24.04, left over from before #52 updated the *VM guest* OS
+  target to 26.04 — the separate dev-machine-OS line was never updated.
+  (#66)
 - Enforced a genuine session boundary between `prompts/tabr-tau/*`
   (gathering-only: credentials, tokens, config values — never installs
   or configures anything) and `prompts/r740xd/*` (all actual
