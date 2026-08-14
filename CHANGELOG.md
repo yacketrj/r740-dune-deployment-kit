@@ -10,6 +10,23 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Changed
 
+- `docs/02-network-setup.md` Step 5: reversed the prior "Dev gets no
+  port forwards at all... LAN/VPN-only, no public testers" decision.
+  Dev now gets real WAN port forwards using a distinct, collision-free
+  port profile (multi-server guide's Instance 2, `+1000` offset) from
+  `dune-awakening-selfhost-docker`'s
+  `docs/runtime/MULTI-SERVER-SINGLE-PUBLIC-IP.md` guide and its
+  `runtime/scripts/multi-server-config.py` helper. Prod remains
+  Instance 1 (unchanged stock ports). Independently validated the
+  helper script against a real checkout before relying on it — found
+  and confirmed it only works when paired with its companion
+  `start-rabbitmq.sh` change (both bundled in fork PR #262 /
+  upstream-fork PR #156, neither yet merged), and that dune-dev's
+  originally-installed fork tag (`v1.3.37`, June 2026) predates the
+  entire port-configurability feature — resolved by moving dune-dev's
+  checkout to the fork's `main` branch (which includes it) rather than
+  hand-patching an old tag. (#83)
+
 - `scripts/06-pre-migration-backup.sh` now also stages `runtime/secrets/`
   and `runtime/generated/` for transfer, in addition to the DB backup it
   already staged — neither directory was previously captured by any
