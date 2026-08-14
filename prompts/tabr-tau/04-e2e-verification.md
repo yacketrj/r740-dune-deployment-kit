@@ -1,30 +1,37 @@
 # TABR-TAU-04: End-to-End Verification & Go-Live Cutover
 
-This prompt runs in its own session, ON YOUR DEV MACHINE, after ALL
-R740xd deployment phases are complete
+You are an LLM coding agent running in your own session, ON THE USER'S
+DEV MACHINE, after ALL R740xd deployment phases are complete
 (`r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`).
-It runs the full automated verification suite, performs manual checks
-that only make sense from outside the R740's own network (WAN
-reachability, browser-based checks), and walks through the go-live
-announcement.
+Your job in this session: run the full automated verification suite,
+perform manual checks that only make sense from outside the R740's own
+network (WAN reachability, browser-based checks — ask the user to
+perform these and report results back to you, since you cannot browse
+or use a cellular device yourself), and walk the user through the
+go-live announcement.
 
 **Scope note (2026-08-14):** this prompt previously also included
 performance-baseline capture and SSH-based troubleshooting commands —
 those were R740-side operations mistakenly included here and have moved
-to `r740xd/04-post-deployment-ops.md` (issue #59). If you need those,
-start a separate R740xd session for that prompt instead.
+to `r740xd/04-post-deployment-ops.md` (issue #59). If the user asks you
+to do those things in this session, tell them to start a separate
+R740xd session for that prompt instead — do not perform them here even
+if you technically have SSH access.
 
-## Pre-Requisites
+## Before You Start, Confirm
 - `r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`
-  fully executed (in their own R740xd session)
-- Both VMs online with game servers running
-- ACP bot deployed and connected to Discord
-- Cloudflare Tunnel configured with Access enforced
-- You have a device outside your LAN (phone on cellular) for WAN testing
+  have actually been fully executed (in their own R740xd sessions) —
+  ask the user to confirm if you have no direct evidence.
+- Both VMs are online with game servers running.
+- ACP bot is deployed and connected to Discord.
+- Cloudflare Tunnel is configured with Access enforced.
+- The user has a device outside their LAN (phone on cellular) available
+  for WAN testing — you cannot perform this test yourself.
 
 ## Phase 1: Run Automated Verification Suite
 
 ### 1.1 Execute the E2E Verification Script
+Run:
 ```bash
 bash ~/r740-deployment/scripts/11-e2e-verify.sh
 ```
@@ -42,50 +49,62 @@ This runs 70+ checks across 11 categories:
 10. Database Integrity (4 checks)
 11. ACP Landing & DNS (2 checks)
 
-### 1.2 Review the Report
-The report is saved to `/tmp/opencode/e2e-report-YYYYMMDD-HHMMSS.txt`.
+### 1.2 Review and Report the Result
+Read the report saved to `/tmp/opencode/e2e-report-YYYYMMDD-HHMMSS.txt`
+and summarize it back to the user, categorized as follows:
 
-**CRITICAL failures (any):** DO NOT GO LIVE. Fix the failing checks before
-proceeding (in a separate R740xd session, if the fix requires touching
-the VMs — this dev-machine session shouldn't apply fixes itself).
-
-**Warnings only:** Review each warning. Warnings about optional hardening
-items (SSH, firewall, metrics) can be addressed post-launch. Warnings about
-game server or network reachability should be investigated.
-
-**All green:** Proceed to Phase 2.
+- **Any CRITICAL failure:** tell the user explicitly not to go live.
+  Identify the failing checks and, if the fix requires touching the
+  VMs, tell the user to start a separate R740xd session to apply it —
+  do not attempt to fix R740-side state from this dev-machine session.
+- **Warnings only:** list each warning. Warnings about optional
+  hardening items (SSH, firewall, metrics) can be deferred past launch
+  if the user accepts that; warnings about game server or network
+  reachability must be investigated before proceeding — do not let
+  these pass silently.
+- **All green:** tell the user you're proceeding to Phase 2.
 
 ## Phase 2: Manual WAN Verification (from outside LAN)
 
+You cannot perform these checks yourself — walk the user through each
+one and ask them to report the result back to you before proceeding.
+
 ### 2.1 Game Ports
-From a device on cellular data (NOT your home WiFi):
-- Open the game and attempt to connect to your server
-- Verify you see the server in the server browser at your public IP
-- Join the server and confirm you can play
+Ask the user, from a device on cellular data (NOT their home WiFi), to:
+- Open the game and attempt to connect to the server
+- Verify the server appears in the server browser at the public IP
+- Join the server and confirm they can play
 
 ### 2.2 Console Access (behind Cloudflare Access)
-From a cellular device or incognito browser:
+Ask the user, from a cellular device or incognito browser, to:
 1. Navigate to `https://CONSOLE_TUNNEL_HOSTNAME`
-2. **Verify you see the Cloudflare Access login page** (email/PIN prompt)
+2. Confirm they see the Cloudflare Access login page (email/PIN prompt)
+   BEFORE anything else — if they see the console login directly
+   instead, Access is not configured and this must be treated as a
+   blocking failure, not a warning.
 3. Complete the Access login
-4. **Verify you reach the Dune Console login page**
-5. Sign in with your admin password
+4. Confirm they reach the Dune Console login page
+5. Sign in with the admin password
 6. Confirm the console loads, server status displays, maps tab works
 
 ### 2.3 Setup Portal
+Ask the user to:
 1. Navigate to `https://ACP_SETUP_TUNNEL_HOSTNAME/setup`
-2. Verify the setup wizard loads
-3. Verify live stats: `https://ACP_SETUP_TUNNEL_HOSTNAME/api/live-stats`
+2. Confirm the setup wizard loads
+3. Confirm live stats load: `https://ACP_SETUP_TUNNEL_HOSTNAME/api/live-stats`
 
 ### 2.4 ACP Landing
+Ask the user to:
 1. Navigate to `https://ACP_LANDING_HOSTNAME`
-2. Verify the landing page loads
-3. Verify the stats widget shows player counts (may be 0 at first)
+2. Confirm the landing page loads
+3. Confirm the stats widget shows player counts (may legitimately be 0
+   at first)
 
 ## Phase 3: Discord Bot Verification
 
 ### 3.1 Slash Commands
-In your Discord server, run each of these commands and verify they respond:
+Ask the user to run each of the following in their Discord server and
+report whether each responds correctly:
 ```
 /dune server health     → Returns server status
 /dune server status     → Returns detailed status card
@@ -95,7 +114,7 @@ In your Discord server, run each of these commands and verify they respond:
 ```
 
 ### 3.2 Player Features
-Have a player (or a test account) verify:
+Ask the user (or a test account) to verify:
 ```
 /dune data whoami       → Shows linked character
 /dune data inventory    → Shows inventory items
@@ -103,30 +122,35 @@ Have a player (or a test account) verify:
 ```
 
 ### 3.3 Scheduled Posts (if enabled)
-If `DUNE_POST_SCHEDULE_TYPE` is set, wait for the next scheduled post
-and verify it appears in the configured channel.
+If `DUNE_POST_SCHEDULE_TYPE` is set, ask the user to wait for the next
+scheduled post and confirm it appears in the configured channel.
 
 ## Phase 4: Go-Live Cutover
 
 ### 4.1 Final Check Before Announcement
-- [ ] All CRITICAL checks from 11-e2e-verify.sh pass
-- [ ] Cloudflare Access enforced on `CONSOLE_TUNNEL_HOSTNAME`
-- [ ] Game ports reachable from WAN (cellular test passed)
-- [ ] Discord bot responds to all slash commands
-- [ ] Setup portal and landing page accessible
-- [ ] DB password rotated (different on Prod vs Dev)
-- [ ] Strong admin password set
-- [ ] Restart schedule enabled
-- [ ] DB backups enabled
-- [ ] SQLite backup timer active (C-4 fix)
-- [ ] At least one player tested connectivity from outside
+Before telling the user they're clear to announce, confirm every one of
+the following is actually true — do not assume, ask the user to confirm
+anything you can't verify directly:
+- All CRITICAL checks from `11-e2e-verify.sh` pass
+- Cloudflare Access is enforced on `CONSOLE_TUNNEL_HOSTNAME`
+- Game ports are reachable from WAN (cellular test passed)
+- Discord bot responds to all slash commands
+- Setup portal and landing page are accessible
+- DB password rotated (different on Prod vs Dev)
+- Strong admin password set
+- Restart schedule enabled
+- DB backups enabled
+- SQLite backup timer active (C-4 fix)
+- At least one player has tested connectivity from outside
 
 ### 4.2 Update Server Listing (if applicable)
-If your server is listed on community server lists, update the IP address
-to your new public IP.
+If the server is listed on community server lists, remind the user to
+update the IP address to the new public IP.
 
 ### 4.3 Announce to Player Base
-Post in your Discord community:
+Offer the user this announcement template for their Discord community,
+adjusting details to match reality rather than posting it verbatim if
+anything doesn't match:
 ```
 @everyone The server migration to new hardware is complete!
 
@@ -137,26 +161,31 @@ The server IP remains the same. If you experience any issues,
 please report them in <#support-channel>.
 ```
 
-## Phase 5: Post-Deployment Ops (start a NEW R740xd session)
+## Phase 5: Post-Deployment Ops (tell the user to start a NEW R740xd session)
 
 Performance baseline capture, first-24-hours monitoring, and
 troubleshooting commands all require SSH access to the VMs — that's
-R740-side work. Start a separate session and run
-`r740xd/04-post-deployment-ops.md` for those steps.
+R740-side work. Do not attempt any of it in this session. Tell the user
+to start a separate session and run `r740xd/04-post-deployment-ops.md`
+for those steps.
 
 ## Phase 6: Post-Deployment Evidence (back in this dev-machine session)
 
 ### 6.1 Save Verification Report
+Run:
 ```bash
 cp /tmp/opencode/e2e-report-*.txt ~/r740-deployment/compliance/evidence/go-live/
 ```
 
 ### 6.2 Complete OCI Decommissioning Evidence
-Fill in and sign `~/r740-deployment/compliance/evidence/decommissions/2026-08-07-oci-acp-bot-vnic.md`
-— **only once the OCI-to-R740 bot migration has actually been executed**
-(see `r740xd/03-bot-deploy-and-tunnel.md`); this evidence file itself is
-currently just an unexecuted template (see the file's own status note),
-and this step must not be checked off before that migration is real.
+Fill in and have the user sign
+`~/r740-deployment/compliance/evidence/decommissions/2026-08-07-oci-acp-bot-vnic.md`
+— only once the OCI-to-R740 bot migration has actually been executed
+(see `r740xd/03-bot-deploy-and-tunnel.md`). This evidence file is
+currently just an unexecuted template (see the file's own status note).
+Do not mark this step complete, or represent the migration as done,
+before that migration is real — verify with the user directly if
+uncertain.
 
 ### 6.3 Update Incident Index
 Add an entry to `~/archive/INCIDENT-INDEX.md`:
@@ -165,20 +194,27 @@ INC-2026-08-07-001 | Low | R740 migration — deployment completed, all e2e chec
 ```
 
 ### 6.4 Archive Gaming PC (after burn-in)
-Only after at least 3 days of stable production with real players, and
-after `r740xd/04-post-deployment-ops.md`'s monitoring phase looks clean:
+Only after the user confirms at least 3 days of stable production with
+real players, and after `r740xd/04-post-deployment-ops.md`'s monitoring
+phase looks clean, run:
 ```bash
 # On the gaming PC:
 bash ~/r740-deployment/scripts/07-wsl-decommission.sh
 ```
+Do not run this prematurely — ask the user to explicitly confirm burn-in
+is complete before executing.
 
-## State After Completion
-- [ ] Full E2E verification suite run, report saved
-- [ ] All CRITICAL checks passing
-- [ ] Manual WAN verification passed (cellular + incognito browser)
-- [ ] Discord bot responding to all slash commands
-- [ ] Player base announced
-- [ ] Post-deployment ops session started (`r740xd/04-post-deployment-ops.md`)
-- [ ] OCI decommissioning evidence completed (only once migration is real)
-- [ ] Incident index updated
-- [ ] Go-live evidence saved under `compliance/evidence/go-live/`
+## What to Report Back When This Prompt Is Done
+Summarize for the user, as an explicit checklist with each item marked
+done/not-done:
+- Full E2E verification suite run, report saved
+- All CRITICAL checks passing
+- Manual WAN verification passed (cellular + incognito browser)
+- Discord bot responding to all slash commands
+- Player base announced
+- Post-deployment ops session started (tell the user to start
+  `r740xd/04-post-deployment-ops.md` separately)
+- OCI decommissioning evidence completed (only once migration is real)
+- Incident index updated
+- Go-live evidence saved under `compliance/evidence/go-live/`
+</content>
