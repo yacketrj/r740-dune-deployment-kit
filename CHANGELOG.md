@@ -10,6 +10,27 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Changed
 
+- `scripts/06-pre-migration-backup.sh` now also stages `runtime/secrets/`
+  and `runtime/generated/` for transfer, in addition to the DB backup it
+  already staged — neither directory was previously captured by any
+  migration step, despite `runtime/secrets/` holding credential material
+  with no other source of truth (e.g. the Funcom token). Audited both
+  directories against the real, live host before implementing: found
+  10 real secret files in `runtime/secrets/` and confirmed `runtime/generated/`
+  is dominated by ~295 ephemeral `dune-fake-k8s-serviceaccount-<service>-<pid>`
+  directories recreated on every container restart (not real state, see
+  `runtime/scripts/spawn-server.sh`) — the new `runtime/generated/` tar
+  excludes those plus rotating `*.log` files, keeping every other
+  config/state file (`battlegroup.env`, `sietch-config.json`,
+  `care-package*`, etc.). `runtime/addons/` is explicitly out of scope
+  — addons are easily reinstalled (operator decision, 2026-08-14).
+  Caught and fixed a real bug during implementation, before it shipped:
+  GNU `tar`'s `--exclude` flags are positional and must precede the
+  archive-path arguments or they're silently ignored (verified via a
+  synthetic test directory both before and after the fix — the original
+  flag ordering archived everything, excludes included, with no error).
+  (#80)
+
 - Rewrote all six `prompts/tabr-tau/*` and `prompts/r740xd/*` deployment
   prompt files from human-runbook style (numbered steps, "follow the
   interactive prompts", checklists addressed to a person at a keyboard)
