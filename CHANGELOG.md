@@ -8,6 +8,27 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Added
+
+- **New "Services" VLAN (22) and dedicated bot VM design (VMID 103)**
+  for the ACP Discord bot — resolves the conflict between two earlier,
+  un-actioned proposals: `r740-dune-deployment-kit#92` (bot on
+  `dune-prod`) and `arrakis-control-panel#166` (bot directly on the
+  Proxmox host). Neither is used; the bot instead gets its own VM,
+  isolated from both the game-server VMs and the hypervisor itself.
+  `docs/02-network-setup.md` updated: Services network added to Step
+  1's table, `bridge-vids`, and the trunk port's tagged-networks list;
+  new `Services-Zone` and 5 new zone-matrix policies added to Step 4
+  (bot can reach both consoles' adapter APIs; neither game-server VM
+  or the hypervisor can be reached from the bot's zone); Step 5 (WAN
+  forwards) and Step 7 (verification) updated to cover the new VM.
+  Live gateway/bridge changes described are **not yet applied** as of
+  this writing — this is the design/documentation update; the actual
+  UniFi UI and Proxmox bridge config changes are a separate, tracked
+  follow-up. `prompts/r740xd/03-bot-deploy-and-tunnel.md`'s target IP
+  updated from `192.168.20.10` (dune-prod) to the new bot VM's address.
+  See issue #93 for the full decision record. (#93)
+
 ### Changed
 
 - `docs/values.env.example`'s port-forward section still said "Dev is
