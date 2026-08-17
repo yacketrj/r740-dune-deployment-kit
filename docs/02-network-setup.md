@@ -29,6 +29,18 @@ the safe stopping points are if you need to pause partway through.
 **Status on this deployment (2026-08-12):** Steps 1, 3, and 4 are
 complete and independently verified.
 
+**Update (2026-08-17, issue #93):** a fourth VLAN, **Services (22)**, was
+added to Steps 1/2/3/4 below for the ACP Discord bot's dedicated VM
+(VMID 103). This supersedes two earlier, conflicting proposals to run
+the bot on `dune-prod` (`r740-dune-deployment-kit#92`) or directly on
+the Proxmox host (`arrakis-control-panel#166`) — see issue #93 for the
+full decision record. **Steps 1/2/3/4's Services additions below have
+NOT yet been applied to the live gateway/bridge** as of this writing
+(the original Prod/Dev/Mgmt work described immediately above was
+verified 2026-08-12, before this decision existed) — treat the
+Services-specific bullets in each step as a pending checklist item,
+not as already-done.
+
 Step 1: Prod, Dev, and Mgmt networks exist on the live gateway
 (confirmed via the UniFi Integration API); the existing
 Default/Trusted-LAN network was confirmed already correctly configured
@@ -115,7 +127,7 @@ step's scope and the Dev-specific port table.
 it already has an AP mesh and household devices behind it), Initial
 Setup is already done. Skip straight to Step 1.
 
-## Step 1: Create 3 New VLANs (Trusted-LAN Likely Already Exists)
+## Step 1: Create 4 New VLANs (Trusted-LAN Likely Already Exists)
 
 **Check first whether "Trusted-LAN" already exists before creating
 anything.** Every UniFi gateway ships with a built-in **"Default"**
@@ -139,7 +151,7 @@ actual existing gateway assigned) as "Trusted-LAN" in Step 4's firewall
 zone policies — the specific VLAN ID doesn't matter, only that it's
 distinct from Prod/Dev/Mgmt below, which it already is.
 
-**Create only these 3 new networks.** Go to **Settings → Networks →
+**Create only these 4 new networks.** Go to **Settings → Networks →
 Create New Network** for each. For each network, set "Network Purpose"
 to a **Corporate/Standard** network (not Guest — Guest networks have
 extra client-isolation restrictions you don't need here, and add
@@ -151,6 +163,7 @@ complexity to inter-VM communication if you ever want it).
 | Prod | 20 | 192.168.20.0/24 | dune-prod VM |
 | Dev | 21 | 192.168.21.0/24 | dune-dev VM |
 | Mgmt | 30 | 192.168.30.0/24 | Proxmox host, iDRAC |
+| Services | 22 | 192.168.22.0/24 | ACP Discord bot VM (VMID 103, issue #93) — deliberately its own network, not Prod/Dev/Mgmt; see the rationale in issue #93 (co-locating a public-facing bot with the game server or the hypervisor itself both increase blast radius for no benefit) |
 
 **This is unrelated to ongoing connectivity issues, if you have any.**
 If devices are dropping or reconnecting unpredictably independent of
@@ -189,10 +202,19 @@ iface vmbr0 inet manual
     bridge-stp off
     bridge-fd 0
     bridge-vlan-aware yes
-    bridge-vids 10 20 21 30
+    bridge-vids 10 20 21 22 30
 # After editing, apply:
 ifreload -a
 ```
+
+**Update (2026-08-17, issue #93):** VLAN 22 (Services) added to
+`bridge-vids` for the ACP bot VM. If your live `bridge-vids` line
+already has `20 21 30` from the original Prod/Dev/Mgmt setup, add `22`
+to it (order in the list doesn't matter) and re-run `ifreload -a` —
+this is a config-file edit + reload, not a full network restart, and
+does not require touching the bridge's IP or any existing VM's
+connectivity to verify: `qm config 101` / `qm config 102` should show
+unchanged `net0` lines after this change.
 
 **Without this setting, VLAN tags on VM network interfaces are silently
 ignored and both VMs fall onto the same untagged broadcast domain —
@@ -219,11 +241,11 @@ UniFi Network version) to:
 
 - **Native/Untagged Network**: leave unset, or set to none — this port
   should carry no untagged traffic
-- **Tagged Networks**: select all four — the existing Default/Trusted-LAN
+- **Tagged Networks**: select all five — the existing Default/Trusted-LAN
   network (whatever VLAN ID it already has, e.g. 1), Prod (20),
-  Dev (21), Mgmt (30)
+  Dev (21), Mgmt (30), and Services (22, added 2026-08-17 per issue #93)
 
-This makes the port an 802.1Q trunk carrying all four VLANs tagged.
+This makes the port an 802.1Q trunk carrying all five VLANs tagged.
 Do NOT split this into three separate access ports even if you have
 spare ports available — the VM NIC config on the Proxmox side uses
 `tag=20` and `tag=21`, which emit 802.1Q-tagged frames; a plain access
@@ -252,8 +274,9 @@ built-in **Internal** zone, and Internal→Internal traffic is
 each other and your Trusted-LAN devices freely, and why this step
 exists.
 
-**Recommended approach:** create three custom zones (e.g. `Prod-Zone`,
-`Dev-Zone`, `Mgmt-Zone`) and move the Prod, Dev, and Mgmt networks into
+**Recommended approach:** create four custom zones (e.g. `Prod-Zone`,
+`Dev-Zone`, `Mgmt-Zone`, `Services-Zone` — the fourth added 2026-08-17
+per issue #93) and move the Prod, Dev, Mgmt, and Services networks into
 them respectively (a network can only belong to one zone at a time,
 set when editing the network or in the Firewall/Zones section). Leave
 Trusted-LAN in the default **Internal** zone. Then, in the **Zone
@@ -271,18 +294,40 @@ depending on your UniFi Network version), configure:
    (neither battlegroup VM should be able to reach the Proxmox
    hypervisor or iDRAC — if a VM is ever compromised, this stops it
    from pivoting to the hypervisor layer)
-6. Leave every zone pair not listed above at its **default** value —
-   do not manually add a blanket "default deny" policy on top of the
-   zone matrix; the built-in per-zone defaults (e.g. External→Internal
-   already defaults to block-except-return-traffic) already provide
-   this, and adding a conflicting custom rule can produce confusing,
-   hard-to-debug interactions with the built-in policies.
+6. **Internal → Services-Zone: Allow** (so you can SSH into the bot VM
+   and manage it normally from your everyday devices — added 2026-08-17
+   per issue #93)
+7. **Services-Zone → Prod-Zone: Allow, Services-Zone → Dev-Zone: Allow**
+   (the ACP Discord bot is multi-tenant — one instance needs to reach
+   both consoles' adapter APIs at `192.168.20.10:8088` and
+   `192.168.21.10:8088`; see `r740xd/03-bot-deploy-and-tunnel.md`)
+8. **Prod-Zone → Services-Zone: Block, Dev-Zone → Services-Zone: Block**
+   (neither battlegroup VM has any reason to initiate a connection
+   *to* the bot — this is one-directional by design, same reasoning as
+   rule 5's hypervisor containment applied to the bot's own network)
+9. **Services-Zone → Mgmt-Zone: Block** (the bot VM must not reach the
+   Proxmox hypervisor or iDRAC either — same containment principle as
+   rule 5, applied to a third, independently-compromisable VM)
+10. Leave every zone pair not listed above at its **default** value —
+    do not manually add a blanket "default deny" policy on top of the
+    zone matrix; the built-in per-zone defaults (e.g. External→Internal
+    already defaults to block-except-return-traffic) already provide
+    this, and adding a conflicting custom rule can produce confusing,
+    hard-to-debug interactions with the built-in policies.
 
 **Double-check both directions for every rule.** Per Ubiquiti's own
 documentation, blocking Zone A → Zone B does not automatically block
 Zone B → Zone A — you must configure both directions explicitly, which
-is why rules 3/4 and the two halves of rule 5 are listed as separate
-entries above.
+is why rules 3/4, the two halves of rule 5, rule 7's two halves, and
+rule 8's two halves are all listed as separate entries above. Rule 9
+only lists `Services-Zone → Mgmt-Zone: Block`, not the reverse
+(`Mgmt-Zone → Services-Zone`) — this is a deliberate scope decision
+(the bot VM has nothing the Proxmox host itself needs to initiate a
+connection to), not an oversight, but **verify what the built-in
+default actually resolves to for that specific pair** before assuming
+it's already blocked; if the live Zone Matrix shows it as Allow by
+default and you want it blocked too, add it explicitly rather than
+relying on this note's assumption.
 
 **Do not block traffic to the built-in Gateway zone** for any of your
 new zones — this handles DHCP/DNS/management traffic for the UCG-Max
@@ -379,6 +424,14 @@ Cloudflare Tunnel with no additional access gate — don't reproduce that
 here without at least Cloudflare Access in front of it, see
 `04-post-standup-hardening.md`).
 
+**The Services VLAN's bot VM (192.168.22.x, issue #93) also gets no WAN
+port forward of any kind.** It's reached exclusively via the Cloudflare
+Tunnel (already the case for the bot's public-facing endpoints today,
+unchanged by this migration — see `r740xd/03-bot-deploy-and-tunnel.md`)
+and via VPN for direct SSH/admin access (Step 6, same pattern as the
+consoles). There is no scenario in this deployment where the bot VM
+needs a direct WAN-forwarded port.
+
 ## Step 6: VPN Access for Remote Admin
 
 Go to **Settings → VPN → Teleport** (Ubiquiti's zero-config WireGuard VPN)
@@ -405,6 +458,15 @@ directly to the WAN.
 3. Confirm the R740/Proxmox host still has connectivity after the
    Step 3 trunk-port change (re-check if you skipped the inline
    verification in that step).
+4. **Once the bot VM (VMID 103, issue #93) exists**: from the bot VM,
+   confirm it can reach both consoles (`curl` an adapter health-check
+   endpoint at `192.168.20.10:8088` and `192.168.21.10:8088`) and
+   confirm the reverse is blocked (from `dune-prod`/`dune-dev`, `ping
+   -c 3 -W 2 192.168.22.x` toward the bot VM's IP should fail per rule
+   8 above). Report actual output for both directions, not just the
+   Allow direction — a policy that silently fails to block is worse
+   than no policy, since it looks correct in the one direction anyone
+   normally tests.
 
 Once VLANs, firewall policies, port forwards, and the trunk port are in
 place and verified — and your existing devices/mesh are confirmed
