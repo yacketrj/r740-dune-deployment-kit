@@ -500,10 +500,38 @@ cp ~/arrakis-control-panel/scripts/deploy-post-receive.sh hooks/post-receive
 chmod +x hooks/post-receive
 ENDSSH
 
-# On the dev machine, add the deploy remote:
-git -C ~/projects/acp/arrakis-control-panel remote add deploy \
+# On the dev machine, add the deploy remote (path corrected 2026-08-17,
+# issue #95 -- the dev machine's real, current clone layout is a flat
+# ~/projects/repos/, not ~/projects/acp/; see Arrakis-Project#27/#28):
+git -C ~/projects/repos/arrakis-control-panel remote add deploy \
   ssh://bot@192.168.22.10/home/bot/acp-deploy.git
+
+# CRITICAL, previously missing step (issue #95): the bot VM's OWN
+# working-tree clone (~/arrakis-control-panel) also needs a `deploy`
+# remote, pointing back at the local bare repo -- the post-receive
+# hook's own `git fetch deploy "$DEPLOY_BRANCH"` step depends on this
+# remote existing, and nothing above this point creates it. Confirmed
+# via real reproduction: the first actual `git push deploy deploy`
+# against a bot VM set up by this exact procedure failed at this step
+# with `fatal: 'deploy' does not appear to be a git repository` --
+# caught and fixed live, then folded back into this prompt so the next
+# VM build doesn't hit the same gap.
+ssh bot@192.168.22.10 << 'ENDSSH'
+cd ~/arrakis-control-panel && git remote add deploy ~/acp-deploy.git
+ENDSSH
 ```
+
+**Verify this phase actually works, not just that the commands ran
+without error** -- do a real test push (`git push deploy main:deploy`
+from the dev machine) and confirm the hook completes end-to-end (test
+suite runs, service restarts, `systemctl status acp-bot.service` shows
+`active`). A remote being *configured* does not prove a deploy will
+actually *succeed* -- the `WORK_DIR` path inside
+`scripts/deploy-post-receive.sh` must also match this VM's real user
+(`bot`) and home directory, which is a separate thing to verify (see
+`arrakis-control-panel#174` for a real case where this specific path
+had drifted and the only reason it was caught was a real test deploy,
+not a code review).
 
 ## What to Report Back When This Prompt Is Done
 Confirm and explicitly report each of the following, not just "looks
@@ -522,6 +550,11 @@ done":
   deployment's multi-tenant mode — see the Phase 2.1 correction)
 - ACP bot cloned, installed, running on the bot VM
 - Systemd service `acp-bot.service` active and enabled
+- **Deploy remote configured on BOTH ends** (dev machine's clone AND
+  the bot VM's own working-tree clone -- the latter is easy to miss,
+  see Phase 6's correction) **and verified with a real test push**,
+  not just "the remote-add commands ran" -- confirm the hook actually
+  completed (tests ran, service restarted, `active`) end-to-end
 - Cloudflare Tunnel ingress rules added to the **existing**
   Proxmox-hosted `acp-console` tunnel via the Configuration API (incl.
   Steam port 3101) — confirmed via a follow-up GET that pre-existing
