@@ -560,3 +560,82 @@ profile identified during the review. This repo's own label taxonomy
 backfilled to match `dune-awakening-selfhost-docker`,
 `arrakis-control-panel`, and `dune-ops-observability-addon` as part of
 this same review.
+
+### Follow-up: STRIDE report resolution-status drift caught and corrected
+
+The Layer 1 STRIDE table posted alongside the findings above was found,
+in a later session, to have gone stale within minutes of being posted:
+every row still said "Open — design fix required before Layer 2" after
+the design-revision comment (Amendments 1-6) had already resolved the
+5 CRITICAL findings 7 minutes later. A corrected STRIDE table was
+posted as a follow-up issue comment on #97, and in producing it, 9
+additional HIGH-severity findings were confirmed still open (never
+addressed by Amendments 1-6, which were explicitly scoped only to the
+5 CRITICALs): H-1, H-2, H-3, H-4, H-6, H-11, H-14, H-21, H-22, spanning
+all 6 STRIDE categories. This is itself a real instance of the
+documentation-drift discipline this workstream's own README requires
+(Requirement 12/14): a claim ("all findings resolved") that was true
+when written became false minutes later and was not corrected until
+independently re-checked — the fix was applying that same "never
+assume, always verify" principle to this register's own prior entry,
+not just to the underlying design.
+
+Each of the 9 open HIGH findings was filed as its own tracked issue
+(#104-#112, matching the #98-#102 pattern — labeled, added to Project
+Arrakis with Priority=High/Workstream=Dune) and then resolved via a
+second design-revision comment (Amendments 7-15, Design Revision v1.2)
+in the same session they were filed:
+
+- **#109 (H-1, DoS):** no decompression-bomb/extraction-size limits.
+  **Resolved:** explicit per-file/cumulative/compression-ratio/
+  entry-count bounds enforced during streaming extraction.
+- **#110 (H-2, Elevation of Privilege):** host-identity guard's
+  `/etc/machine-id` signal is regenerable on VM clone; sentinel
+  provenance unspecified. **Resolved:** added a fourth,
+  non-regeneratable signal (Proxmox VMID) and required sentinel
+  provisioning to be a separate, loud, one-time step.
+- **#104 (H-3, Information Disclosure):** `docker compose config`
+  secret-expansion redaction was hedged ("where available"), not
+  concretely closed — confirmed 15+ secret-bearing env vars in
+  `docker-compose.web.yml` that this command expands by design.
+  **Resolved:** mandatory redaction pass on every captured subprocess
+  output, modeled on the addon's `redactSecrets()` pattern.
+- **#107 (H-4, Tampering):** GitHub changed-file-path metadata wasn't
+  held to the same hostile-input bar as archive-internal paths.
+  **Resolved:** extended the existing archive-hardening posture
+  explicitly to this separate untrusted-input source.
+- **#112 (H-6, Tampering):** full-tree reconciliation had no special
+  case for a diff changing `docker-compose.web.yml`'s `name:` field or
+  volume declarations — exactly this project's own prior Compose
+  project-identity incident's failure shape (confirmed this file's
+  fixed `name:` pin was never reverted, unlike the other two Compose
+  files). **Resolved:** new maximum-risk `compose-identity`
+  classification tier requiring manual review, plus a mandatory
+  `test-compose-project-name-portability.sh` preflight gate.
+- **#106 (H-11, Information Disclosure / Elevation of Privilege):**
+  leaked-token blast radius was undefined because scope was undefined
+  (companion to #99's fix). **Resolved:** hardened the redaction
+  abuse test to use realistic GitHub token-format strings, tied
+  explicitly back to #99's scope-minimization control.
+- **#108 (H-14, Denial of Service):** no timeout/TLS-validation
+  mandate on GitHub calls; an unbounded hang could hold the single
+  exclusive lock indefinitely, blocking `status`/`rollback`/`cleanup`
+  for every operation. **Resolved:** hard connect/read timeouts,
+  TLS-validation-never-disabled mandate, and lock acquisition
+  reordered to exclude network I/O from the critical section.
+- **#105 (H-21, Tampering / Elevation of Privilege):** no
+  fault-injection test proving the frozen head SHA can't be silently
+  swapped for a since-advanced branch tip (TOCTOU). **Resolved:**
+  added an explicit fault-injection scenario proving SHA-addressed
+  (not branch-addressed) archive download.
+- **#111 (H-22, Spoofing / Tampering):** no fault-injection test for a
+  race between the trust-allowlist check and archive acquisition.
+  **Resolved:** added an explicit scenario with a strong preference
+  for structurally eliminating the race (never re-querying source
+  identity after initial resolution) over merely detecting it.
+
+**Net result:** all 14 CRITICAL+HIGH findings from the Layer 1 audit
+of issue #97 (5 CRITICAL via Amendments 1-6, 9 HIGH via Amendments
+7-15) are now resolved at the design level, before any implementation
+code was written. The original 45-section spec plus all 15 amendments
+is the design baseline for Layer 2 implementation.
