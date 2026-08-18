@@ -463,3 +463,100 @@ applied — issue #88 caught this before implementation, exactly as
 Requirement 20's Layer 1 gate is meant to. Each VM continues syncing
 NTP from internet pools directly, unchanged from before this issue was
 opened.
+
+---
+
+## Issue #97 — PR deploy/rollback tool for dune-dev (Layer 1 design audit, 2026-08-18)
+
+Another standalone Requirement 20 Layer 1 (design, pre-implementation)
+audit, unrelated to the 2026-08-07 review above and to issue #88's
+NTP review — recorded here per this repo's established convention of
+mirroring eight-hats findings in both the tracking issue's own comment
+thread and this register.
+
+**Proposal:** a Python-based, content-addressed, transactional
+deploy/rollback tool (`dune-dev-pr-deploy`) letting an operator deploy
+an arbitrary unmerged `dune-awakening-selfhost-docker` PR onto the
+persistent `dune-dev` VM for live testing, then cleanly roll back —
+replacing the ad hoc manual process that had already caused two
+real incidents (a failed `git apply` against 618 lines of undocumented
+drift, and a manual revert with no repeatable procedure). Proposed as
+a 45-section implementation spec posted as a comment on issue #97.
+
+**Outcome: not rejected, but not approved as-written — 5 CRITICAL
+findings required a design revision before Layer 2 implementation
+could begin.** Full findings and STRIDE mapping posted as an issue
+comment on #97 (per Requirement 20's issue-comment rule); each CRITICAL
+finding was additionally filed as its own tracked, closeable issue
+(#98-#102) since each was independently resolvable. Summary of the 5
+CRITICAL findings, all resolved via a same-day design revision (see
+issue #97's second comment) before any code was written:
+
+- **Security (#98, CRITICAL):** the design's only gate on candidate PR
+  code before it runs with Docker-socket-adjacent privilege was a
+  static `head.repo.full_name` allowlist check — answers "did this
+  code arrive via a trusted repo," not "is this specific commit safe
+  to run with host-root-equivalent privilege." The design's
+  health-gate/auto-rollback model is availability-oriented only; a
+  malicious-but-healthy candidate is invisible to it. **Resolved:**
+  design revision adds a mandatory static/dependency scan
+  (semgrep/trivy/gitleaks) before quiescence, a human-confirmation
+  token required for any unattended deploy, and an explicit documented
+  limitation that the health gate is not a security control.
+- **Cloud Security (#99, CRITICAL):** the tool's own GitHub API
+  credential had no specified scope, storage location, or rotation
+  cadence anywhere in the 1616-line spec, despite this credential's
+  compromise being architecturally equivalent to compromising the
+  tool's own trust boundary (it authenticates the same control plane
+  that vets candidate code). **Resolved:** design revision specifies a
+  fine-grained, single-repo, read-only PAT, `~/.config/`-scoped
+  storage matching this workstream's personal-tooling convention
+  (explicitly not the target app's `runtime/secrets/`), 90-day
+  rotation, and runtime scope/permission self-verification.
+- **GRC (#102, CRITICAL — invocation authorization):** nothing in the
+  design gated *who* may invoke the tool against the shared, persistent
+  dune-dev host — only *what host* (§9) and *what source repo* (§11)
+  were validated. The audit-log `operator` field was attribution only,
+  not authorization. **Resolved:** design revision adds a dedicated
+  POSIX group requirement and derives the audit log's operator field
+  from a verified UID, not a caller-overridable environment variable.
+- **DBA (#100, CRITICAL):** the design's file-path-based
+  `database/schema` risk classification cannot reliably detect real
+  DDL in this specific target repo — verified directly that
+  `dune-awakening-selfhost-docker` has no dedicated schema/migration
+  directory; DDL for the `console` schema lives inline inside an
+  11,000+ line general-purpose file (`duneDb.js`), indistinguishable
+  by path alone from an ordinary query change. **Resolved:** design
+  revision requires diff-content DDL-keyword detection as a
+  supplementary signal to path-matching, plus a mechanical
+  (not merely documented) backup-verification gate before any
+  DB-risk-classified deploy.
+- **QA (#101, CRITICAL):** the design's fake `docker`/`rsync`/`curl`
+  test-wrapper approach for integration testing had no requirement to
+  validate wrapper fidelity against real command behavior — the exact
+  mock-divergence failure class this workstream has been burned by
+  before. **Resolved:** design revision requires each wrapper to
+  document its modeled command version/contract and cross-check it
+  against dune-dev's actual installed versions during real-host
+  validation.
+
+Additional non-blocking findings (23 HIGH, ~14 MEDIUM across Architect,
+Network, and UI/Operator-UX hats) were recorded in the issue #97
+findings comment but did not block Layer 2 implementation from
+proceeding once the 5 CRITICAL items above were resolved; several are
+tracked as follow-up refinements to be picked up during or shortly
+after Layer 2 implementation rather than as separate blocking issues.
+
+**Remediation:** a design-revision comment (Amendments 1-6) was posted
+on issue #97 the same session the findings were raised, addressing all
+5 CRITICAL findings at the design level before any implementation
+code was written — consistent with Requirement 20's "shift left"
+principle (catching design errors before they become multi-system
+rework). Issues #98-#102 were each closed referencing the specific
+amendment that resolves them. Project Arrakis `Priority` for #97 was
+updated from Medium to High to reflect the docker-socket-adjacent risk
+profile identified during the review. This repo's own label taxonomy
+(previously missing `severity:*`/`security`/`stride:*` entirely) was
+backfilled to match `dune-awakening-selfhost-docker`,
+`arrakis-control-panel`, and `dune-ops-observability-addon` as part of
+this same review.

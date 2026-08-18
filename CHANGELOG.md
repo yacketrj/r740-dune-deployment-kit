@@ -10,6 +10,29 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Added
 
+- **Design for `dune-dev-pr-deploy`, a content-addressed, transactional
+  PR deploy/rollback tool for testing unmerged
+  `dune-awakening-selfhost-docker` branches on the persistent `dune-dev`
+  VM** (issue #97). Replaces the ad hoc manual deploy process that had
+  already caused two real incidents (a failed `git apply` against 618
+  lines of undocumented drift between dune-dev and the fork's `main`,
+  and a manual revert with no repeatable procedure). A Layer 1
+  eight-hats design audit found 5 CRITICAL gaps — repo-allowlist
+  conflated with code-trust given confirmed Docker-socket exposure
+  (#98), unspecified GitHub-token scope/storage/rotation (#99), no
+  invocation-authorization policy (#102), unreliable file-path-based
+  DB-schema-risk detection in this specific target repo (#100), and no
+  fidelity requirement for fake test wrappers (#101) — each resolved
+  via a same-day design revision (Amendments 1–6, posted as a comment
+  on #97) before any implementation code was written. Full findings,
+  STRIDE mapping, and remediation recorded in
+  `compliance/eight-hats-findings-register.md`. This repo's own label
+  taxonomy (previously missing `severity:*`/`security`/`stride:*`
+  entirely) was backfilled to match the other 3 repos in this
+  workstream as part of this review. **Design only — no implementation
+  yet**; Layer 2 implementation is tracked as follow-up work under
+  issue #97.
+
 - **New "Services" VLAN (22) and dedicated bot VM design (VMID 103)**
   for the ACP Discord bot — resolves the conflict between two earlier,
   un-actioned proposals: `r740-dune-deployment-kit#92` (bot on
