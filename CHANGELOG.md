@@ -33,6 +33,20 @@ introduced them, in Keep a Changelog style, newest first.
   yet**; Layer 2 implementation is tracked as follow-up work under
   issue #97.
 
+  **Follow-up (same day):** the Layer 1 STRIDE report's resolution
+  tracking was found to be stale (claimed all findings "Open" after
+  the CRITICAL fixes above had already landed) and was corrected; in
+  the process, 9 additional HIGH-severity findings (#104-#112) —
+  decompression-bomb/extraction-size limits, host-identity-guard
+  defeat paths, secret redaction gaps in captured subprocess output,
+  hostile-input handling for GitHub metadata, Compose identity/volume
+  change classification, leaked-token blast radius, GitHub-call
+  timeout/TLS-validation gaps causing lock-starvation risk, and two
+  missing TOCTOU/race fault-injection scenarios — were confirmed still
+  open and resolved via a second design revision (Amendments 7–15).
+  All 14 CRITICAL+HIGH findings from the Layer 1 audit are now
+  resolved at the design level.
+
 - **New "Services" VLAN (22) and dedicated bot VM design (VMID 103)**
   for the ACP Discord bot — resolves the conflict between two earlier,
   un-actioned proposals: `r740-dune-deployment-kit#92` (bot on
