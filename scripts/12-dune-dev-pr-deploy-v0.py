@@ -268,19 +268,48 @@ def reconcile(source_dir: Path, protected_paths, dry_run=False):
 
 
 def restart_and_health_check() -> bool:
-    log("Restarting console service ...")
-    subprocess.run(
-        ["docker", "compose", "up", "-d", "--build", "console"],
-        cwd=LIVE_DIR, check=True,
-    )
+    # The console lives in docker-compose.web.yml, not the base
+    # docker-compose.yml, as service `redblink-dune-docker-console` -- not
+    # bare `console`. Confirmed live via `docker compose config --services`;
+    # the base compose file alone only has `orchestrator`. Matches exactly
+    # what runtime/scripts/dune's own `manager`/`start` commands run (see
+    # that script's start_compose_service_if_available, web branch) --
+    # --force-recreate is added here (unlike that helper) because a redeploy
+    # must always replace the running container, never no-op because one
+    # happens to already be up.
+    log("Restarting console service (redblink-dune-docker-console) ...")
+    env = os.environ.copy()
+    env["COMPOSE_PROJECT_NAME"] = env.get("DUNE_WEB_COMPOSE_PROJECT_NAME", "dune-awakening-selfhost-docker")
+    env["DUNE_HOST_REPO_ROOT"] = env.get("DUNE_HOST_REPO_ROOT", str(LIVE_DIR))
+    env["DUNE_HOST_UID"] = env.get("DUNE_HOST_UID", str(os.getuid()))
+    env["DUNE_HOST_GID"] = env.get("DUNE_HOST_GID", str(os.getgid()))
+    try:
+        subprocess.run(
+            ["docker", "compose", "-f", "docker-compose.web.yml", "up", "-d",
+             "--build", "--force-recreate", "redblink-dune-docker-console"],
+            cwd=LIVE_DIR, check=True, env=env,
+        )
+    except subprocess.CalledProcessError as err:
+        # The file deploy (the actually risky, stateful part) already
+        # succeeded by the time this runs -- a restart failure must still
+        # let cmd_deploy record state (pr/sha/snapshot), or `status` and
+        # `rollback` are left blind to what's really live on disk. v0's own
+        # contract is "don't auto-rollback, let a human decide" -- crashing
+        # here instead denies the human even the state to decide from.
+        log(f"Console restart command failed: {err}")
+        return False
     time.sleep(5)
-    log("Running health check (dune status) ...")
+    # `dune status` never prints an "Overall:" summary line -- `dune ready`
+    # is the pass/wait/fail check this tool's own docstring already points
+    # operators at; confirmed live, its success line is "READY: ... looks
+    # healthy." (no "Overall:" text exists in either command's real output).
+    log("Running health check (dune ready) ...")
     result = subprocess.run(
-        ["./runtime/scripts/dune", "status"],
+        ["./runtime/scripts/dune", "ready"],
         cwd=LIVE_DIR, capture_output=True, text=True,
     )
     print(result.stdout)
-    healthy = "Overall:     READY" in result.stdout
+    healthy = "READY: " in result.stdout and result.returncode == 0
     if not healthy:
         log("Health check did NOT report READY.")
     return healthy
