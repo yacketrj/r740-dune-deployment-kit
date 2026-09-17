@@ -8,6 +8,18 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Fixed
+
+- **Corrected two stale/false documentation claims found during the
+  dune-prod1/dune-prod2 split** (`Project-Arrakis/meta`#73, PR #115):
+  `02-network-setup.md` incorrectly claimed the UCG-Max has no
+  scriptable config API at all — it does (the legacy UniFi REST API,
+  `/proxy/network/api/s/default/rest/*`), and it was used successfully
+  to fix a real missing-port-forward bug. `02-network-setup.md`'s Step
+  5 port-forward table and `06-multi-battlegroup-public-exposure.md`'s
+  status were both out of date relative to the real, live network
+  state after dune-prod1 was split into dune-prod1/dune-prod2.
+
 ### Added
 
 - **Design for `dune-dev-pr-deploy`, a content-addressed, transactional

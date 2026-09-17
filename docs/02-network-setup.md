@@ -13,11 +13,36 @@ count and WAN handoff type (Fiber's default WAN is SFP+/fiber, not
 2.5GbE RJ45) before following Step 3's port math.
 
 This covers the UniFi OS setup on the UCG-Max: 4 VLANs, firewall
-policies, and port forwards. All of this is done through the UniFi web
-UI (or the UniFi mobile app) — there is no CLI scripting for this device
-in this kit, since Ubiquiti doesn't expose a stable local API/CLI for
-this scope of config without extra tooling. Follow this as a manual
-checklist.
+policies, and port forwards. Follow this as a manual checklist via the
+UniFi web UI (or the UniFi mobile app) if you prefer, or use the API
+approach below — either works.
+
+**Correction (2026-09-17): this section previously said "there is no
+CLI scripting for this device in this kit."** That was wrong, not just
+incomplete — there is a genuine, working local write API for exactly
+this scope of config (VLANs, firewall zones/policies, port forwards),
+and it has been used successfully multiple times in this project
+(Step 4's zone/policy creation below; a live port-forward repoint and
+two new forwards created 2026-09-17 during the `dune-prod`/`dune-prod2`
+split, see `meta`#73). Two separate UniFi APIs exist on this gateway —
+do not confuse them:
+- **UniFi Integration API** (`https://<gateway-ip>/proxy/network/integrations/v1/...`)
+  — the newer, official API. Works for reads (sites, some device/client
+  info) but does **not** expose port-forward/NAT config at all
+  (confirmed: every plausible port-forward path 404s against it).
+- **UniFi legacy REST API** (`https://<gateway-ip>/proxy/network/api/s/default/rest/<resource>`,
+  e.g. `.../rest/portforward`, `.../rest/networkconf`) — this is the one
+  with real config CRUD. `GET` lists all objects with their real `_id`s;
+  `PUT .../rest/<resource>/<id>` updates one (send the full object, not
+  a partial patch); `POST .../rest/<resource>` creates a new one (omit
+  `_id`, keep the same `site_id` as an existing object). Both APIs
+  authenticate the same way here — `X-API-KEY: <token>` header, token
+  at `~/.config/UCG-MAX/ucg-max-auth.txt` on the dev host — but only the
+  legacy REST API actually has the config-write surface this guide
+  needs. This was found by trial: the working token was already
+  confirmed valid and site-scoped via the Integration API, then tried
+  directly against the legacy REST path once the Integration API's own
+  port-forward endpoints all 404'd.
 
 **This is a live, in-use home network** (AP mesh, all household devices)
 per this project's Strict Requirement 7 — the steps below are
@@ -356,6 +381,37 @@ choice.
 - **dune-dev = Instance 2** — the standard `+1000` offset from the
   multi-server guide.
 
+**Correction (2026-09-17): the single-VM "dune-prod" framing above is
+now superseded.** `dune-prod` was renamed `dune-prod1` and the live
+battlegroup that was running on it ("Sietch Kadir") was relocated to a
+**new third VM, `dune-prod2`, as Instance 3** — see
+`Project-Arrakis/meta#73` for the full status and rationale (not a
+Prod/Dev split anymore; it's a battlegroup-identity-driven split,
+tracked separately from this document). Current instance mapping as
+of this correction:
+
+- **dune-prod1 (`192.168.20.10`) = Instance 1** — currently **stopped
+  and empty**, pending a future restore of a different battlegroup.
+  Its forwards (table below) were pre-staged ahead of that restore at
+  the operator's explicit request — a deliberate, one-off exception to
+  this section's own "don't create Prod forwards ahead of time"
+  guidance a few paragraphs up, made because the forward target
+  (`192.168.20.10`) is currently inert (nothing is listening, so an
+  early forward is genuinely dead weight but not disruptive) and the
+  operator judged the convenience worth it. Don't take this as
+  supersedes the general guidance for a future, different migration.
+- **dune-prod2 (`192.168.20.11`) = Instance 3** — the live battlegroup
+  today. Uses the `+2000` offset (not `+1000`/Instance 2, which
+  dune-dev already occupies): Player/Game UDP `9777-9810`, RMQ Game/
+  HTTP `33982`/`33983`. Forwards for this instance were fixed
+  2026-09-17 after being found completely missing (root cause of a
+  real "server online but players can't connect" incident, see
+  `meta`#73) — do not assume this table is current without checking
+  `meta`#73 first, since this section predates the actual Instance 3
+  cutover and does not yet have its own row in the table below.
+- **dune-dev (`192.168.21.10`) = Instance 2** — unchanged, still
+  the standard `+1000` offset.
+
 **This step is a cutover for Prod, but an additive setup step for Dev —
 do the Prod cutover last, and only when dune-prod is actually ready to
 take over.** If this gateway already has an active game server running
@@ -397,6 +453,33 @@ rules to point at **dune-prod's VM IP**:
 | Dune Game Traffic | 7777-7810 | 192.168.20.10 | 7777-7810 | UDP |
 | Dune RMQ Game | 31982 | 192.168.20.10 | 31982 | TCP |
 | Dune RMQ HTTP | 31983 | 192.168.20.10 | 31983 | TCP |
+
+**Correction (2026-09-17): the table above is historical, not the
+current live state.** Per the dune-prod1/dune-prod2 split (`meta`#73),
+these exact rule IDs (`DA-Game Server`, `DA-RMQ`) were repointed away
+from dune-prod entirely — they now serve **dune-prod2** (renamed `Dune
+Prod2 Game Traffic`/`Dune Prod2 RMQ`), not dune-prod1:
+
+| Name | WAN Port(s) | Forward IP | Forward Port(s) | Protocol |
+|---|---|---|---|---|
+| Dune Prod2 Game Traffic | 9777-9810 | 192.168.20.11 | 9777-9810 | UDP |
+| Dune Prod2 RMQ | 33982,33983 | 192.168.20.11 | 33982,33983 | TCP |
+
+Two **new** rules were created for dune-prod1's own Instance-1 profile
+(the table this section originally documented) — currently inert,
+pre-staged ahead of dune-prod1's eventual restore per the operator's
+request:
+
+| Name | WAN Port(s) | Forward IP | Forward Port(s) | Protocol |
+|---|---|---|---|---|
+| Dune Prod1 Game Traffic | 7777-7810 | 192.168.20.10 | 7777-7810 | UDP |
+| Dune Prod1 RMQ | 31982,31983 | 192.168.20.10 | 31982,31983 | TCP |
+
+All of the above was done via the UCG-Max's legacy REST API, not the
+UI — see the correction at the top of this document for the working
+API details (this section's own "Go to Settings → Firewall & Security
+→ Port Forwarding" instruction above is still valid if you prefer the
+UI instead).
 
 **Dev's forwards (Instance 2 — new as of issue #83):** create these as
 soon as dune-dev's battlegroup is initialized and the multi-server
