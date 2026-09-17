@@ -1,5 +1,18 @@
 # R740XD-01: Proxmox Install + VM Provisioning
 
+**Correction (2026-09-17):** the VM sizing/naming below (dune-prod at
+40 vCPU/152GB, dune-dev at 20 vCPU/50GB, fresh "Tabr Tau" battlegroups
+with new Funcom tokens) reflects the original stand-up plan, already
+executed and since revised multiple times — the current real state
+involves dune-prod split into dune-prod1/dune-prod2, different sizing
+throughout, and the actual live battlegroup titled "Chronicles of
+Kanly"/Sietch Kadir, not "Tabr Tau". See the top-of-`README.md`
+correction and `Project-Arrakis/meta`#73. The mechanical/procedural
+content below (NUMA-affinity detection, VLAN-aware bridge setup, the
+`--boot order=ide2;scsi0` workaround) remains valid technique for
+standing up a similarly-shaped VM in the future — just don't take the
+specific sizing/naming values as current.
+
 You are an LLM coding agent running in your own session, ON THE PROXMOX
 HOST (via SSH or the web console at `https://<r740-mgmt-ip>:8006`). Your
 job in this session covers everything from Proxmox VE installation media

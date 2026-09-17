@@ -1,5 +1,13 @@
 # TABR-TAU-04: End-to-End Verification & Go-Live Cutover
 
+**Correction (2026-09-17):** paths below are stale (`~/r740-deployment/`
+→ `~/projects/repos/r740-dune-deployment-kit`, `~/projects/meta/Arrakis-Project/`
+→ `~/projects/meta/Project-Arrakis/` — see `prompts/tabr-tau/00-prerequisites.md`'s
+own correction for the full path-drift list). This go-live checklist
+also describes the original "Tabr Tau" stand-up, already executed and
+since diverged in VM topology/naming — see the top-of-`README.md`
+correction.
+
 You are an LLM coding agent running in your own session, ON THE USER'S
 DEV MACHINE, after ALL R740xd deployment phases are complete
 (`r740xd/01-proxmox-and-vms.md` through `r740xd/03-bot-deploy-and-tunnel.md`).

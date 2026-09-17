@@ -10,6 +10,25 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Fixed
 
+- **Full document-set accuracy review** (`Project-Arrakis/meta`#73):
+  found and corrected significant drift across 10 files — every
+  `yacketrj/*` repo link and `~/projects/dune/`, `~/projects/acp/`,
+  `~/r740-deployment/`, `~/projects/meta/Arrakis-Project/` path
+  reference was stale (real paths are flat `~/projects/repos/`, bot
+  repo renamed twice to `mentat`); VM sizing figures throughout are at
+  least two revisions behind current state (`dune-prod` has since split
+  into `dune-prod1`/`dune-prod2`); several files still described the
+  ACP bot as planned to co-locate on `dune-prod`, contradicting its
+  real, already-executed placement on its own dedicated VM (a real bug
+  in `prompts/r740xd/04-post-deployment-ops.md`'s bot-troubleshooting
+  commands, not just narrative drift); the real live battlegroup
+  ("Chronicles of Kanly"/Sietch Kadir) doesn't match the "Tabr Tau"
+  fresh-battlegroup plan these docs describe, flagged as an
+  unreconciled discrepancy rather than guessed at. `README.md` now
+  carries a top-of-file correction summarizing all of this as the
+  canonical pointer; `Project-Arrakis/meta`'s own README remains the
+  source of truth for current live state.
+
 - **Corrected two stale/false documentation claims found during the
   dune-prod1/dune-prod2 split** (`Project-Arrakis/meta`#73, PR #115):
   `02-network-setup.md` incorrectly claimed the UCG-Max has no

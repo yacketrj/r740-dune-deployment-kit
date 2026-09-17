@@ -1,5 +1,11 @@
 # Post-Stand-Up Security Hardening Checklist
 
+**Note (2026-09-17):** the checklist items below are generic, still-valid
+security guidance for any VM in this deployment — but "either VM"/"Prod
+vs. Dev" now maps onto more than two VMs (dune-prod1, dune-prod2,
+dune-dev at minimum — see `Project-Arrakis/meta`#73). Apply each item
+per-VM, not just twice.
+
 Do this before considering either VM "done," ideally before or immediately
 after the 7/30 cutover — not weeks later.
 

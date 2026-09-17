@@ -1,5 +1,49 @@
 # R740 Dune: Awakening Deployment Kit
 
+**Correction (2026-09-17): full document-set accuracy review — most of
+this repo's `docs/`/`prompts/` describe the ORIGINAL July/August 2026
+stand-up plan, and real execution has since diverged from it in several
+significant, unreconciled ways.** For the current, actively-maintained
+live state (VM sizing, network topology, tunnel ingress, repo names/
+locations), always check `Project-Arrakis/meta`'s README (Live Systems
+section) first — that document is kept current session-to-session; this
+repo's stand-up docs are largely a historical record of the initial
+build-out. Known divergences found in this review, none yet reconciled
+line-by-line throughout every file below:
+
+- **Repo org/names**: every `yacketrj/*` GitHub link and `~/projects/dune/`,
+  `~/projects/acp/`, `~/r740-deployment/`, `~/projects/meta/Arrakis-Project/`
+  path in this repo's docs is stale. The real, current locations: this
+  repo is `yacketrj/r740-dune-deployment-kit` (not yet itself migrated
+  into the `Project-Arrakis` org, unlike most other repos in this
+  workstream) cloned at `~/projects/repos/r740-dune-deployment-kit`;
+  the game server fork is `Project-Arrakis/dune-awakening-selfhost-docker`
+  at `~/projects/repos/dune-awakening-selfhost-docker`; the bot
+  (`arrakis-control-panel` throughout this repo's docs) is now
+  `Project-Arrakis/mentat` at `~/projects/repos/mentat` (renamed twice:
+  `arrakis-control-panel` → `sentinel` → `mentat`); the meta-repo is
+  `Project-Arrakis/meta` at `~/projects/meta/Project-Arrakis/`.
+- **VM sizing has been revised multiple times since this repo's docs
+  were written** (the "40 vCPU/152GB dune-prod, 20 vCPU/50GB dune-dev"
+  figures throughout this repo are at least two revisions stale) and,
+  as of 2026-09-16/17, **`dune-prod` itself was split into two VMs**
+  (`dune-prod1`, `dune-prod2`) — see `Project-Arrakis/meta`#73. This
+  repo's docs still describe the single-VM-per-environment model.
+- **The ACP bot ended up on its own dedicated VM (VMID 103, Services
+  VLAN 22)**, not co-located on `dune-prod` as several of this repo's
+  earlier-written sections still describe (`prompts/r740xd/03-bot-deploy-and-tunnel.md`
+  already carries its own correct 2026-08-17 correction for this;
+  `docs/00-START-HERE.md`, `docs/03-runbook-day-of.md`'s main body, and
+  this README's own "Sizing revision" note below do not).
+- **The actual live battlegroup's identity doesn't match this repo's
+  planning docs.** This repo's stand-up plan describes fresh battlegroups
+  titled "Tabr Tau" (Prod) / "Tabr Tau - Dev" (Dev), each with a newly
+  generated Funcom token. The real, current dune-prod1/dune-prod2
+  battlegroup is titled "Chronicles of Kanly" (Sietch "Kadir") — how or
+  why this diverged from the "Tabr Tau" plan was not established during
+  this review; flagging as a known, unreconciled discrepancy rather than
+  guessing.
+
 Scripts and step-by-step documentation for standing up two independent,
 self-hosted **Dune: Awakening** battlegroups (a Production and a Development
 environment) on a single piece of dedicated server hardware, using free,
@@ -133,16 +177,26 @@ The eventual goal is to turn this into a broader "how to self-host Dune:
 Awakening Prod/Dev on your own hardware" community guide once the current
 deployment is validated in production.
 
-**2026-08-07 update:** the ACP Discord bot was migrated from an OCI VPS to
-the dune-prod VM, eliminating a $300/month cloud hosting cost. The bot shares
-the VM with the game server stack, calling the console API over localhost.
+**2026-08-07 update (superseded 2026-08-17, issue #93 — see the top-of-file
+correction):** this originally said the ACP bot would share the dune-prod
+VM. That plan was reversed before execution — the bot got its own
+dedicated VM (VMID 103, Services VLAN 22) instead, for blast-radius
+isolation. It was never actually deployed onto dune-prod.
 
-**Sizing revision (2026-08-07):** VM allocations updated for the final
-production configuration — 2 Sietch dimensions (40 players each), 4 Deep
-Desert instances, and auto-scaling dynamic maps (dungeons, overlands, story
-zones). dune-prod: 40 vCPU / 152 GB RAM (socket 0, all 20 cores). dune-dev:
-20 vCPU / 50 GB RAM (socket 1, cores 20-29). Compute headroom: 20 threads,
-106 GB RAM remaining for Proxmox host and future expansion.
+**Sizing revision (2026-08-07, now itself superseded — see the
+top-of-file correction):** VM allocations described here (2 Sietch
+dimensions at 40 players each, 4 Deep Desert instances, dune-prod at
+40 vCPU/152GB, dune-dev at 20 vCPU/50GB) reflected the plan at the time
+of writing, not the current live state, which has been revised multiple
+times since and now involves two separate Prod VMs
+(`Project-Arrakis/meta`#73). Also note: a later, corrected capacity
+model established that a Sietch is a `Survival_1` *partition* at 16GB
+each (not a lighter, separate allocation) — see
+`dune-awakening-selfhost-docker`'s own `runtime/scripts/memory.sh` and
+`docs/runtime/MULTI-SERVER-SINGLE-PUBLIC-IP.md` for the real, current
+per-map memory model this repo's sizing plans should be re-derived
+from, not the "40 players each" framing used when this note was
+written.
 
 ## License
 
@@ -150,14 +204,19 @@ MIT — see [LICENSE](LICENSE).
 
 ## Related Projects
 
-- [dune-awakening-selfhost-docker](https://github.com/yacketrj/dune-awakening-selfhost-docker) —
+**Correction (2026-09-17):** the links and VM placement below are stale
+— see the top-of-file correction for current repo names/locations.
+
+- [dune-awakening-selfhost-docker](https://github.com/Project-Arrakis/dune-awakening-selfhost-docker) —
   the Docker-based self-host console this kit deploys
-- [Arrakis Control Panel](https://github.com/yacketrj/Arrakis-Control-Panel) —
-  the self-hosted Discord bot for Dune: Awakening servers. As of 2026-08-07,
-  the production bot runs on the dune-prod VM (VMID 101) of this very R740 —
-  the same VM that hosts the production game server stack. See
-  `systemd/acp-bot.service` and `compliance/runbooks/backup-recovery.md` in
-  that repo for the R740 deployment configuration. Previously hosted on an
-  OCI VPS (`acp-bot-vnic`); migrated to eliminate $300/month cloud costs.
-- [dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) —
+- [Mentat](https://github.com/Project-Arrakis/mentat) (formerly "Arrakis
+  Control Panel", then "Sentinel") — the self-hosted Discord bot for
+  Dune: Awakening servers. Runs on its own dedicated VM (VMID 103,
+  Services VLAN 22, `192.168.22.10`) — **not** on dune-prod/dune-prod1/
+  dune-prod2, despite this README's own now-corrected 2026-08-07 note
+  above once saying otherwise. See `systemd/acp-bot.service` and
+  `compliance/runbooks/backup-recovery.md` in that repo. Previously
+  hosted on an OCI VPS (`acp-bot-vnic`); migrated 2026-08-17 to
+  eliminate $300/month cloud costs.
+- [dune-ops-observability-addon](https://github.com/Project-Arrakis/dune-ops-observability-addon) —
   a read-only operations/observability addon for the console above

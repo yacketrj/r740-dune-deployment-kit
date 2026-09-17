@@ -1,5 +1,18 @@
 # R740XD-02: Game Server Initialization
 
+**Correction (2026-09-17):** this describes the original fresh-battlegroup
+stand-up plan ("Tabr Tau"/"Tabr Tau - Dev", 2 Sietch dimensions, 4 Deep
+Desert instances) — already executed and since diverged significantly
+from what's actually live. The real battlegroup is titled "Chronicles
+of Kanly" (Sietch "Kadir"), not "Tabr Tau", and dune-prod has since
+split into dune-prod1/dune-prod2 (`Project-Arrakis/meta`#73). A later
+session also corrected the underlying capacity model this plan's "40
+players each"/Sietch-count framing was built on — a Sietch is a
+`Survival_1` partition at 16GB each; re-derive sizing from
+`dune-awakening-selfhost-docker`'s own `runtime/scripts/memory.sh` and
+`docs/runtime/MULTI-SERVER-SINGLE-PUBLIC-IP.md`, not this file's
+original numbers, before applying this procedure again.
+
 You are an LLM coding agent running in your own session, driving SSH
 commands from wherever this session executes, but every change lands on
 the R740's VMs, not the machine you're typing from. Your job in this
