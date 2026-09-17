@@ -1,5 +1,20 @@
 # TABR-TAU-00: Prerequisites — Gather Before Racking Hardware
 
+**Correction (2026-09-17): every path below is stale.** This dev
+machine's real, current layout (per `Project-Arrakis/meta`'s README,
+Directory Layout section) is a flat `~/projects/repos/` — there is no
+`~/projects/dune/` or `~/projects/acp/` split, and this repo itself
+lives at `~/projects/repos/r740-dune-deployment-kit`, not
+`~/r740-deployment/`. Concretely: `~/projects/dune/dune-awakening-selfhost-docker`
+→ `~/projects/repos/dune-awakening-selfhost-docker`;
+`~/projects/acp/arrakis-control-panel` → `~/projects/repos/mentat` (the
+bot repo, renamed twice since this was written: `arrakis-control-panel`
+→ `sentinel` → `mentat`); `~/r740-deployment/` → `~/projects/repos/r740-dune-deployment-kit`;
+`~/projects/meta/Arrakis-Project/` (referenced in `04-e2e-verification.md`)
+→ `~/projects/meta/Project-Arrakis/`. Also see the top-of-`README.md`
+correction for VM sizing/naming/battlegroup-identity drift beyond just
+paths.
+
 You are an LLM coding agent running in your own, separate session on the
 user's DEV MACHINE (Tabr-Tau). Your scope in this session is gathering
 only: collect credentials, tokens, and configuration values, and verify

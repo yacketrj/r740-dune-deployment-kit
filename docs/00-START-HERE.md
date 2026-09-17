@@ -1,5 +1,17 @@
 # R740 Dune: Awakening Prod/Dev Deployment — Master Runbook
 
+**Correction (2026-09-17):** this entire document describes the original
+July 2026 stand-up plan as a forward-looking runbook. The stand-up
+already happened, and real execution diverged from several specifics
+below — see the top-of-`README.md` correction for the full list (bot
+ended up on its own VM not dune-prod; VM sizing revised multiple times,
+dune-prod later split into dune-prod1/dune-prod2 per
+`Project-Arrakis/meta`#73; the real battlegroup is "Chronicles of
+Kanly"/Sietch Kadir, not the "Tabr Tau" fresh-battlegroup plan below).
+Treat this file as a historical record of the original plan, not a
+description of current state — check `Project-Arrakis/meta`'s README
+for that.
+
 **Target stand-up date:** Thursday, July 30, 2026
 **Owner:** (see this repo's own operator — not tracked in this file per
 `tests/no-personal-identifiers.sh`)

@@ -1,5 +1,12 @@
 # July 30 Stand-Up Day — Exact Sequence
 
+**Correction (2026-09-17):** this stand-up already happened; this file
+is a historical record, not a current checklist — see the top-of-
+`README.md` correction for how real execution diverged (bot went to its
+own VM not dune-prod, contradicting the "ACP Bot Migration" section
+below; VM sizing/topology has changed multiple times since, most
+recently the dune-prod1/dune-prod2 split, `Project-Arrakis/meta`#73).
+
 Print this or keep it open on a second device. Check off each step.
 
 ## Morning

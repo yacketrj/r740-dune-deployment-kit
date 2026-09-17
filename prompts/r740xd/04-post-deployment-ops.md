@@ -1,5 +1,19 @@
 # R740XD-04: Post-Deployment Performance Baseline, Monitoring & Troubleshooting
 
+**Correction (2026-09-17):** this file predates the 2026-08-17 bot
+relocation (issue #93) and was never updated for it — every `journalctl
+-u acp-bot`/bot-related command below still targets `dune@192.168.20.10`
+(dune-prod), but the bot has run on its own dedicated VM
+(`bot@192.168.22.10`, VMID 103) since 2026-08-17. This is a real bug,
+not just stale narrative: running these commands as written against
+dune-prod will find no `acp-bot` unit there at all. Substitute
+`bot@192.168.22.10` for the bot-specific commands (Phase 2's bot-log
+check, "Bot not responding in Discord") — the game-server-specific
+commands (`dune status`, port checks) correctly stay targeted at
+whichever Prod VM is actually live (see `Project-Arrakis/meta`#73 for
+current VM assignment — no longer a single `dune-prod` since the
+dune-prod1/dune-prod2 split).
+
 You are an LLM coding agent running in your own session, executed via
 SSH against the R740's VMs — split out of the former
 `tabr-tau/04-e2e-verification.md` (issue #59) since capturing
