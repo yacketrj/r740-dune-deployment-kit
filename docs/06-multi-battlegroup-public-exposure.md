@@ -1,11 +1,40 @@
 # Running a Second, Independently-Public Battlegroup on One WAN IP
 
-**Status: NOT YET VERIFIED END-TO-END.** This document exists to preserve a
-correct, source-verified procedure for the *mechanical* part of this setup
-(distinct ports, port forwards, container config) so it's ready to test —
-it does **not** confirm the whole thing actually works with real players,
-because one critical piece is explicitly unverified. Read the "What Is NOT
-Yet Verified" section before building any real plan around this.
+**Correction (2026-09-17): this document is superseded by
+`dune-awakening-selfhost-docker`'s own
+`docs/runtime/MULTI-SERVER-SINGLE-PUBLIC-IP.md`, and its scenario is no
+longer theoretical — it happened.** That Core-repo doc is the current,
+authoritative SOP (a real `multi-server-config.py plan|apply|verify`
+helper, a strict uniform `+1000`-per-instance stride, and an explicit
+rule that this document's own mixed-offset example ports below (`7877`/
+`7988`) are **obsolete and must not be used** — do not follow this
+document's port numbers, follow that one's). The real execution: Sietch
+Kadir was relocated to a genuinely new, third VM (`dune-prod2`,
+`192.168.20.11`, Instance 3) behind the same WAN IP as `dune-prod1`
+(Instance 1) and `dune-dev` (Instance 2) — see
+`Project-Arrakis/meta`#73 for the full status. This document is kept
+for its historical context and its still-relevant caution below about
+external-connectivity verification, not as a source of correct port
+numbers or procedure.
+
+**Status, updated 2026-09-17: partially verified, not fully.** The
+"one critical piece" this document originally flagged as unverified —
+whether the self-hosting kit's code path actually advertises a
+non-default RabbitMQ port to Funcom correctly — is now **confirmed
+true**: dune-prod2's `dune-server-gateway` container's own
+`GatewayDeclareFarmStatus` log line correctly reports
+`GameRmqAddress`/`GameRmqHttpAddress` as the real public IP with the
+non-default Instance-3 ports (`33982`/`33983`), not silently falling
+back to the well-known defaults. What remains **unconfirmed**: whether
+a real game client, connecting from outside the LAN, can actually use
+that non-default port end-to-end (this document's own Phase 20/21
+external-validation steps below) — a player-connectivity issue was
+found and fixed 2026-09-17 (missing UCG-Max port forwards, see
+`meta`#73), but that fix has not yet been confirmed by an actual
+external client connection at the time of this correction. Read the
+original "What Is NOT Yet Verified" section below for the reasoning
+that's still relevant, and check `meta`#73 for whether external
+verification has since happened.
 
 This is a different scenario from the Prod/Dev split covered by
 `00-START-HERE.md`/`02-network-setup.md`: those two VMs are on **separate

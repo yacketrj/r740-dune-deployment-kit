@@ -381,6 +381,37 @@ choice.
 - **dune-dev = Instance 2** — the standard `+1000` offset from the
   multi-server guide.
 
+**Correction (2026-09-17): the single-VM "dune-prod" framing above is
+now superseded.** `dune-prod` was renamed `dune-prod1` and the live
+battlegroup that was running on it ("Sietch Kadir") was relocated to a
+**new third VM, `dune-prod2`, as Instance 3** — see
+`Project-Arrakis/meta#73` for the full status and rationale (not a
+Prod/Dev split anymore; it's a battlegroup-identity-driven split,
+tracked separately from this document). Current instance mapping as
+of this correction:
+
+- **dune-prod1 (`192.168.20.10`) = Instance 1** — currently **stopped
+  and empty**, pending a future restore of a different battlegroup.
+  Its forwards (table below) were pre-staged ahead of that restore at
+  the operator's explicit request — a deliberate, one-off exception to
+  this section's own "don't create Prod forwards ahead of time"
+  guidance a few paragraphs up, made because the forward target
+  (`192.168.20.10`) is currently inert (nothing is listening, so an
+  early forward is genuinely dead weight but not disruptive) and the
+  operator judged the convenience worth it. Don't take this as
+  supersedes the general guidance for a future, different migration.
+- **dune-prod2 (`192.168.20.11`) = Instance 3** — the live battlegroup
+  today. Uses the `+2000` offset (not `+1000`/Instance 2, which
+  dune-dev already occupies): Player/Game UDP `9777-9810`, RMQ Game/
+  HTTP `33982`/`33983`. Forwards for this instance were fixed
+  2026-09-17 after being found completely missing (root cause of a
+  real "server online but players can't connect" incident, see
+  `meta`#73) — do not assume this table is current without checking
+  `meta`#73 first, since this section predates the actual Instance 3
+  cutover and does not yet have its own row in the table below.
+- **dune-dev (`192.168.21.10`) = Instance 2** — unchanged, still
+  the standard `+1000` offset.
+
 **This step is a cutover for Prod, but an additive setup step for Dev —
 do the Prod cutover last, and only when dune-prod is actually ready to
 take over.** If this gateway already has an active game server running
@@ -422,6 +453,33 @@ rules to point at **dune-prod's VM IP**:
 | Dune Game Traffic | 7777-7810 | 192.168.20.10 | 7777-7810 | UDP |
 | Dune RMQ Game | 31982 | 192.168.20.10 | 31982 | TCP |
 | Dune RMQ HTTP | 31983 | 192.168.20.10 | 31983 | TCP |
+
+**Correction (2026-09-17): the table above is historical, not the
+current live state.** Per the dune-prod1/dune-prod2 split (`meta`#73),
+these exact rule IDs (`DA-Game Server`, `DA-RMQ`) were repointed away
+from dune-prod entirely — they now serve **dune-prod2** (renamed `Dune
+Prod2 Game Traffic`/`Dune Prod2 RMQ`), not dune-prod1:
+
+| Name | WAN Port(s) | Forward IP | Forward Port(s) | Protocol |
+|---|---|---|---|---|
+| Dune Prod2 Game Traffic | 9777-9810 | 192.168.20.11 | 9777-9810 | UDP |
+| Dune Prod2 RMQ | 33982,33983 | 192.168.20.11 | 33982,33983 | TCP |
+
+Two **new** rules were created for dune-prod1's own Instance-1 profile
+(the table this section originally documented) — currently inert,
+pre-staged ahead of dune-prod1's eventual restore per the operator's
+request:
+
+| Name | WAN Port(s) | Forward IP | Forward Port(s) | Protocol |
+|---|---|---|---|---|
+| Dune Prod1 Game Traffic | 7777-7810 | 192.168.20.10 | 7777-7810 | UDP |
+| Dune Prod1 RMQ | 31982,31983 | 192.168.20.10 | 31982,31983 | TCP |
+
+All of the above was done via the UCG-Max's legacy REST API, not the
+UI — see the correction at the top of this document for the working
+API details (this section's own "Go to Settings → Firewall & Security
+→ Port Forwarding" instruction above is still valid if you prefer the
+UI instead).
 
 **Dev's forwards (Instance 2 — new as of issue #83):** create these as
 soon as dune-dev's battlegroup is initialized and the multi-server
