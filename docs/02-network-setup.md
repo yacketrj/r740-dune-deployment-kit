@@ -13,11 +13,36 @@ count and WAN handoff type (Fiber's default WAN is SFP+/fiber, not
 2.5GbE RJ45) before following Step 3's port math.
 
 This covers the UniFi OS setup on the UCG-Max: 4 VLANs, firewall
-policies, and port forwards. All of this is done through the UniFi web
-UI (or the UniFi mobile app) — there is no CLI scripting for this device
-in this kit, since Ubiquiti doesn't expose a stable local API/CLI for
-this scope of config without extra tooling. Follow this as a manual
-checklist.
+policies, and port forwards. Follow this as a manual checklist via the
+UniFi web UI (or the UniFi mobile app) if you prefer, or use the API
+approach below — either works.
+
+**Correction (2026-09-17): this section previously said "there is no
+CLI scripting for this device in this kit."** That was wrong, not just
+incomplete — there is a genuine, working local write API for exactly
+this scope of config (VLANs, firewall zones/policies, port forwards),
+and it has been used successfully multiple times in this project
+(Step 4's zone/policy creation below; a live port-forward repoint and
+two new forwards created 2026-09-17 during the `dune-prod`/`dune-prod2`
+split, see `meta`#73). Two separate UniFi APIs exist on this gateway —
+do not confuse them:
+- **UniFi Integration API** (`https://<gateway-ip>/proxy/network/integrations/v1/...`)
+  — the newer, official API. Works for reads (sites, some device/client
+  info) but does **not** expose port-forward/NAT config at all
+  (confirmed: every plausible port-forward path 404s against it).
+- **UniFi legacy REST API** (`https://<gateway-ip>/proxy/network/api/s/default/rest/<resource>`,
+  e.g. `.../rest/portforward`, `.../rest/networkconf`) — this is the one
+  with real config CRUD. `GET` lists all objects with their real `_id`s;
+  `PUT .../rest/<resource>/<id>` updates one (send the full object, not
+  a partial patch); `POST .../rest/<resource>` creates a new one (omit
+  `_id`, keep the same `site_id` as an existing object). Both APIs
+  authenticate the same way here — `X-API-KEY: <token>` header, token
+  at `~/.config/UCG-MAX/ucg-max-auth.txt` on the dev host — but only the
+  legacy REST API actually has the config-write surface this guide
+  needs. This was found by trial: the working token was already
+  confirmed valid and site-scoped via the Integration API, then tried
+  directly against the legacy REST path once the Integration API's own
+  port-forward endpoints all 404'd.
 
 **This is a live, in-use home network** (AP mesh, all household devices)
 per this project's Strict Requirement 7 — the steps below are
