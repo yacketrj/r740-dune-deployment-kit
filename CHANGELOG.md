@@ -10,6 +10,15 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Fixed
 
+- **Docs updated for the dune-prod1/dune-prod2 revert and the planned map
+  layout** (`Project-Arrakis/meta`#73): `README.md`, `docs/00-START-HERE.md`
+  (new verified current-state table), `prompts/r740xd/01-proxmox-and-vms.md`
+  and `prompts/r740xd/02-game-servers.md` no longer say dune-prod is split;
+  they record the single dune-prod (60 vCPU/192GB), dune-dev (8 vCPU/26GB),
+  and the operator's 2-static-Deep-Desert + 2-Sietch plan (not yet
+  configured). Other files still describe the original plan and carry their
+  existing correction notes.
+
 - **Full document-set accuracy review** (`Project-Arrakis/meta`#73):
   found and corrected significant drift across 10 files — every
   `yacketrj/*` repo link and `~/projects/dune/`, `~/projects/acp/`,

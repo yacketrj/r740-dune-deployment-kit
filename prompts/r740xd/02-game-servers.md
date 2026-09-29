@@ -4,8 +4,11 @@
 stand-up plan ("Tabr Tau"/"Tabr Tau - Dev", 2 Sietch dimensions, 4 Deep
 Desert instances) — already executed and since diverged significantly
 from what's actually live. The real battlegroup is titled "Chronicles
-of Kanly" (Sietch "Kadir"), not "Tabr Tau", and dune-prod has since
-split into dune-prod1/dune-prod2 (`Project-Arrakis/meta`#73). A later
+of Kanly" (Sietch "Kadir"), not "Tabr Tau", and dune-prod was split
+into dune-prod1/dune-prod2 and then reverted to a single dune-prod on
+2026-09-29 (`Project-Arrakis/meta`#73). The operator's current layout
+plan is 2 static Deep Deserts + 2 Sietches with more added dynamically
+as the server grows — not the 4 Deep Deserts this file describes. A later
 session also corrected the underlying capacity model this plan's "40
 players each"/Sietch-count framing was built on — a Sietch is a
 `Survival_1` partition at 16GB each; re-derive sizing from

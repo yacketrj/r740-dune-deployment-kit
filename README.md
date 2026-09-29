@@ -25,10 +25,28 @@ line-by-line throughout every file below:
   `Project-Arrakis/meta` at `~/projects/meta/Project-Arrakis/`.
 - **VM sizing has been revised multiple times since this repo's docs
   were written** (the "40 vCPU/152GB dune-prod, 20 vCPU/50GB dune-dev"
-  figures throughout this repo are at least two revisions stale) and,
-  as of 2026-09-16/17, **`dune-prod` itself was split into two VMs**
-  (`dune-prod1`, `dune-prod2`) — see `Project-Arrakis/meta`#73. This
-  repo's docs still describe the single-VM-per-environment model.
+  figures throughout this repo are at least two revisions stale).
+  **Current state as of 2026-09-29 (verified live, `Project-Arrakis/meta`#73):**
+  `dune-prod` was briefly split into `dune-prod1`/`dune-prod2`
+  (2026-09-16/17), then **reverted to a single `dune-prod`** on
+  2026-09-28/29 because the planned second restored battlegroup was
+  cancelled. It is now VM 101, `192.168.20.10` (Instance-1 default ports),
+  **60 vCPU / 192GB / 300GB** across two NUMA nodes (node0 40 vCPU/112GB,
+  node1 20 vCPU/80GB); `dune-dev` (VM 102) is **8 vCPU / 26GB**;
+  `acp-bot` (VM 103) is 2 vCPU/4GB. This repo's docs still describe the
+  original 40 vCPU/152GB, 4-Deep-Desert plan.
+- **Map layout: what is live vs. planned.** Live today: 2 Sietches
+  (`Survival_1` dimensions, always-on) + Overmap, and 2 Deep Desert
+  dimensions configured but **on-demand** (scaled to zero when empty).
+  Operator's plan (not yet configured as of 2026-09-29): **2 static
+  (always-on) Deep Deserts and 2 Sietches now, with further Sietches and
+  Deep Deserts added dynamically as the server grows.** Capacity check
+  at the `memory.sh` ceilings (16GB per `Survival_1`/`DeepDesert_1`
+  partition, 3GB Overmap, ~4GB for the two always-on hubs, ~25GB OS and
+  infrastructure): the 2+2 layout is about 96GB of dune-prod's 192GB,
+  leaving roughly 96GB of headroom, about six more 16GB partitions at
+  ceiling. Those are ceilings, not typical use — measured live use for
+  2 Sietches + Overmap is about 24GB.
 - **The ACP bot ended up on its own dedicated VM (VMID 103, Services
   VLAN 22)**, not co-located on `dune-prod` as several of this repo's
   earlier-written sections still describe (`prompts/r740xd/03-bot-deploy-and-tunnel.md`
