@@ -24,7 +24,9 @@ bk_redact() {
     -e 's#(https://(ptb\.|canary\.)?discord(app)?\.com/api/webhooks/)[^[:space:]"]+#\1[REDACTED]#g' \
     -e 's#(AGE-SECRET-KEY-)[A-Z0-9]+#\1[REDACTED]#g' \
     -e 's#((password|token|secret|pass)[[:space:]]*[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#Ig' \
-    -e 's#"(password|token|secret)"[[:space:]]*:[[:space:]]*"[^"]*"#"\1":"[REDACTED]"#Ig' \
+    -e 's#"([A-Za-z_]*(password|token|secret|passwd)[A-Za-z_]*)"[[:space:]]*:[[:space:]]*"[^"]*"#"\1":"[REDACTED]"#Ig' \
+    -e 's#(://[^/:@[:space:]]+:)[^/@[:space:]]+@#\1[REDACTED]@#g' \
+    -e 's#(Authorization:[[:space:]]*Basic[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig' \
     -e 's#(Authorization:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig' \
     -e 's#(Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig'
 }
@@ -47,8 +49,9 @@ bk_notify() {
   BK_NOTIFY_LAST_RC=1
   url="$(cat "$BK_DISCORD_WEBHOOK_FILE")" || { bk_log "notify: could not read webhook file (ignored)"; return 0; }
   msg="$(printf '%s' "$msg" | bk_redact)"
+  [ "${#msg}" -le 1900 ] || msg="${msg:0:1890} [truncated]"
   payload="$(jq -n --arg c "$msg" '{content:$c}')" || { bk_log "notify: could not build payload (ignored)"; return 0; }
-  if printf 'url = "%s"\n' "$url" | curl -sS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1; then
+  if printf 'url = "%s"\n' "$url" | curl -fsS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1; then
     BK_NOTIFY_LAST_RC=0
   else
     bk_log "notify failed (ignored)"
@@ -107,6 +110,16 @@ bk_age_encrypt() {
   fi
 }
 
+# A backup name is trusted for retention only when its embedded YYYYMMDD-HHMMSS
+# stamp is a real date that is not in the future: the share is writable by other
+# machines, so a planted "...-99991231-235959..." name must never outrank real files.
+bk_stamp_plausible() {
+  local stamp="${1:?stamp}" epoch
+  [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ ]] || return 1
+  epoch="$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s 2>/dev/null)" || return 1
+  [ "$epoch" -le $(( $(date -u +%s) + 3600 )) ]
+}
+
 # Keep the newest KEEP_DAILY files plus the newest file of each of the newest
 # KEEP_MONTHLY calendar months. Only touches PREFIX-YYYYMMDD-HHMMSS*.tar.age.
 bk_prune_daily_monthly() {
@@ -128,6 +141,7 @@ bk_prune_daily_monthly() {
   for base in "${files[@]}"; do
     ym="$(printf '%s' "$base" | sed -nE "s/^${prefix}-([0-9]{6})[0-9]{2}-[0-9]{6}\.tar\.age$/\1/p")"
     [ -n "$ym" ] || continue
+    bk_stamp_plausible "$(printf '%s' "$base" | sed -nE "s/^${prefix}-([0-9]{8}-[0-9]{6})\.tar\.age$/\1/p")" || continue
     n=$((n + 1))
     keep_it=0
     [ "$n" -le "$keep_daily" ] && keep_it=1
@@ -147,7 +161,10 @@ bk_prune_keep_newest() {
     bk_log "invalid keep count: $keep (must be numeric and >= 1)"
     return 1
   fi
+  local stamp
   while IFS= read -r f; do
+    stamp="$(printf '%s' "$f" | sed -nE "s/^${prefix}-([0-9]{8}-[0-9]{6})\.[A-Za-z0-9.]+\.age$/\1/p")"
+    [ -n "$stamp" ] && bk_stamp_plausible "$stamp" || continue
     n=$((n + 1))
     [ "$n" -le "$keep" ] || rm -f -- "$dir/$f"
   done < <(find "$dir" -maxdepth 1 -type f -name "${prefix}-[0-9]*.age" -printf '%f\n' | sort -r)
@@ -235,6 +252,21 @@ bk_safe_rm_under() {
       ;;
   esac
   rm -rf -- "$real_path"
+}
+
+# Refuse a tar that holds anything but plain files and directories. A symlink,
+# hardlink, device or fifo member lets a later member be written through it, so a
+# hostile archive could write outside the extraction directory as root. Names are
+# checked separately by the callers. Returns 0 only for an all-regular archive.
+bk_tar_members_safe() {
+  local tarfile="${1:?tar file}" listing types
+  listing="$(tar -tvf "$tarfile" 2>/dev/null)" || return 1
+  [ -n "$listing" ] || return 1
+  types="$(printf '%s\n' "$listing" | cut -c1 | sort -u | tr -d '\n')"
+  case "$types" in
+    ''|*[!d-]*) return 1 ;;
+  esac
+  return 0
 }
 
 # Append "sha256  size  name" for FILE to MANIFEST.

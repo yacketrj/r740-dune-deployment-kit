@@ -127,6 +127,7 @@ open_daily_set() {
   age -d -i "$identity" -o "$ram/set.tar" "$path" 2>/dev/null || fail_drill "cannot decrypt $archive with the supplied key (wrong key or damaged archive)"
   tar -tf "$ram/set.tar" >"$ram/set.list" 2>/dev/null || fail_drill "decrypted archive is not a readable tar"
   if grep -qE '^/|(^|/)\.\.(/|$)' "$ram/set.list"; then fail_drill "archive contains an absolute or parent-relative path"; fi
+  bk_tar_members_safe "$ram/set.tar" || fail_drill "archive contains a link, device or other non-regular member"
   mkdir -p "$ram/set"
   tar -xf "$ram/set.tar" -C "$ram/set" --no-same-owner --no-same-permissions || fail_drill "could not unpack the decrypted archive"
   STAGE="integrity"

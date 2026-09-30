@@ -524,3 +524,77 @@ mk() { : >"$1/$2"; }
   BK_RAM_DIR="$BATS_TEST_TMPDIR/nope" run bk_make_ram_dir
   [ "$status" -eq 1 ]
 }
+
+@test "bk_tar_members_safe accepts regular files and directories only" {
+  d="$BATS_TEST_TMPDIR/tsafe"; mkdir -p "$d/dir"; echo a >"$d/dir/f"
+  tar -C "$d" -cf "$BATS_TEST_TMPDIR/ok.tar" dir
+  run bk_tar_members_safe "$BATS_TEST_TMPDIR/ok.tar"; [ "$status" -eq 0 ]
+  ln -s /etc "$d/dir/sym"
+  tar -C "$d" -cf "$BATS_TEST_TMPDIR/sym.tar" dir
+  run bk_tar_members_safe "$BATS_TEST_TMPDIR/sym.tar"; [ "$status" -ne 0 ]
+  rm "$d/dir/sym"; ln "$d/dir/f" "$d/dir/hard"
+  tar -C "$d" -cf "$BATS_TEST_TMPDIR/hard.tar" dir
+  run bk_tar_members_safe "$BATS_TEST_TMPDIR/hard.tar"; [ "$status" -ne 0 ]
+  run bk_tar_members_safe "$BATS_TEST_TMPDIR/missing.tar"; [ "$status" -ne 0 ]
+  : >"$BATS_TEST_TMPDIR/empty.tar"
+  run bk_tar_members_safe "$BATS_TEST_TMPDIR/empty.tar"; [ "$status" -ne 0 ]
+}
+
+@test "pruning ignores a planted future-dated name instead of keeping it over real backups" {
+  d="$BATS_TEST_TMPDIR/pl"; mkdir -p "$d"
+  for n in 20260101-010000 20260102-010000 20260103-010000; do : >"$d/daily-$n.tar.age"; done
+  : >"$d/daily-99991231-235959.tar.age"
+  bk_prune_daily_monthly "$d" daily 1 1
+  [ -e "$d/daily-99991231-235959.tar.age" ]        # left alone, not counted
+  [ -e "$d/daily-20260103-010000.tar.age" ]        # the real newest survives
+  [ ! -e "$d/daily-20260101-010000.tar.age" ]
+  mkdir -p "$d/w"
+  : >"$d/w/vm102-20260101-010000.vma.zst.age"
+  : >"$d/w/vm102-20260108-010000.vma.zst.age"
+  : >"$d/w/vm102-99991231-235959.vma.zst.age"
+  bk_prune_keep_newest "$d/w" vm102 1
+  [ -e "$d/w/vm102-20260108-010000.vma.zst.age" ]  # real newest kept
+  [ ! -e "$d/w/vm102-20260101-010000.vma.zst.age" ]
+  [ -e "$d/w/vm102-99991231-235959.vma.zst.age" ]
+}
+
+@test "bk_notify counts an HTTP error from the webhook as a failure (real curl, local server)" {
+  srv="$BATS_TEST_TMPDIR/srv.py"
+  cat >"$srv" <<'PY'
+import http.server, sys
+code = int(sys.argv[1])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.send_response(code); self.end_headers()
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.handle_request()
+PY
+  for code in 404 204; do
+    python3 "$srv" "$code" >"$BATS_TEST_TMPDIR/port" &
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$BATS_TEST_TMPDIR/port" ] && break; sleep 0.2; done
+    printf 'http://127.0.0.1:%s/hook\n' "$(cat "$BATS_TEST_TMPDIR/port")" >"$BK_CONFIG_DIR/hook"
+    BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook"
+    bk_notify "hi"
+    if [ "$code" = 404 ]; then [ "$BK_NOTIFY_LAST_RC" -eq 1 ]; else [ "$BK_NOTIFY_LAST_RC" -eq 0 ]; fi
+    wait
+    rm -f "$BATS_TEST_TMPDIR/port"
+  done
+}
+
+@test "bk_redact covers quoted secret keys, url userinfo and basic auth" {
+  run bash -c 'source "$REPO_ROOT/scripts/backup-common.sh"; printf "%s\n" \
+    "{\"client_secret\":\"s3cret1\",\"access_token\":\"tok2\"}" \
+    "postgres://u:hunter3@host/db" \
+    "Authorization: Basic dXNlcjpwdw==" | bk_redact'
+  [[ "$output" != *"s3cret1"* && "$output" != *"tok2"* && "$output" != *"hunter3"* && "$output" != *"dXNlcjpwdw"* ]]
+}
+
+@test "bk_notify truncates a message longer than Discord's limit" {
+  stub curl 'cat >/dev/null; for a in "$@"; do printf "%s\n" "$a"; done >"$BATS_TEST_TMPDIR/curl.args"'
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify "$(head -c 5000 /dev/zero | tr '\0' 'a')"
+  [ "$(wc -c <"$BATS_TEST_TMPDIR/curl.args")" -lt 2300 ]
+}

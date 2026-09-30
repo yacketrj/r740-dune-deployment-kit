@@ -182,7 +182,7 @@ tamper_pull() {
 req="\${@: -1}"
 SSH_ORIGINAL_COMMAND="\$req" R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 bash "$GATE" >"$BATS_TEST_TMPDIR/real.tar" || exit \$?
 python3 - "$BATS_TEST_TMPDIR/real.tar" "$1" <<'PY'
-import sys, tarfile, io
+import sys, tarfile, io, os
 src, mode = sys.argv[1], sys.argv[2]
 tin = tarfile.open(src)
 tout = tarfile.open(fileobj=sys.stdout.buffer, mode="w|")
@@ -194,6 +194,11 @@ for m in tin.getmembers():
     tout.addfile(m, io.BytesIO(data) if data is not None else None)
 if mode == "dotdot":
     i = tarfile.TarInfo("../escape.txt"); i.size = 4; tout.addfile(i, io.BytesIO(b"evil"))
+if mode == "symlink":
+    l = tarfile.TarInfo("runtime/link"); l.type = tarfile.SYMTYPE; l.linkname = os.environ["ESCAPE_DIR"]; tout.addfile(l)
+    i = tarfile.TarInfo("runtime/link/planted.txt"); i.size = 4; tout.addfile(i, io.BytesIO(b"evil"))
+if mode == "hardlink":
+    l = tarfile.TarInfo("runtime/hard"); l.type = tarfile.LNKTYPE; l.linkname = "gate-manifest.txt"; tout.addfile(l)
 if mode == "absolute":
     i = tarfile.TarInfo("/etc/escape.txt"); i.size = 4; tout.addfile(i, io.BytesIO(b"evil"))
 tout.close()
@@ -212,6 +217,22 @@ EOF
     [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
     rm -f "$BATS_TEST_TMPDIR/curl.args"
   done
+}
+
+@test "a pulled archive with a symlink or hardlink member is rejected and nothing is written through the link" {
+  export ESCAPE_DIR="${BATS_TEST_TMPDIR}-escape"
+  mkdir -p "$ESCAPE_DIR"
+  for mode in symlink hardlink; do
+    tamper_pull "$mode"
+    run_daily --tier daily
+    [ "$status" -eq 1 ]
+    grep -q "stage 'verify'" "$BATS_TEST_TMPDIR/curl.args"
+    grep -q "non-regular member" "$BATS_TEST_TMPDIR/curl.args"
+    [ -z "$(find "$ESCAPE_DIR" -type f)" ]
+    [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+    rm -f "$BATS_TEST_TMPDIR/curl.args"
+  done
+  rm -rf "$ESCAPE_DIR"
 }
 
 @test "a pulled archive missing runtime/secrets, or with an empty .env, fails the daily set at verify" {

@@ -120,6 +120,7 @@ tar -tf "$work/pull.tar" >"$work/pull.list" 2>/dev/null || fail "pulled archive 
 if grep -qE '^/|(^|/)\.\.(/|$)' "$work/pull.list"; then
   fail "pulled archive contains an absolute or parent-relative path"
 fi
+bk_tar_members_safe "$work/pull.tar" || fail "pulled archive contains a link, device or other non-regular member"
 tar -xf "$work/pull.tar" -C "$work/bundle/prod" --no-same-owner --no-same-permissions 2>/dev/null || fail "could not unpack the pulled archive"
 [ -s "$work/bundle/prod/gate-manifest.txt" ] || fail "pulled archive has no gate manifest"
 authoritative="$(awk -F= '$1 == "authoritative" { print $2; exit }' "$work/bundle/prod/gate-manifest.txt")"
