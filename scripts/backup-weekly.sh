@@ -162,9 +162,11 @@ progress_s="${BK_WEEKLY_PROGRESS_S:-10}"
 # sha256 of a file just written, printing progress while it reads (a 100 GB read-back is silent
 # for a long time otherwise). Reads /proc/<pid>/io for bytes read so far.
 readback_sha() { # file total_bytes
-  local f="$1" total="$2" pid t0 n r
-  # Always a background job + wait, so an abort during the (long) read-back is immediate.
-  sha256sum -- "$f" >"$tmpdir/post.sha" &
+  local f="$1" total="$2" me="$BASHPID" pid t0 n r ddp
+  # Read in 4 MB blocks (measured 2026-09-30 on a 3.5 GB image: 71.5 MB/s vs 41.7 MB/s for plain
+  # sha256sum, identical hash) as a background job + wait, so an abort during the (long) read-back
+  # is immediate.
+  dd if="$f" bs=4M status=none 2>/dev/null | sha256sum >"$tmpdir/post.sha" &
   pid=$!
   if [ "$progress" -eq 0 ]; then
     wait "$pid" || true
@@ -175,7 +177,8 @@ readback_sha() { # file total_bytes
   while kill -0 "$pid" 2>/dev/null; do
     for _ in $(seq 1 "$progress_s"); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
     kill -0 "$pid" 2>/dev/null || break
-    r="$(awk '/^rchar:/ { print $2 }' "/proc/$pid/io" 2>/dev/null || echo 0)"
+    ddp="$(pgrep -P "$me" -x dd 2>/dev/null | head -n 1 || true)"
+    r="$(awk '/^rchar:/ { print $2 }' "/proc/${ddp:-0}/io" 2>/dev/null || true)"
     n=$(($(date +%s) - t0))
     bk_log "guest $id: read-back $(hms "$n") elapsed, $(hsize "${r:-0}") of $(hsize "$total") ($((${r:-0} * 100 / (total > 0 ? total : 1)))%)" >&2
   done

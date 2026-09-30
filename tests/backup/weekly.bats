@@ -332,8 +332,9 @@ seed_old_images() {
   seed_old_images
   cat >"$BATS_TEST_TMPDIR/bin/sha256sum" <<EOF
 #!/usr/bin/env bash
-if [ "\$#" -ge 1 ] && [ -f "\${@: -1}" ]; then echo "deadbeef  \${@: -1}"; exit 0; fi
-exec /usr/bin/sha256sum "\$@"
+c="$BATS_TEST_TMPDIR/sha.count"; n=\$(( \$(cat "\$c" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"\$c"
+[ \$# -eq 0 ] && cat >/dev/null
+printf '%064d  -\n' "\$n"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/bin/sha256sum"
   run_weekly
