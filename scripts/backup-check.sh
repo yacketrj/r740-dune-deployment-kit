@@ -168,7 +168,9 @@ fi
 
 summary="$(printf '%s; ' "${findings[@]}")"
 summary="${summary%; }"
-sig="$(printf '%s' "$summary" | sha256sum | cut -d' ' -f1)"
+# The signature ignores digits, so a problem that merely gets older ("27.3h" -> "28.3h")
+# is the SAME problem and is not re-announced every hour.
+sig="$(printf '%s' "$summary" | tr -d '0-9' | sha256sum | cut -d' ' -f1)"
 repeat="${BK_ALARM_REPEAT_S:-21600}"
 send=1
 if [ -f "$active" ]; then
@@ -181,10 +183,11 @@ bk_audit_log check_failed "problems=${#findings[@]}" "summary=$summary"
 check_ping fail
 if [ "$send" -eq 1 ]; then
   bk_alert "check" "$summary" "bash $here/backup-check.sh"
-  printf '%s %s\n' "$sig" "$now" >"$active"
   if [ "$BK_NOTIFY_LAST_RC" -ne 0 ]; then
+    # Not recorded as announced: the next run retries instead of staying quiet for the window.
     bk_log "ALERT NOT DELIVERED (webhook status $BK_NOTIFY_LAST_RC); the external dead-man's-switch has been pinged"
     exit 5
   fi
+  printf '%s %s\n' "$sig" "$now" >"$active"
 fi
 exit 1

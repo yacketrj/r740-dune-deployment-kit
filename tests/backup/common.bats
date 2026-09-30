@@ -598,3 +598,26 @@ PY
   BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify "$(head -c 5000 /dev/zero | tr '\0' 'a')"
   [ "$(wc -c <"$BATS_TEST_TMPDIR/curl.args")" -lt 2300 ]
 }
+
+@test "the audit log is a hash chain: intact when untouched, broken by an edit, a deletion or a reorder" {
+  export BK_STATE_DIR="$BATS_TEST_TMPDIR/st"
+  for i in 1 2 3 4; do bk_audit_log run_ok "n=$i"; done
+  run bk_audit_verify; [ "$status" -eq 0 ]
+  f="$BK_STATE_DIR/audit.log"; cp "$f" "$BATS_TEST_TMPDIR/good.log"
+  sed -i '2s/"n":"2"/"n":"9"/' "$f"
+  run bk_audit_verify; [ "$status" -eq 1 ]; [ "$output" = "3" ]
+  sed '2d' "$BATS_TEST_TMPDIR/good.log" >"$f"
+  run bk_audit_verify; [ "$status" -eq 1 ]
+  { sed -n 1p "$BATS_TEST_TMPDIR/good.log"; sed -n 3p "$BATS_TEST_TMPDIR/good.log"; sed -n 2p "$BATS_TEST_TMPDIR/good.log"; sed -n 4p "$BATS_TEST_TMPDIR/good.log"; } >"$f"
+  run bk_audit_verify; [ "$status" -eq 1 ]
+  sed '$d' "$BATS_TEST_TMPDIR/good.log" >"$f"   # truncating the TAIL is not detectable by the chain alone
+  run bk_audit_verify; [ "$status" -eq 0 ]
+}
+
+@test "evidence records are mirrored into the chained audit log" {
+  export BK_STATE_DIR="$BATS_TEST_TMPDIR/st2"
+  bk_evidence drill-db PASS "archive=x"
+  grep -q '"event":"evidence"' "$BK_STATE_DIR/audit.log"
+  grep -q '"kind":"drill-db"' "$BK_STATE_DIR/audit.log"
+  run bk_audit_verify; [ "$status" -eq 0 ]
+}

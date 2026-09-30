@@ -329,16 +329,22 @@ bk_alert() {
 # log, and mirror it to $BK_AUDIT_SHIP_DIR when that is a directory. Values are
 # redacted. Never fails the caller.
 bk_audit_log() {
-  local ev="${1:?event}" kv k v line filter='{time:$time,event:$event,host:$host'
+  local ev="${1:?event}" kv k v line prev filter='{time:$time,event:$event,host:$host,prev:$prev'
   shift
   bk_require_test_isolation || return 0
   mkdir -p "$BK_STATE_DIR" 2>/dev/null || return 0
-  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)")
+  # Hash chain: every record carries the sha256 of the previous line, so an edit, a
+  # deletion or a reordering anywhere breaks every later link (bk_audit_verify).
+  prev="genesis"
+  if [ -s "$BK_STATE_DIR/audit.log" ]; then
+    prev="$(tail -n 1 "$BK_STATE_DIR/audit.log" | sha256sum | cut -d' ' -f1)"
+  fi
+  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)" --arg prev "$prev")
   for kv in "$@"; do
     k="${kv%%=*}"
     v="${kv#*=}"
     [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    case "$k" in time | event | host) continue ;; esac
+    case "$k" in time | event | host | prev) continue ;; esac
     v="$(printf '%s' "$v" | bk_redact)"
     args+=(--arg "$k" "$v")
     filter="$filter,$k:\$$k"
@@ -358,6 +364,24 @@ bk_evidence() { # kind result detail
   bk_require_test_isolation || return 0
   mkdir -p "$BK_STATE_DIR" || return 0
   printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >>"$BK_STATE_DIR/evidence.log"
+  # Also into the chained (and optionally shipped) audit log, where an edit is detectable.
+  bk_audit_log evidence "kind=$1" "result=$2" "detail=$3"
+}
+
+# Verify the audit log's hash chain. Prints the first broken line number on failure.
+bk_audit_verify() { # [file]
+  local f="${1:-$BK_STATE_DIR/audit.log}" n=0 prev="genesis" line want
+  [ -s "$f" ] || return 0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    want="$(printf '%s' "$line" | jq -r '.prev // empty' 2>/dev/null)" || want=""
+    if [ "$want" != "$prev" ]; then
+      echo "$n"
+      return 1
+    fi
+    prev="$(printf '%s\n' "$line" | sha256sum | cut -d' ' -f1)"
+  done <"$f"
+  return 0
 }
 
 # Create a private (0700) RAM-backed working directory and print its path.

@@ -77,11 +77,7 @@ cfg_get() {
   awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$cfg" 2>/dev/null || true
 }
 
-evidence() { # kind result detail
-  bk_require_test_isolation || return 0
-  mkdir -p "$BK_STATE_DIR"
-  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >>"$BK_STATE_DIR/evidence.log"
-}
+evidence() { bk_evidence "$@"; }
 
 cmd_generate() {
   local handoff="" recipient existing dest

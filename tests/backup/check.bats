@@ -242,3 +242,27 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
   grep -q "the alarm itself failed unexpectedly" "$T/curl.args"
   grep -q "CHECKID/fail" "$T/curl.stdin"
 }
+
+@test "a problem that only gets older is announced once, not every hour" {
+  rm -f "$BK_SMB_MOUNT"/daily/*
+  mkfile "$BK_SMB_MOUNT/daily/daily-20260929-051500.tar.age" $((28 * 3600))
+  mkfile "$REMOTE_ROOT/daily/daily-20260929-051500.tar.age" $((28 * 3600))
+  run_check; [ "$status" -eq 1 ]
+  [ "$(alerts)" = "1" ]
+  NOW=$((NOW + 3600))
+  touch -d "@$((NOW - 29 * 3600))" "$BK_SMB_MOUNT/daily/daily-20260929-051500.tar.age" "$REMOTE_ROOT/daily/daily-20260929-051500.tar.age"
+  run_check; [ "$status" -eq 1 ]
+  [ "$(alerts)" = "1" ]
+}
+
+@test "an alert that could not be delivered is retried on the next run, not silenced for the window" {
+  rm -f "$BK_SMB_MOUNT"/daily/*
+  stub curl 'cat >>"$BATS_TEST_TMPDIR/curl.stdin"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"; case "$*" in *Content-Type*) [ -f "$BATS_TEST_TMPDIR/hook-down" ] && exit 22 ;; esac; exit 0'
+  touch "$T/hook-down"
+  run_check; [ "$status" -eq 5 ]
+  rm -f "$T/hook-down"
+  run_check; [ "$status" -eq 1 ]
+  [ -f "$BK_STATE_DIR/alarm.active" ]
+  run_check; [ "$status" -eq 1 ]
+  [ "$(grep -c 'Content-Type' "$T/curl.args")" -eq 2 ]
+}

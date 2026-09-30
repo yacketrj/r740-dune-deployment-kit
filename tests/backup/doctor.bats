@@ -47,6 +47,7 @@ EOC
   stub pct '[ "$1" = "status" ] && [ "$2" = "104" ]'
   stub qm 'case "$1" in status) [ "$2" = "101" ] ;; agent) [ ! -f "$BATS_TEST_TMPDIR/noagent" ] ;; esac'
   stub systemctl 'exit 0'
+  stub findmnt 'echo "rw,vers=3.1.1,seal,cache=none"'
   cat >"$T/bin/ssh" <<EOS
 #!/usr/bin/env bash
 echo "\$*" >>"$T/ssh.calls"
@@ -257,4 +258,20 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
   printf 'https://discord.com/api/webhooks/1/TOPSECRET\n' >"$T/hook"
   doctor
   [[ "$output" != *"TOPSECRET"* ]]
+}
+
+@test "a broken audit-log hash chain fails and names the line" {
+  export BK_STATE_DIR="$BK_STATE_DIR"
+  for i in 1 2 3; do (source "$REPO_ROOT/scripts/backup-common.sh"; bk_audit_log run_ok "n=$i"); done
+  sed -i '2s/"n":"2"/"n":"7"/' "$BK_STATE_DIR/audit.log"
+  doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"audit log hash chain BROKEN at line 3"* ]]
+}
+
+@test "an SMB mount without seal or cache=none warns (does not fail)" {
+  stub findmnt 'echo "rw,vers=3.0"'
+  doctor
+  [[ "$output" == *"missing option(s): vers=3.1.1 seal cache=none"* ]]
+  [ "$status" -eq 0 ]
 }

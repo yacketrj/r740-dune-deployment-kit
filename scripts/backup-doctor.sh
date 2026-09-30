@@ -79,6 +79,9 @@ if [ "$e" -eq 0 ]; then bad "key escrow: never verified (run backup-key.sh verif
 elif [ $((now - e)) -gt $((${BK_ESCROW_MAX_AGE_D:-100} * 86400)) ]; then bad "key escrow: last verified $(((now - e) / 86400)) days ago"
 else ok "key escrow verified $(((now - e) / 86400)) days ago"; fi
 
+# --- audit trail: the hash chain must be intact ---------------------------------------------------
+if broken="$(bk_audit_verify)"; then ok "audit log hash chain intact"; else bad "audit log hash chain BROKEN at line $broken (edited, truncated or reordered)"; fi
+
 # --- tools ------------------------------------------------------------------------------------
 missing=""
 for t in ${BK_DOCTOR_TOOLS:-age age-keygen rclone jq curl ssh tar sha256sum flock ionice nice timeout zstd vzdump qm pct mount.cifs}; do
@@ -106,6 +109,12 @@ ls "${BK_SMB_MOUNT:-/nonexistent}" >/dev/null 2>&1 || true
 if [ -n "${BK_SMB_MOUNT:-}" ] && mountpoint -q "$BK_SMB_MOUNT"; then
   probe="$BK_SMB_MOUNT/.doctor-probe-$$"
   if : >"$probe" 2>/dev/null && rm -f -- "$probe"; then ok "SMB share mounted and writable ($BK_SMB_MOUNT)"; else bad "SMB share mounted but NOT writable ($BK_SMB_MOUNT)"; fi
+  smb_opts="$(findmnt -no OPTIONS "$BK_SMB_MOUNT" 2>/dev/null || true)"
+  if [ -n "$smb_opts" ]; then
+    smb_missing=""
+    for want in vers=3.1.1 seal cache=none; do case ",$smb_opts," in *",$want,"*) ;; *) smb_missing="$smb_missing $want" ;; esac; done
+    if [ -z "$smb_missing" ]; then ok "SMB mount options include vers=3.1.1, seal and cache=none"; else warn "SMB mount is missing option(s):$smb_missing (encryption in transit / honest read-back verification)"; fi
+  fi
 else
   bad "SMB share is not mounted at ${BK_SMB_MOUNT:-<unset>}"
 fi
