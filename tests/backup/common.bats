@@ -310,7 +310,7 @@ mk() { : >"$1/$2"; }
 # ---------------------------------------------------------------------------
 
 @test "isolation: refuses a state dir outside the test temp dir" {
-  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_require_test_isolation
+  BK_STATE_DIR="${BATS_TEST_TMPDIR}-outside/state" run bk_require_test_isolation
   [ "$status" -eq 1 ]
 }
 
@@ -320,11 +320,11 @@ mk() { : >"$1/$2"; }
 }
 
 @test "isolation: state-writing functions refuse and create nothing outside the test dir" {
-  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_lock t1
+  BK_STATE_DIR="${BATS_TEST_TMPDIR}-outside/state" run bk_lock t1
   [ "$status" -eq 1 ]
-  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_state_touch daily
+  BK_STATE_DIR="${BATS_TEST_TMPDIR}-outside/state" run bk_state_touch daily
   [ "$status" -eq 1 ]
-  [ ! -e /nonexistent-bk-test-root ]
+  [ ! -e "${BATS_TEST_TMPDIR}-outside" ]
 }
 
 @test "valid vmid accepts real ids and rejects everything else" {
@@ -467,9 +467,9 @@ mk() { : >"$1/$2"; }
 }
 
 @test "audit: writes nothing outside the test temp dir" {
-  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_audit_log x
+  BK_STATE_DIR="${BATS_TEST_TMPDIR}-outside/state" run bk_audit_log x
   [ "$status" -eq 0 ]
-  [ ! -e /nonexistent-bk-test-root ]
+  [ ! -e "${BATS_TEST_TMPDIR}-outside" ]
 }
 
 @test "secure_umask sets 077" {
