@@ -8,6 +8,17 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Added
+
+- **Tiered, encrypted backup system** (design v2, issue #119): DB tier
+  every 6h, daily set, weekly VM/CT images; age-encrypted (host holds
+  the public key only), OneDrive (rclone crypt) plus desktop SMB;
+  restricted pull gate on dune-prod, artifact-based alarm with external
+  dead-man's-switch, restore drills, readiness doctor, systemd timers,
+  sandboxed test runner and a `backup-tests` CI job. Runbook:
+  `docs/08-backup-runbook.md`. **Not deployed until the runbook's
+  rollout gates pass; the host has no off-box backup until then.**
+
 ### Fixed
 
 - **Full document-set accuracy review** (`Project-Arrakis/meta`#73):
