@@ -488,3 +488,39 @@ mk() { : >"$1/$2"; }
   BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify hi
   [ "$BK_NOTIFY_LAST_RC" -eq 0 ]
 }
+
+@test "evidence appends a tab-separated record" {
+  bk_evidence drill-db PASS "archive=x rows=5"
+  [ "$(tail -n 1 "$BK_STATE_DIR/evidence.log" | cut -f2-4)" = "$(printf 'drill-db\tPASS\tarchive=x rows=5')" ]
+}
+
+@test "evidence writes nothing outside the test temp dir" {
+  BK_STATE_DIR="${BATS_TEST_TMPDIR}-outside/state" run bk_evidence a PASS b
+  [ "$status" -eq 0 ]
+  [ ! -e "${BATS_TEST_TMPDIR}-outside" ]
+}
+
+@test "ram dir is private and wipe removes it and its contents" {
+  export BK_RAM_DIR="$BATS_TEST_TMPDIR/ram"; mkdir -p "$BK_RAM_DIR"
+  d="$(bk_make_ram_dir)"
+  [ "$(stat -c %a "$d")" = "700" ]
+  echo secret >"$d/f"
+  run bk_wipe_dir "$d"
+  [ "$status" -eq 0 ]
+  [ ! -e "$d" ]
+}
+
+@test "wipe refuses anything that is not a bk-work dir under the RAM base" {
+  export BK_RAM_DIR="$BATS_TEST_TMPDIR/ram"; mkdir -p "$BK_RAM_DIR/other" "$BATS_TEST_TMPDIR/elsewhere/bk-work.x"
+  echo keep >"$BK_RAM_DIR/other/f"
+  run bk_wipe_dir "$BK_RAM_DIR/other"; [ "$status" -eq 1 ]
+  run bk_wipe_dir "$BATS_TEST_TMPDIR/elsewhere/bk-work.x"; [ "$status" -eq 1 ]
+  run bk_wipe_dir "/"; [ "$status" -eq 1 ]
+  [ -e "$BK_RAM_DIR/other/f" ]
+  run bk_wipe_dir ""; [ "$status" -eq 0 ]
+}
+
+@test "ram dir fails cleanly when the RAM base is missing" {
+  BK_RAM_DIR="$BATS_TEST_TMPDIR/nope" run bk_make_ram_dir
+  [ "$status" -eq 1 ]
+}

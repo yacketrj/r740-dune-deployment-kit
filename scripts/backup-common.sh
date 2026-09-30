@@ -309,3 +309,42 @@ bk_audit_log() {
   fi
   return 0
 }
+
+# Append one tab-separated evidence record: time, kind, PASS|FAIL, detail.
+# The alarm reads this log to know whether escrow checks and restore drills are due.
+bk_evidence() { # kind result detail
+  bk_require_test_isolation || return 0
+  mkdir -p "$BK_STATE_DIR" || return 0
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >>"$BK_STATE_DIR/evidence.log"
+}
+
+# Create a private (0700) RAM-backed working directory and print its path.
+# Decrypted backup material must never touch persistent disk.
+bk_make_ram_dir() {
+  local base="${BK_RAM_DIR:-/dev/shm}" d
+  if [ ! -d "$base" ]; then
+    bk_log "RAM-backed directory not available: $base"
+    return 1
+  fi
+  d="$(mktemp -d "$base/bk-work.XXXXXX")" || return 1
+  chmod 700 "$d"
+  printf '%s\n' "$d"
+}
+
+# Shred every file in DIR (a bk_make_ram_dir directory) and remove it. Refuses
+# anything that is not a bk-work.* directory directly under the RAM base.
+bk_wipe_dir() {
+  local d="${1:-}" base="${BK_RAM_DIR:-/dev/shm}"
+  [ -n "$d" ] || return 0
+  case "$d" in
+    "$base"/bk-work.*) ;;
+    *)
+      bk_log "bk_wipe_dir: refusing '$d' (not a bk-work directory under $base)"
+      return 1
+      ;;
+  esac
+  [ -d "$d" ] || return 0
+  find "$d" -type f -exec shred -u -n 1 {} + 2>/dev/null || true
+  rm -rf -- "$d"
+}
+
