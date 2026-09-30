@@ -50,6 +50,8 @@ check_private "${BK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (backup job
 check_private "${BK_CHECK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (alarm)"
 check_private "${BK_BACKUP_SSH_KEY:-}" "backup SSH key"
 check_private "${BK_KNOWN_HOSTS:-}" "pinned known_hosts"
+check_private "${BK_DRILL_KNOWN_HOSTS:-}" "pinned known_hosts for the drill host"
+[ -z "${BK_SMB_CREDENTIALS_FILE:-}" ] || check_private "$BK_SMB_CREDENTIALS_FILE" "SMB credentials file"
 check_private "${RCLONE_CONFIG:-/root/.config/rclone/rclone.conf}" "rclone config"
 
 # --- keys: the host must hold only the public key ------------------------------------------
@@ -122,10 +124,8 @@ if [ -n "${BK_RCLONE_REMOTE:-}" ] && timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >
 
 # --- the pull path from dune-prod ---------------------------------------------------------------------------
 if [ -n "${BK_BACKUP_SSH:-}" ]; then
-  sopts=(-o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-  [ -z "${BK_BACKUP_SSH_KEY:-}" ] || sopts+=(-i "$BK_BACKUP_SSH_KEY")
-  [ -z "${BK_KNOWN_HOSTS:-}" ] || sopts+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
-  if st="$(ssh "${sopts[@]}" "$BK_BACKUP_SSH" status 2>/dev/null)"; then
+  bk_ssh_opts_init
+  if st="$(ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" status 2>/dev/null)"; then
     ep="$(printf '%s\n' "$st" | awk -F= '$1 == "newest_automatic_epoch" { print $2 }')"
     if [[ "$ep" =~ ^[0-9]+$ ]] && [ "$ep" -gt 0 ] && [ $((now - ep)) -lt $((30 * 3600)) ]; then ok "pull gate reachable; newest automatic dump is $(((now - ep) / 3600))h old"
     else bad "pull gate reachable but there is no fresh automatic dump (epoch=${ep:-?})"; fi

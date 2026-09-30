@@ -94,10 +94,8 @@ mkdir -p "$BK_SMB_MOUNT/vm"
 tmpdir="$(mktemp -d "${TMPDIR:-/var/tmp}/backup-weekly.XXXXXX")"
 
 gate_ssh() { # request
-  local -a o=(-o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-  [ -z "${BK_BACKUP_SSH_KEY:-}" ] || o+=(-i "$BK_BACKUP_SSH_KEY")
-  [ -z "${BK_KNOWN_HOSTS:-}" ] || o+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
-  ssh "${o[@]}" "$BK_BACKUP_SSH" "$1"
+  bk_ssh_opts_init
+  timeout "${BK_GATE_TIMEOUT_S:-900}" ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$1"
 }
 
 failures=()

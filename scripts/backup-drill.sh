@@ -67,7 +67,14 @@ scratch_created=0
 bridge_created=0
 DRILL_BRIDGE="vmbrdrill"
 
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=15 "${BK_DRILL_SSH:?}" "$@"; }
+# Pinned host key and no user ssh config: this leg carries the decrypted production dump.
+remote() {
+  local -a o=(-F /dev/null -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+    -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ClearAllForwardings=yes
+    -o "UserKnownHostsFile=${BK_DRILL_KNOWN_HOSTS:?BK_DRILL_KNOWN_HOSTS must pin the dune-dev host key}")
+  [ -z "${BK_DRILL_SSH_KEY:-}" ] || o+=(-i "$BK_DRILL_SSH_KEY")
+  ssh "${o[@]}" -- "${BK_DRILL_SSH:?}" "$@"
+}
 
 cleanup() {
   local rc=$?

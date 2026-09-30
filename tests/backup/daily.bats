@@ -261,16 +261,19 @@ EOF
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
 }
 
-@test "an unmounted share stops everything before any pull or write" {
+@test "an unmounted share is a DEGRADED run: OneDrive still gets the verified copy, the alert is loud, no success is recorded" {
   stub mountpoint 'exit 1'
   run_daily --tier daily
   [ "$status" -eq 1 ]
-  [ ! -e "$BATS_TEST_TMPDIR/ssh.calls" ]
+  [ "$(ls "$REMOTE_ROOT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "DEGRADED" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+  grep -q '"event":"run_degraded"' "$BK_STATE_DIR/audit.log" || grep -q 'run_degraded' "$BK_STATE_DIR/audit.log"
 }
 
-@test "a share that drops mid-run is caught before the write and nothing lands" {
+@test "a share that drops mid-run still leaves nothing on the share and a verified OneDrive copy" {
   cat >"$BATS_TEST_TMPDIR/bin/mountpoint" <<EOF
 #!/usr/bin/env bash
 c="$BATS_TEST_TMPDIR/mp.count"; n=\$(( \$(cat "\$c" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"\$c"
@@ -281,16 +284,45 @@ EOF
   [ "$status" -eq 1 ]
   grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -d "$BK_SMB_MOUNT/daily" ]
-  [ ! -e "$REMOTE_ROOT/daily" ]
+  [ "$(ls "$REMOTE_ROOT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
 }
 
-@test "a failed bit-exact SMB verification leaves no partial and no final file" {
-  stub cmp 'exit 1'
+@test "a failed bit-exact SMB verification leaves no partial and no final file on the share, but OneDrive is still served" {
+  stub cmp 'case "$*" in *smb*) exit 1 ;; *) exec /usr/bin/cmp "$@" ;; esac'
   run_daily --tier daily
   [ "$status" -eq 1 ]
   grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
   [ -z "$(find "$BK_SMB_MOUNT" -name '*.partial' -o -name '*.tar.age')" ]
+  [ "$(ls "$REMOTE_ROOT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+}
+
+@test "a degraded run never prunes the SMB share it could not write" {
+  mkdir -p "$BK_SMB_MOUNT/daily"
+  for d in $(seq 1 35); do : >"$BK_SMB_MOUNT/daily/daily-202608$(printf '%02d' $((d % 28 + 1)))-0400$(printf '%02d' "$d").tar.age"; done
+  before="$(ls "$BK_SMB_MOUNT/daily" | wc -l)"
+  stub cmp 'case "$*" in *smb*) exit 1 ;; *) exec /usr/bin/cmp "$@" ;; esac'
+  run_daily --tier daily
+  [ "$status" -eq 1 ]
+  [ "$(ls "$BK_SMB_MOUNT/daily" | wc -l)" -eq "$before" ]
+}
+
+@test "the production verification is rclone cryptcheck, one-way, local dir first then the crypt remote" {
+  unset BK_RCLONE_CHECK_CMD
+  sed -i '/^BK_RCLONE_CHECK_CMD=/d' "$BK_CONFIG_DIR/backup.env"
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  line="$(grep '^cryptcheck ' "$BATS_TEST_TMPDIR/rclone.calls")"
+  [[ "$line" =~ ^cryptcheck\ --one-way\ --include\ /daily-[0-9]{8}-[0-9]{6}\.tar\.age\ .+\ fake:r740/daily$ ]]
+  ! grep -q '^check ' "$BATS_TEST_TMPDIR/rclone.calls"
+}
+
+@test "the upload is rate-limited, and the pull uses hardened ssh options with the host after --" {
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  grep -E '^copyto .* --transfers 2 --timeout 120s --contimeout 30s --bwlimit 8M' "$BATS_TEST_TMPDIR/rclone.calls"
+  first="$(head -1 "$BATS_TEST_TMPDIR/ssh.calls")"
+  [[ "$first" == *"-F /dev/null"* && "$first" == *"ServerAliveInterval=15"* && "$first" == *"ClearAllForwardings=yes"* && "$first" == *" -- "* ]]
 }
 
 @test "an upload failure alerts at stage upload, records no success and prunes nothing" {
@@ -311,6 +343,9 @@ EOF
 }
 
 @test "a transfer that does not verify alerts and prunes nothing" {
+  mkdir -p "$BK_SMB_MOUNT/daily"
+  for d in $(seq 1 35); do : >"$BK_SMB_MOUNT/daily/daily-202608$(printf '%02d' $((d % 28 + 1)))-0400$(printf '%02d' "$d").tar.age"; done
+  before="$(ls "$BK_SMB_MOUNT/daily" | wc -l)"
   cat >"$BATS_TEST_TMPDIR/bin/rclone" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$BATS_TEST_TMPDIR/rclone.calls"
@@ -321,6 +356,7 @@ EOF
   grep -q "stage 'verify-transfer'" "$BATS_TEST_TMPDIR/curl.args"
   run grep -E '^(deletefile|lsf)' "$BATS_TEST_TMPDIR/rclone.calls"
   [ "$status" -ne 0 ]
+  [ "$(ls "$BK_SMB_MOUNT/daily" | wc -l)" -eq $((before + 1)) ]
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
 }
 
@@ -399,17 +435,28 @@ EOF
   [ -s "$BK_STATE_DIR/last-success-daily" ]
 }
 
-@test "after a verified run, retention prunes old daily copies on both the share and the remote" {
+@test "after a verified run, retention prunes exactly the expected daily copies on both the share and the remote" {
   mkdir -p "$BK_SMB_MOUNT/daily" "$REMOTE_ROOT/daily"
-  for d in $(seq 1 40); do
-    f="daily-20260$(printf '%d' $((1 + d / 30)))$(printf '%02d' $((d % 28 + 1)))-040000.tar.age"
+  for d in $(seq 1 31); do
+    f="daily-202601$(printf '%02d' "$d")-040000.tar.age"
+    : >"$BK_SMB_MOUNT/daily/$f"; : >"$REMOTE_ROOT/daily/$f"
+  done
+  for d in $(seq 1 9); do
+    f="daily-202512$(printf '%02d' "$d")-040000.tar.age"
     : >"$BK_SMB_MOUNT/daily/$f"; : >"$REMOTE_ROOT/daily/$f"
   done
   run_daily --tier daily
   [ "$status" -eq 0 ]
-  [ "$(ls "$BK_SMB_MOUNT/daily" | wc -l)" -le 42 ]
-  latest="$(ls "$BK_SMB_MOUNT/daily" | sort | tail -n 1)"
-  [ -f "$REMOTE_ROOT/daily/$latest" ]
+  # keep 30 newest (today + Jan 31..Jan 3) plus the newest of each older month (Dec 9): 31
+  for dir in "$BK_SMB_MOUNT/daily" "$REMOTE_ROOT/daily"; do
+    [ "$(ls "$dir" | wc -l)" -eq 31 ]
+    [ ! -e "$dir/daily-20260101-040000.tar.age" ]
+    [ ! -e "$dir/daily-20260102-040000.tar.age" ]
+    [ ! -e "$dir/daily-20251201-040000.tar.age" ]
+    [ -e "$dir/daily-20260103-040000.tar.age" ]
+    [ -e "$dir/daily-20260131-040000.tar.age" ]
+    [ -e "$dir/daily-20251209-040000.tar.age" ]
+  done
 }
 
 @test "secrets never appear in the job's output or alerts" {

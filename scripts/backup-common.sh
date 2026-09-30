@@ -83,9 +83,19 @@ bk_require_free_gb() {
   fi
 }
 
+# Fill BK_SSH_OPTS with the hardened client options every pull/probe uses: no user ssh
+# config, no agent or port forwarding, keepalives so a stalled peer cannot hang a run,
+# a pinned host key when BK_KNOWN_HOSTS is set.
+bk_ssh_opts_init() {
+  BK_SSH_OPTS=(-F /dev/null -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+    -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ClearAllForwardings=yes)
+  [ -z "${BK_BACKUP_SSH_KEY:-}" ] || BK_SSH_OPTS+=(-i "$BK_BACKUP_SSH_KEY")
+  [ -z "${BK_KNOWN_HOSTS:-}" ] || BK_SSH_OPTS+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
+}
+
 # Refuse to write into an unmounted mountpoint (it would fill the local disk).
 bk_require_mounted() {
-  if ! mountpoint -q "$1"; then
+  if ! timeout 20 mountpoint -q "$1"; then
     bk_log "not a mounted filesystem: $1"
     return 1
   fi

@@ -89,7 +89,11 @@ bk_lock "backup-$tier" || exit 1
 # --- preflight ----------------------------------------------------------------
 case "${BK_AGE_RECIPIENT:-}" in age1*) ;; *) fail "no age recipient configured (run backup-key.sh generate)" ;; esac
 : "${BK_STAGE_DIR:?}" "${BK_SMB_MOUNT:?}" "${BK_RCLONE_REMOTE:?}" "${BK_BACKUP_SSH:?}"
-bk_require_mounted "$BK_SMB_MOUNT" || fail "SMB share not mounted at $BK_SMB_MOUNT"
+# The desktop being asleep must not cost us the off-site copy: SMB trouble is a degraded
+# run (loud alert at the end), not a reason to skip OneDrive.
+smb_err=""
+smb_ok=0
+bk_require_mounted "$BK_SMB_MOUNT" || smb_err="SMB share not mounted at $BK_SMB_MOUNT"
 bk_require_free_gb "$BK_STAGE_DIR" "${BK_MIN_STAGE_GB:-2}" || fail "not enough staging space in $BK_STAGE_DIR"
 mkdir -p "$BK_STAGE_DIR"
 chmod 700 "$BK_STAGE_DIR"
@@ -107,10 +111,8 @@ mkdir -p "$work/bundle/prod" "$work/bundle/host"
 
 # --- pull ---------------------------------------------------------------------
 STAGE="pull"
-ssh_opts=(-o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-[ -z "${BK_BACKUP_SSH_KEY:-}" ] || ssh_opts+=(-i "$BK_BACKUP_SSH_KEY")
-[ -z "${BK_KNOWN_HOSTS:-}" ] || ssh_opts+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
-if ! ssh "${ssh_opts[@]}" "$BK_BACKUP_SSH" "$gate_verb $gate_max_age $gate_since" >"$work/pull.tar" 2>"$work/pull.err"; then
+bk_ssh_opts_init
+if ! ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$gate_verb $gate_max_age $gate_since" >"$work/pull.tar" 2>"$work/pull.err"; then
   fail "pull from $BK_BACKUP_SSH failed: $(tr '\n' ' ' <"$work/pull.err" | cut -c1-300)"
 fi
 
@@ -165,29 +167,52 @@ size="$(stat -c %s "$work/$name")"
 
 # --- SMB share --------------------------------------------------------------------
 STAGE="smb"
-bk_require_mounted "$BK_SMB_MOUNT" || fail "SMB share dropped before the write ($BK_SMB_MOUNT)"
-mkdir -p "$BK_SMB_MOUNT/$prefix"
-partial="$BK_SMB_MOUNT/$prefix/$name.partial"
-cp -f -- "$work/$name" "$partial" || fail "copy to the SMB share failed"
-bk_verify_copy "$work/$name" "$partial" || fail "SMB copy did not verify bit-exactly"
-mv -f -- "$partial" "$BK_SMB_MOUNT/$prefix/$name"
-partial=""
+smb_timeout="${BK_SMB_TIMEOUT_S:-3600}"
+if [ -z "$smb_err" ]; then
+  if ! bk_require_mounted "$BK_SMB_MOUNT"; then
+    smb_err="SMB share dropped before the write ($BK_SMB_MOUNT)"
+  elif ! timeout 30 mkdir -p "$BK_SMB_MOUNT/$prefix"; then
+    smb_err="cannot create $BK_SMB_MOUNT/$prefix"
+  else
+    partial="$BK_SMB_MOUNT/$prefix/$name.partial"
+    if ! timeout "$smb_timeout" cp -f -- "$work/$name" "$partial"; then
+      smb_err="copy to the SMB share failed"
+    elif ! timeout "$smb_timeout" bash -c '. "$1"; bk_verify_copy "$2" "$3"' _ "$here/backup-common.sh" "$work/$name" "$partial"; then
+      smb_err="SMB copy did not verify bit-exactly"
+    elif ! mv -f -- "$partial" "$BK_SMB_MOUNT/$prefix/$name"; then
+      smb_err="could not finalise the SMB copy"
+    else
+      smb_ok=1
+    fi
+    [ -z "$partial" ] || rm -f -- "$partial" 2>/dev/null || true
+    partial=""
+  fi
+fi
+[ -z "$smb_err" ] || bk_log "SMB copy failed (continuing to OneDrive): $smb_err"
 
 # --- OneDrive ---------------------------------------------------------------------
 STAGE="upload"
-rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" || fail "upload to $BK_RCLONE_REMOTE failed"
+rclone_timeout="${BK_RCLONE_TIMEOUT_S:-5400}"
+timeout "$rclone_timeout" rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" --transfers 2 --timeout 120s --contimeout 30s --bwlimit "${BK_RCLONE_BWLIMIT:-8M}" || fail "upload to $BK_RCLONE_REMOTE failed"
 STAGE="verify-transfer"
-rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
+timeout "$rclone_timeout" rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
 
-# --- prune: only after BOTH copies are verified ------------------------------------
+# --- prune: each target only after ITS OWN new copy is verified ----------------------
 STAGE="prune"
-bk_prune_daily_monthly "$BK_SMB_MOUNT/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the SMB copies failed"
+if [ "$smb_ok" -eq 1 ]; then
+  bk_prune_daily_monthly "$BK_SMB_MOUNT/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the SMB copies failed"
+fi
 bk_prune_remote "$BK_RCLONE_REMOTE/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the remote copies failed"
 
 # --- record ------------------------------------------------------------------------
 STAGE="record"
 result_name="$name"
 if [ -n "${BK_AUDIT_SHIP_DIR:-}" ]; then mkdir -p "$BK_AUDIT_SHIP_DIR" 2>/dev/null || true; fi
+if [ -n "$smb_err" ]; then
+  bk_audit_log run_degraded "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "smb_error=$smb_err"
+  STAGE="smb"
+  fail "DEGRADED: the OneDrive copy of $name is verified but the desktop copy is missing: $smb_err"
+fi
 bk_audit_log run_ok "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "dumps=$dumps" "authoritative=$authoritative"
 bk_state_touch "$prefix"
 bk_dead_man_ping || true
