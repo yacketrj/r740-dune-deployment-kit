@@ -566,7 +566,20 @@ EOF
   [ "$(printf '%s' "$line" | jq -r .sha256)" = "$(sha256sum "$f" | cut -d' ' -f1)" ]
 }
 
-@test "the weekly pipeline uses dd with a 4M block size and, on an SMB mount only, direct I/O" {
-  grep -q 'dd of="$partial" bs=4M iflag=fullblock' "$REPO_ROOT/scripts/backup-weekly.sh"
-  grep -q 'cifs | smb | smb2 | smb3) ddflags=(oflag=direct)' "$REPO_ROOT/scripts/backup-weekly.sh"
+@test "the weekly pipeline writes through dd with 4 MB blocks and never uses O_DIRECT (its unaligned last block fails with EINVAL)" {
+  grep -q 'dd of="$partial" bs=4M iflag=fullblock status=none' "$REPO_ROOT/scripts/backup-weekly.sh"
+  ! grep -q 'oflag=direct' <(grep -v '^ *#' "$REPO_ROOT/scripts/backup-weekly.sh")
+}
+
+@test "an image whose size is not a multiple of any block size is written completely" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+head -c 4194307 /dev/zero | tr '\\0' x
+EOF
+  echo 'BK_VMIDS="101"' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly
+  [ "$status" -eq 0 ]
+  f="$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age)"
+  line="$(grep image_ok "$BK_STATE_DIR/audit.log" | tail -1)"
+  [ "$(printf '%s' "$line" | jq -r .sha256)" = "$(sha256sum "$f" | cut -d' ' -f1)" ]
 }

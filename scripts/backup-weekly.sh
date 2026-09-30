@@ -229,10 +229,10 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   # allowed to hold the live guest: the pipeline runs as its own process group and a
   # watchdog aborts it when the output stops growing.
   stalled=0
-  # Write in 4 MB blocks. With the share mounted cache=none every small write waits for a network
-  # round trip: measured 2026-09-30, tee's small writes gave 25.8 MB/s, 4 MB direct writes 46.6 MB/s.
-  ddflags=()
-  case "$(stat -f -c %T -- "$BK_SMB_MOUNT" 2>/dev/null)" in cifs | smb | smb2 | smb3) ddflags=(oflag=direct) ;; esac
+  # Write in 4 MB blocks through dd. With the share mounted cache=none every small write waits for
+  # a network round trip: measured 2026-09-30, tee's small writes gave 25.8 MB/s, dd 4 MB blocks
+  # 46.8 MB/s. Do NOT add oflag=direct: it gives no speed-up and fails on the last block of a
+  # stream (an unaligned final write returns EINVAL, "dd: error writing ...: Invalid argument").
   qopt=(--quiet 1)
   if [ "$progress" -eq 1 ] || [ "$verbose" -eq 1 ]; then qopt=(); fi   # let vzdump log its progress
   log_off=0
@@ -247,7 +247,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
       bash -c 'umask 022; exec vzdump "$@"' vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-153600}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
       | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") \
-      | dd of="$partial" bs=4M iflag=fullblock "${ddflags[@]}" status=none
+      | dd of="$partial" bs=4M iflag=fullblock status=none
   ) &
   pipe_pid=$!
   last_size=-1
