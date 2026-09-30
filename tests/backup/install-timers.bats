@@ -53,6 +53,8 @@ setup() {
     grep -q '^Type=oneshot$' "$UNIT_DIR/r740-backup-$j.service"
     grep -q '^Nice=10$' "$UNIT_DIR/r740-backup-$j.service"
     grep -q '^TimeoutStartSec=' "$UNIT_DIR/r740-backup-$j.service"
+    grep -q '^NoNewPrivileges=yes$' "$UNIT_DIR/r740-backup-$j.service"
+    grep -q '^PrivateTmp=yes$' "$UNIT_DIR/r740-backup-$j.service"
   done
   for j in dbtier daily weekly pipeline; do grep -q '^IOSchedulingClass=idle$' "$UNIT_DIR/r740-backup-$j.service"; done
   run grep -q 'IOSchedulingClass' "$UNIT_DIR/r740-backup-check.service"

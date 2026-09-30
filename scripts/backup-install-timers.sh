@@ -44,6 +44,11 @@ Type=oneshot
 ExecStart=$exec_line
 TimeoutStartSec=$timeout
 Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
 UNIT
     [ "$idle" = "1" ] && echo "IOSchedulingClass=idle"
     true
