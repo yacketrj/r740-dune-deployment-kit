@@ -364,3 +364,31 @@ EOF
   [ "$status" -eq 0 ]
   [ -z "$(find "$BK_SMB_MOUNT" -name '*.partial')" ]
 }
+
+@test "--only images just the named guests and never records weekly success or pings the heartbeat" {
+  run_weekly --only "104 103"
+  [ "$status" -eq 0 ]
+  ls "$BK_SMB_MOUNT"/vm/ct104-*.age "$BK_SMB_MOUNT"/vm/vm103-*.age
+  [ -z "$(ls "$BK_SMB_MOUNT"/vm/vm101-* "$BK_SMB_MOUNT"/vm/vm102-* 2>/dev/null)" ]
+  [ ! -e "$BK_STATE_DIR/last-success-weekly" ]
+  ! grep -q DEADMANID "$BATS_TEST_TMPDIR/curl.stdin" 2>/dev/null
+}
+
+@test "--only refuses a guest that is not configured, before doing anything" {
+  run_weekly --only "999"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not in BK_VMIDS"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ]
+}
+
+@test "an unknown option is refused" {
+  run_weekly --bogus
+  [ "$status" -eq 2 ]
+}
+
+@test "a full run still records success (partial handling does not leak)" {
+  run_weekly
+  [ "$status" -eq 0 ]
+  [ -e "$BK_STATE_DIR/last-success-weekly" ]
+}

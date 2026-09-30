@@ -13,19 +13,40 @@
 # Set BK_WEEKLY_FORCE=1 for a manual, watched run outside the window (the
 # hard-stop timeout then comes from BK_WEEKLY_FORCE_MINUTES, default 180; tests
 # use BK_WEEKLY_FORCE_SECONDS and BK_MIN_REMAINING_S).
+#
+# Options:  --only "104 103"   image just these guests (each must be in BK_VMIDS); used to
+#                              stage a first run. A partial run never records weekly
+#                              success and never sends the heartbeat.
 # =============================================================================
 set -Eeuo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=backup-common.sh
 . "$here/backup-common.sh"
 
+only=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --only) only="${2:-}"; [ -n "$only" ] || { echo "usage: $0 [--only \"ID ID\"]" >&2; exit 2; }; shift 2 ;;
+    *) echo "usage: $0 [--only \"ID ID\"]" >&2; exit 2 ;;
+  esac
+done
+
 BK_JOB="backup weekly images"
 export BK_JOB
 bk_secure_umask
 bk_load_config
 
+subset_run=0
+if [ -n "$only" ]; then
+  for want in $only; do
+    [[ "$want" =~ ^[0-9]+$ ]] && [[ " $BK_VMIDS " == *" $want "* ]] || { echo "backup-weekly: --only guest '$want' is not in BK_VMIDS ($BK_VMIDS)" >&2; exit 2; }
+  done
+  BK_VMIDS="$only"
+  subset_run=1
+fi
+
 STAGE="preflight"
-RERUN="bash $here/backup-weekly.sh"
+RERUN="bash $here/backup-weekly.sh${only:+ --only \"$only\"}"
 alerted=0
 main_pid=$$
 partial=""
@@ -233,7 +254,9 @@ STAGE="summary"
 if [ "${#failures[@]}" -gt 0 ]; then
   fail "guests failed: ${failures[*]}"
 fi
-bk_state_touch weekly
-bk_dead_man_ping || true
+if [ "$subset_run" -eq 0 ]; then
+  bk_state_touch weekly
+  bk_dead_man_ping || true
+fi
 bk_log "weekly images OK: ${successes[*]}"
 bk_notify "r740 weekly backup OK: images for ${successes[*]}"
