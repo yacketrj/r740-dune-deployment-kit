@@ -171,12 +171,17 @@ drill_pipeline() {
   bk_verify_copy "$ram/set.age" "$BK_SMB_MOUNT/drill/$name.partial" || { rm -f -- "$BK_SMB_MOUNT/drill/$name.partial"; fail_drill "SMB round trip did not verify"; }
   mv -f -- "$BK_SMB_MOUNT/drill/$name.partial" "$BK_SMB_MOUNT/drill/$name"
 
-  STAGE="onedrive"
-  : "${BK_RCLONE_REMOTE:?}"
-  remote_dir="$BK_RCLONE_REMOTE/drill"
-  rclone copyto "$ram/set.age" "$remote_dir/$name" || fail_drill "upload to OneDrive failed (token, quota or network)"
-  rclone copyto "$remote_dir/$name" "$ram/back.age" || fail_drill "download from OneDrive failed"
-  bk_verify_copy "$ram/set.age" "$ram/back.age" || fail_drill "OneDrive round trip did not verify bit-exactly"
+  if [ -n "${BK_RCLONE_REMOTE:-}" ]; then
+    STAGE="onedrive"
+    remote_dir="$BK_RCLONE_REMOTE/drill"
+    rclone copyto "$ram/set.age" "$remote_dir/$name" || fail_drill "upload to OneDrive failed (token, quota or network)"
+    rclone copyto "$remote_dir/$name" "$ram/back.age" || fail_drill "download from OneDrive failed"
+    bk_verify_copy "$ram/set.age" "$ram/back.age" || fail_drill "OneDrive round trip did not verify bit-exactly"
+  else
+    # No OneDrive: the round trip is through the share alone (read back what was written).
+    cp -f -- "$BK_SMB_MOUNT/drill/$name" "$ram/back.age" || fail_drill "could not read the drill object back from the share"
+    bk_verify_copy "$ram/set.age" "$ram/back.age" || fail_drill "share round trip did not verify bit-exactly"
+  fi
 
   STAGE="decrypt"
   age -d -i "$ram/test.key" -o "$ram/out.tar" "$ram/back.age" || fail_drill "the round-tripped file does not decrypt"
@@ -199,12 +204,14 @@ drill_pipeline() {
 
   STAGE="cleanup"
   rm -f -- "$BK_SMB_MOUNT/drill/$name"
-  rclone deletefile "$remote_dir/$name" || bk_log "could not delete the drill object on OneDrive (ignored): $name"
+  if [ -n "${BK_RCLONE_REMOTE:-}" ]; then
+    rclone deletefile "$remote_dir/$name" || bk_log "could not delete the drill object on OneDrive (ignored): $name"
+  fi
   n="$name"
   bk_evidence drill-pipeline PASS "object=$n size=$size"
   bk_audit_log drill_ok "kind=pipeline" "object=$n"
   bk_dead_man_ping || true
-  bk_log "pipeline drill PASSED ($n): share and OneDrive round trip; truncation, tampering and a wrong key are rejected"
+  bk_log "pipeline drill PASSED ($n): share (and OneDrive when configured) round trip; truncation, tampering and a wrong key are rejected"
 }
 
 # ---- database drill ---------------------------------------------------------------------

@@ -25,7 +25,9 @@ export BK_JOB
 bk_secure_umask
 bk_load_config
 
-: "${BK_SMB_MOUNT:?}" "${BK_RCLONE_REMOTE:?}" "${BK_VMIDS:?}"
+: "${BK_SMB_MOUNT:?}" "${BK_VMIDS:?}"
+remote_on=0
+[ -z "${BK_RCLONE_REMOTE:-}" ] || remote_on=1
 now="${BK_CHECK_NOW_EPOCH:-$(date +%s)}"
 findings=()
 add() { findings+=("$1"); }
@@ -113,12 +115,14 @@ if [ "$smb_ok" -eq 1 ]; then
   done
 fi
 
-# --- OneDrive ------------------------------------------------------------------------
-if timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >/dev/null 2>&1; then
-  check_remote_newest daily "$daily_max" "$floor_set"
-  if [ "${BK_DBTIER_ENABLED:-1}" = "1" ]; then check_remote_newest dbtier "$db_max" "$floor_set"; fi
-else
-  add "OneDrive probe failed (token expired or revoked, network, or account problem)"
+# --- OneDrive (only when configured) -----------------------------------------------------
+if [ "$remote_on" -eq 1 ]; then
+  if timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >/dev/null 2>&1; then
+    check_remote_newest daily "$daily_max" "$floor_set"
+    if [ "${BK_DBTIER_ENABLED:-1}" = "1" ]; then check_remote_newest dbtier "$db_max" "$floor_set"; fi
+  else
+    add "OneDrive probe failed (token expired or revoked, network, or account problem)"
+  fi
 fi
 
 # --- escrow and restore drills (evidence log) ------------------------------------------

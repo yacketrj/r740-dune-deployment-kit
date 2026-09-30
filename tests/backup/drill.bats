@@ -734,3 +734,13 @@ EOF
   grep -q "is not in BK_VMIDS" "$T/curl.args"
   [ ! -e "$T/qmrestore.calls" ]
 }
+
+@test "pipeline: with no OneDrive it round-trips through the share alone, never calls rclone, and cleans up" {
+  sed -i '/^BK_RCLONE_REMOTE=/d' "$BK_CONFIG_DIR/backup.env"
+  drill pipeline
+  [ "$status" -eq 0 ]
+  [ "$(ev 'drill-pipeline.PASS')" = "1" ]
+  [ ! -e "$T/rclone.calls" ]
+  [ -z "$(find "$BK_SMB_MOUNT/drill" -type f 2>/dev/null)" ]
+  ram_empty
+}

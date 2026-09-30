@@ -283,3 +283,10 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"no external dead-man's-switch configured"* ]]
 }
+
+@test "with no OneDrive configured the doctor passes and does not need rclone" {
+  sed -i '/^BK_RCLONE_REMOTE=/d' "$BK_CONFIG_DIR/backup.env"
+  doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OneDrive not used"* ]]
+}

@@ -492,3 +492,50 @@ EOF
     rm -f "$BATS_TEST_TMPDIR/curl.args"
   done
 }
+
+# ---- share-only mode (no OneDrive): the share is the only target ---------------------------
+
+no_remote() { sed -i 's#^BK_RCLONE_REMOTE=.*#BK_RCLONE_REMOTE=#' "$BK_CONFIG_DIR/backup.env"; }
+
+@test "no remote: the set goes to the share only, rclone is never called, and success is recorded" {
+  no_remote
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  [ "$(ls "$BK_SMB_MOUNT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/rclone.calls" ]
+  [ -e "$BK_STATE_DIR/last-success-daily" ]
+  decrypt_latest daily
+  [ -f "$BATS_TEST_TMPDIR/x/prod/runtime/backups/db/auto-1.backup" ]
+}
+
+@test "no remote: an unmounted share fails before anything is pulled (no other copy would exist)" {
+  no_remote
+  stub mountpoint 'exit 1'
+  run_daily --tier daily
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/ssh.calls" ]
+  grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "no other target" "$BATS_TEST_TMPDIR/curl.args"
+  [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+}
+
+@test "no remote: a failed share copy is a plain failure, not a degraded success" {
+  no_remote
+  stub cmp 'case "$*" in *smb*) exit 1 ;; *) exec /usr/bin/cmp "$@" ;; esac'
+  run_daily --tier daily
+  [ "$status" -eq 1 ]
+  grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "no backup was written" "$BATS_TEST_TMPDIR/curl.args"
+  [ -z "$(find "$BK_SMB_MOUNT" -name '*.tar.age' -o -name '*.partial')" ]
+  [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+}
+
+@test "no remote: retention still prunes the share" {
+  no_remote
+  mkdir -p "$BK_SMB_MOUNT/daily"
+  for d in $(seq 1 31); do : >"$BK_SMB_MOUNT/daily/daily-202601$(printf '%02d' "$d")-040000.tar.age"; done
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  [ ! -e "$BK_SMB_MOUNT/daily/daily-20260101-040000.tar.age" ]
+  [ -e "$BK_SMB_MOUNT/daily/daily-20260131-040000.tar.age" ]
+}

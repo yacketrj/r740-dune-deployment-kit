@@ -283,3 +283,10 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
   echo 'BK_DBTIER_ENABLED=0' >>"$BK_CONFIG_DIR/backup.env"
   run_check; [ "$status" -eq 0 ]
 }
+
+@test "no remote configured: OneDrive is never probed and a healthy share is healthy" {
+  sed -i '/^BK_RCLONE_REMOTE=/d' "$BK_CONFIG_DIR/backup.env"
+  run_check
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/rclone.calls" ] || ! grep -q . "$T/rclone.calls"
+}

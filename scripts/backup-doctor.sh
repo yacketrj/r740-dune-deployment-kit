@@ -56,7 +56,7 @@ check_private "${BK_BACKUP_SSH_KEY:-}" "backup SSH key"
 check_private "${BK_KNOWN_HOSTS:-}" "pinned known_hosts"
 check_private "${BK_DRILL_KNOWN_HOSTS:-}" "pinned known_hosts for the drill host"
 [ -z "${BK_SMB_CREDENTIALS_FILE:-}" ] || check_private "$BK_SMB_CREDENTIALS_FILE" "SMB credentials file"
-check_private "${RCLONE_CONFIG:-/root/.config/rclone/rclone.conf}" "rclone config"
+[ -z "${BK_RCLONE_REMOTE:-}" ] || check_private "${RCLONE_CONFIG:-/root/.config/rclone/rclone.conf}" "rclone config"
 
 # --- keys: the host must hold only the public key ------------------------------------------
 case "${BK_AGE_RECIPIENT:-}" in
@@ -88,7 +88,7 @@ if broken="$(bk_audit_verify)"; then ok "audit log hash chain intact"; else bad 
 
 # --- tools ------------------------------------------------------------------------------------
 missing=""
-for t in ${BK_DOCTOR_TOOLS:-age age-keygen rclone jq curl ssh tar sha256sum flock ionice nice timeout zstd vzdump qm pct mount.cifs}; do
+for t in ${BK_DOCTOR_TOOLS:-age age-keygen $([ -n "${BK_RCLONE_REMOTE:-}" ] && echo rclone) jq curl ssh tar sha256sum flock ionice nice timeout zstd vzdump qm pct mount.cifs}; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
 done
 if [ -n "$missing" ]; then bad "tools missing:$missing"; else ok "all required tools present"; fi
@@ -133,7 +133,9 @@ else
 fi
 
 # --- OneDrive -------------------------------------------------------------------------------------------
-if [ -n "${BK_RCLONE_REMOTE:-}" ] && timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >/dev/null 2>&1; then ok "OneDrive reachable ($BK_RCLONE_REMOTE)"; else bad "OneDrive not reachable (token, network or remote name: ${BK_RCLONE_REMOTE:-<unset>})"; fi
+if [ -z "${BK_RCLONE_REMOTE:-}" ]; then
+  ok "OneDrive not used (the share is the only target; copy it to your external media)"
+elif timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >/dev/null 2>&1; then ok "OneDrive reachable ($BK_RCLONE_REMOTE)"; else bad "OneDrive not reachable (token, network or remote name: $BK_RCLONE_REMOTE)"; fi
 
 # --- the pull path from dune-prod ---------------------------------------------------------------------------
 if [ -n "${BK_BACKUP_SSH:-}" ]; then
@@ -181,7 +183,7 @@ if [ -z "$inactive" ]; then ok "backup timers active"; else warn "timers not act
 
 # --- live network checks ------------------------------------------------------------------------------------------------------
 if [ "$live" -eq 1 ]; then
-  for h in login.microsoftonline.com graph.microsoft.com onedrive.live.com discord.com; do
+  for h in $([ -n "${BK_RCLONE_REMOTE:-}" ] && echo login.microsoftonline.com graph.microsoft.com onedrive.live.com) discord.com; do
     if curl -sS -m 8 -o /dev/null "https://$h/" 2>/dev/null; then ok "egress to $h"; else bad "cannot reach $h (egress or DNS)"; fi
   done
   bk_notify "r740 backup doctor: live test message (ignore)"

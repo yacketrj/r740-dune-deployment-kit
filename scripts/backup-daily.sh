@@ -88,12 +88,19 @@ bk_lock "backup-$tier" || exit 1
 
 # --- preflight ----------------------------------------------------------------
 case "${BK_AGE_RECIPIENT:-}" in age1*) ;; *) fail "no age recipient configured (run backup-key.sh generate)" ;; esac
-: "${BK_STAGE_DIR:?}" "${BK_SMB_MOUNT:?}" "${BK_RCLONE_REMOTE:?}" "${BK_BACKUP_SSH:?}"
+: "${BK_STAGE_DIR:?}" "${BK_SMB_MOUNT:?}" "${BK_BACKUP_SSH:?}"
+# OneDrive (rclone) is optional: with BK_RCLONE_REMOTE unset the share is the only target.
+remote_on=0
+[ -z "${BK_RCLONE_REMOTE:-}" ] || remote_on=1
 # The desktop being asleep must not cost us the off-site copy: SMB trouble is a degraded
 # run (loud alert at the end), not a reason to skip OneDrive.
 smb_err=""
 smb_ok=0
 bk_require_mounted "$BK_SMB_MOUNT" || smb_err="SMB share not mounted at $BK_SMB_MOUNT"
+if [ -n "$smb_err" ] && [ "$remote_on" -eq 0 ]; then
+  STAGE="smb"
+  fail "$smb_err, and no other target is configured: nothing would be written"
+fi
 bk_require_free_gb "$BK_STAGE_DIR" "${BK_MIN_STAGE_GB:-2}" || fail "not enough staging space in $BK_STAGE_DIR"
 mkdir -p "$BK_STAGE_DIR"
 chmod 700 "$BK_STAGE_DIR"
@@ -197,21 +204,28 @@ if [ -z "$smb_err" ]; then
     partial=""
   fi
 fi
-[ -z "$smb_err" ] || bk_log "SMB copy failed (continuing to OneDrive): $smb_err"
+if [ -n "$smb_err" ]; then
+  [ "$remote_on" -eq 1 ] || fail "$smb_err (and no other target is configured, so no backup was written)"
+  bk_log "SMB copy failed (continuing to OneDrive): $smb_err"
+fi
 
-# --- OneDrive ---------------------------------------------------------------------
-STAGE="upload"
-rclone_timeout="${BK_RCLONE_TIMEOUT_S:-5400}"
-timeout "$rclone_timeout" rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" --transfers 2 --timeout 120s --contimeout 30s --bwlimit "${BK_RCLONE_BWLIMIT:-8M}" || fail "upload to $BK_RCLONE_REMOTE failed"
-STAGE="verify-transfer"
-timeout "$rclone_timeout" rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
+if [ "$remote_on" -eq 1 ]; then
+  # --- OneDrive ---------------------------------------------------------------------
+  STAGE="upload"
+  rclone_timeout="${BK_RCLONE_TIMEOUT_S:-5400}"
+  timeout "$rclone_timeout" rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" --transfers 2 --timeout 120s --contimeout 30s --bwlimit "${BK_RCLONE_BWLIMIT:-8M}" || fail "upload to $BK_RCLONE_REMOTE failed"
+  STAGE="verify-transfer"
+  timeout "$rclone_timeout" rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
+fi
 
 # --- prune: each target only after ITS OWN new copy is verified ----------------------
 STAGE="prune"
 if [ "$smb_ok" -eq 1 ]; then
   bk_prune_daily_monthly "$BK_SMB_MOUNT/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the SMB copies failed"
 fi
-bk_prune_remote "$BK_RCLONE_REMOTE/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the remote copies failed"
+if [ "$remote_on" -eq 1 ]; then
+  bk_prune_remote "$BK_RCLONE_REMOTE/$prefix" "$prefix" "$keep_daily" "$keep_monthly" || fail "pruning the remote copies failed"
+fi
 
 # --- record ------------------------------------------------------------------------
 STAGE="record"
