@@ -97,15 +97,19 @@ You need: the **private age key** (password manager), `age` and `zstd` installed
 
 ### 6a. Get and open a set
 
+**Which key?** The **PRIVATE** key: one line starting `AGE-SECRET-KEY-1` (from your password manager or printed copy). The public key (`age1...`) cannot open anything, and the script says so if you give it that one.
+
+Copy the set you want (from the desktop share `daily/` folder or from your USB key) and the script `scripts/backup-decrypt.sh` to the machine you are restoring on (any Linux box with `age` installed; nothing else from this repository is needed), then:
+
 ```bash
-# copy daily/daily-YYYYMMDD-HHMMSS.tar.age from the share or the USB key, then:
-cp /path/to/daily-YYYYMMDD-HHMMSS.tar.age ./set.tar.age
-age -d -i private.key -o set.tar set.tar.age          # a wrong key or damaged file fails here
-tar -xf set.tar && sha256sum -c MANIFEST.sha256        # every line must say OK
-cat prod/gate-manifest.txt                              # authoritative=<path> names the restore point
+./backup-decrypt.sh daily-YYYYMMDD-HHMMSS.tar.age
+# it asks you to paste the private key line (nothing is shown while you paste),
+# decrypts, refuses unsafe contents, unpacks into ./restored-<name>/, verifies every
+# file against MANIFEST.sha256 and prints the restore point. Use --key FILE to read the key
+# from a file instead, and --out DIR to choose the folder (it must be empty or new).
 ```
 
-The `authoritative=` value is a path relative to the set's `prod/` folder (for example `runtime/backups/db/<file>.backup`), so the dump is at `prod/<that value>`.
+The last lines tell you the **restore point**: the newest automatic database dump, at `<folder>/prod/<authoritative>`.
 
 ### 6b. Database only (server is up but data is damaged)
 
