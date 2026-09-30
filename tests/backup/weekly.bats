@@ -568,7 +568,7 @@ EOF
 }
 
 @test "the weekly pipeline writes through dd with 4 MB blocks and never uses O_DIRECT (its unaligned last block fails with EINVAL)" {
-  grep -q 'dd of="$partial" bs=4M iflag=fullblock status=none' "$REPO_ROOT/scripts/backup-weekly.sh"
+  grep -q 'dd of="$partial" bs=4M iflag=fullblock oflag=nocache conv=fdatasync status=none' "$REPO_ROOT/scripts/backup-weekly.sh"
   ! grep -q 'oflag=direct' <(grep -v '^ *#' "$REPO_ROOT/scripts/backup-weekly.sh")
 }
 
@@ -583,4 +583,41 @@ EOF
   f="$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age)"
   line="$(grep image_ok "$BK_STATE_DIR/audit.log" | tail -1)"
   [ "$(printf '%s' "$line" | jq -r .sha256)" = "$(sha256sum "$f" | cut -d' ' -f1)" ]
+}
+
+# ---- network-share write/read-back behaviour (simulated: the sandbox has no CIFS mount) ---------
+
+netfs_weekly_stubs() { # RES bytes reported by fincore
+  export BK_FORCE_NETFS=1
+  stub sync 'echo "sync $*" >>"$BATS_TEST_TMPDIR/ops"'
+  stub fincore "echo $1"
+  stub dd 'echo "dd $*" >>"$BATS_TEST_TMPDIR/ops"; args=(); for a in "$@"; do [ "$a" = iflag=direct ] || args+=("$a"); done; exec /usr/bin/dd "${args[@]}"'
+}
+
+@test "the image is written with oflag=nocache and conv=fdatasync (bounded dirty memory, flushed at the end)" {
+  netfs_weekly_stubs 0
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  grep -E '^dd .*of=.*partial.* bs=4M .*oflag=nocache conv=fdatasync' "$BATS_TEST_TMPDIR/ops"
+}
+
+@test "the read-back flushes and evicts the file first, then reads it over the wire (no O_DIRECT needed)" {
+  netfs_weekly_stubs 0
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  evict=$(grep -n 'iflag=nocache count=0' "$BATS_TEST_TMPDIR/ops" | head -1 | cut -d: -f1)
+  read_=$(grep -n '^dd if=.*bs=4M status=none' "$BATS_TEST_TMPDIR/ops" | head -1 | cut -d: -f1)
+  [ -n "$evict" ]
+  [ -n "$read_" ]
+  [ "$evict" -lt "$read_" ]
+  ! grep -q 'iflag=direct' "$BATS_TEST_TMPDIR/ops"
+}
+
+@test "if the cache cannot be dropped the read-back uses O_DIRECT and still verifies correctly" {
+  netfs_weekly_stubs 5000000000
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  grep -q 'iflag=direct' "$BATS_TEST_TMPDIR/ops"
+  [[ "$output" == *"could not be dropped"* ]]
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
 }

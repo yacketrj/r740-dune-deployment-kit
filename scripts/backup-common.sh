@@ -398,8 +398,51 @@ bk_manifest_add() {
 }
 
 # Bit-exact comparison of a source file and its transferred copy.
+# --- honest read-back from a network share ---------------------------------------------------
+# With the share mounted cache=strict (the fast default, ~110 MB/s) a file just written is still in
+# the host's page cache, so reading it back would check the CACHE, not the copy on the desktop
+# (measured 2026-09-30: 7.5 GB/s from cache vs 117 MB/s from the wire). Before any read-back the
+# file is flushed to the server and evicted from the cache, and the eviction is VERIFIED; if pages
+# remain, the read uses O_DIRECT (slower, still honest).
+
+# Is FILE on a network filesystem? (BK_FORCE_NETFS=1 is a test hook.)
+bk_netfs() {
+  [ "${BK_FORCE_NETFS:-0}" = "1" ] && return 0
+  case "$(stat -f -c %T -- "$1" 2>/dev/null)" in cifs | smb | smb2 | smb3) return 0 ;; esac
+  return 1
+}
+
+# Flush FILE's dirty pages to the server, drop its cached pages, verify none remain (<= 1 MiB).
+# Returns 0 when the next read will come over the wire (or FILE is not on a network share).
+bk_flush_evict() { # file
+  local f="${1:?file}" res
+  bk_netfs "$f" || return 0
+  sync -d -- "$f" 2>/dev/null || true
+  dd if="$f" iflag=nocache count=0 status=none 2>/dev/null || true
+  res="$(fincore -n -b -o RES -- "$f" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')"
+  [ "${res:-0}" -le 1048576 ]
+}
+
+# Set BK_HONEST_READ to the extra dd flags a read-back of FILE needs (empty, or iflag=direct).
+BK_HONEST_READ=()
+bk_prepare_honest_read() { # file
+  BK_HONEST_READ=()
+  bk_netfs "$1" || return 0
+  if ! bk_flush_evict "$1"; then
+    BK_HONEST_READ=(iflag=direct)
+    bk_log "cache of $(basename -- "$1") could not be dropped; reading it with O_DIRECT (slower, still honest)" >&2
+  fi
+}
+
 bk_verify_copy() {
-  if cmp -s -- "${1:?src}" "${2:?dst}"; then
+  local src="${1:?src}" dst="${2:?dst}" same=0
+  if bk_netfs "$dst"; then
+    bk_prepare_honest_read "$dst"
+    if dd if="$dst" bs=4M "${BK_HONEST_READ[@]}" status=none | cmp -s -- - "$src"; then same=1; fi
+  elif cmp -s -- "$src" "$dst"; then
+    same=1
+  fi
+  if [ "$same" -eq 1 ]; then
     return 0
   fi
   bk_log "copy verification FAILED: $(basename -- "$1") differs from its destination"

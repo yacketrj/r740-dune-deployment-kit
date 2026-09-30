@@ -647,3 +647,63 @@ PY
   run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/p2.tar" ./host; [ "$status" -ne 0 ]
   run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/missing.tar" ./prod; [ "$status" -ne 0 ]
 }
+
+# ---- honest read-back from a network share (flush + verified eviction) --------------------------
+
+netfs_stubs() { # RES-bytes reported by fincore
+  export BK_FORCE_NETFS=1
+  stub sync 'echo "sync $*" >>"$BATS_TEST_TMPDIR/ops"'
+  stub fincore "echo $1"
+  stub dd 'echo "dd $*" >>"$BATS_TEST_TMPDIR/ops"; args=(); for a in "$@"; do [ "$a" = iflag=direct ] || args+=("$a"); done; exec /usr/bin/dd "${args[@]}"'
+  echo data >"$BATS_TEST_TMPDIR/f"
+}
+
+@test "bk_flush_evict does nothing on a local filesystem" {
+  stub fincore 'echo called >>"$BATS_TEST_TMPDIR/fincore.calls"'
+  echo x >"$BATS_TEST_TMPDIR/f"
+  run bk_flush_evict "$BATS_TEST_TMPDIR/f"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/fincore.calls" ]
+}
+
+@test "on a network share bk_flush_evict flushes, evicts and verifies: success when nothing stays cached" {
+  netfs_stubs 0
+  run bk_flush_evict "$BATS_TEST_TMPDIR/f"
+  [ "$status" -eq 0 ]
+  grep -q "^sync -d" "$BATS_TEST_TMPDIR/ops"
+  grep -q "iflag=nocache count=0" "$BATS_TEST_TMPDIR/ops"
+}
+
+@test "bk_flush_evict FAILS when pages are still resident after the eviction" {
+  netfs_stubs 5000000000
+  run bk_flush_evict "$BATS_TEST_TMPDIR/f"
+  [ "$status" -eq 1 ]
+}
+
+@test "bk_prepare_honest_read: no extra flags when evicted, O_DIRECT when eviction did not work" {
+  netfs_stubs 0
+  bk_prepare_honest_read "$BATS_TEST_TMPDIR/f"
+  [ "${#BK_HONEST_READ[@]}" -eq 0 ]
+  netfs_stubs 5000000000
+  bk_prepare_honest_read "$BATS_TEST_TMPDIR/f" 2>/dev/null
+  [ "${BK_HONEST_READ[*]}" = "iflag=direct" ]
+}
+
+@test "bk_verify_copy on a network share compares what is read back with the source, and detects a difference" {
+  netfs_stubs 0
+  echo same >"$BATS_TEST_TMPDIR/a"; cp "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"
+  [ "$status" -eq 0 ]
+  grep -q "iflag=nocache count=0" "$BATS_TEST_TMPDIR/ops"     # it evicted before reading
+  echo other >"$BATS_TEST_TMPDIR/b"
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"
+  [ "$status" -eq 1 ]
+}
+
+@test "bk_verify_copy falls back to an O_DIRECT read (still correct) when the cache cannot be dropped" {
+  netfs_stubs 5000000000
+  echo same >"$BATS_TEST_TMPDIR/a"; cp "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"
+  [ "$status" -eq 0 ]
+  grep -q "iflag=direct" "$BATS_TEST_TMPDIR/ops"
+}

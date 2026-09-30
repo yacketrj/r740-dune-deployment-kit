@@ -47,7 +47,7 @@ EOC
   stub pct '[ "$1" = "status" ] && [ "$2" = "104" ]'
   stub qm 'case "$1" in status) [ "$2" = "101" ] ;; agent) [ ! -f "$BATS_TEST_TMPDIR/noagent" ] ;; esac'
   stub systemctl 'exit 0'
-  stub findmnt 'echo "rw,vers=3.1.1,seal,cache=none"'
+  stub findmnt 'echo "rw,vers=3.1.1,seal"'
   cat >"$T/bin/ssh" <<EOS
 #!/usr/bin/env bash
 echo "\$*" >>"$T/ssh.calls"
@@ -269,11 +269,24 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
   [[ "$output" == *"audit log hash chain BROKEN at line 3"* ]]
 }
 
-@test "an SMB mount without seal or cache=none warns (does not fail)" {
+@test "an SMB mount without vers=3.1.1 or seal warns (does not fail)" {
   stub findmnt 'echo "rw,vers=3.0"'
   doctor
-  [[ "$output" == *"missing option(s): vers=3.1.1 seal cache=none"* ]]
+  [[ "$output" == *"missing option(s): vers=3.1.1 seal"* ]]
   [ "$status" -eq 0 ]
+}
+
+@test "the default cache mode is fine; cache=none is noted as slower; cache=loose is warned about" {
+  doctor
+  [[ "$output" == *"include vers=3.1.1 and seal"* ]]
+  [[ "$output" != *"cache=none"* && "$output" != *"cache=loose"* ]]
+  stub findmnt 'echo "rw,vers=3.1.1,seal,cache=none"'
+  doctor
+  [[ "$output" == *"cache=none: works, but writes are about half as fast"* ]]
+  [ "$status" -eq 0 ]
+  stub findmnt 'echo "rw,vers=3.1.1,seal,cache=loose"'
+  doctor
+  [[ "$output" == *"cache=loose"* ]]
 }
 
 @test "with BK_HEARTBEAT_REQUIRED=0 a missing dead-man's-switch is a warning, not a failure" {

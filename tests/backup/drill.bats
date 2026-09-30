@@ -304,7 +304,9 @@ EOF
   [ "$status" -eq 0 ]
   c=$(grep -n 'create role dune' "$T/docker.calls" | head -1 | cut -d: -f1)
   r=$(grep -n 'pg_restore' "$T/docker.calls" | head -1 | cut -d: -f1)
-  [ -n "$c" ] && [ -n "$r" ] && [ "$c" -lt "$r" ]
+  [ -n "$c" ]
+  [ -n "$r" ]
+  [ "$c" -lt "$r" ]
   grep -q 'create database dune owner dune' "$T/docker.calls"
   line=$(grep 'pg_restore' "$T/docker.calls" | head -1)
   [[ "$line" == *"-d dune"* ]]

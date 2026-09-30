@@ -166,7 +166,8 @@ readback_sha() { # file total_bytes
   # Read in 4 MB blocks (measured 2026-09-30 on a 3.5 GB image: 71.5 MB/s vs 41.7 MB/s for plain
   # sha256sum, identical hash) as a background job + wait, so an abort during the (long) read-back
   # is immediate.
-  dd if="$f" bs=4M status=none 2>/dev/null | sha256sum >"$tmpdir/post.sha" &
+  bk_prepare_honest_read "$f"   # flush + evict (verified) so this reads the desktop's copy
+  dd if="$f" bs=4M "${BK_HONEST_READ[@]}" status=none 2>/dev/null | sha256sum >"$tmpdir/post.sha" &
   pid=$!
   if [ "$progress" -eq 0 ]; then
     wait "$pid" || true
@@ -232,10 +233,11 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   # allowed to hold the live guest: the pipeline runs as its own process group and a
   # watchdog aborts it when the output stops growing.
   stalled=0
-  # Write in 4 MB blocks through dd. With the share mounted cache=none every small write waits for
-  # a network round trip: measured 2026-09-30, tee's small writes gave 25.8 MB/s, dd 4 MB blocks
-  # 46.8 MB/s. Do NOT add oflag=direct: it gives no speed-up and fails on the last block of a
-  # stream (an unaligned final write returns EINVAL, "dd: error writing ...: Invalid argument").
+  # Write in 4 MB blocks through dd. Measured 2026-09-30: tee's small writes gave 25.8 MB/s on a
+  # cache=none mount; on the default cache=strict mount dd 4 MB writes with oflag=nocache reach
+  # ~115 MB/s (the 1 Gb line rate) while keeping dirty memory at ~3 MiB (without nocache a 4 GiB
+  # write left 4 GiB dirty and stalled at the final flush). conv=fdatasync flushes at the end.
+  # Do NOT add oflag=direct: it fails on the last (unaligned) block with EINVAL.
   qopt=(--quiet 1)
   if [ "$progress" -eq 1 ] || [ "$verbose" -eq 1 ]; then qopt=(); fi   # let vzdump log its progress
   log_off=0
@@ -250,7 +252,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
       bash -c 'umask 022; exec vzdump "$@"' vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-153600}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
       | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") \
-      | dd of="$partial" bs=4M iflag=fullblock status=none
+      | dd of="$partial" bs=4M iflag=fullblock oflag=nocache conv=fdatasync status=none
   ) &
   pipe_pid=$!
   last_size=-1

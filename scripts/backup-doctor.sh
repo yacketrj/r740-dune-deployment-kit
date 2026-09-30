@@ -121,8 +121,12 @@ if [ -n "${BK_SMB_MOUNT:-}" ] && mountpoint -q "$BK_SMB_MOUNT"; then
   smb_opts="$(findmnt -no OPTIONS "$BK_SMB_MOUNT" 2>/dev/null || true)"
   if [ -n "$smb_opts" ]; then
     smb_missing=""
-    for want in vers=3.1.1 seal cache=none; do case ",$smb_opts," in *",$want,"*) ;; *) smb_missing="$smb_missing $want" ;; esac; done
-    if [ -z "$smb_missing" ]; then ok "SMB mount options include vers=3.1.1, seal and cache=none"; else warn "SMB mount is missing option(s):$smb_missing (encryption in transit / honest read-back verification)"; fi
+    for want in vers=3.1.1 seal; do case ",$smb_opts," in *",$want,"*) ;; *) smb_missing="$smb_missing $want" ;; esac; done
+    if [ -z "$smb_missing" ]; then ok "SMB mount options include vers=3.1.1 and seal"; else warn "SMB mount is missing option(s):$smb_missing (encryption in transit)"; fi
+    # cache=none (slow, ~60 MB/s) and the default cache=strict (fast, ~110 MB/s) both work: the
+    # scripts flush and evict before every read-back. cache=loose could serve stale data.
+    case ",$smb_opts," in *",cache=loose,"*) warn "SMB mount uses cache=loose: read-backs could be served stale; use the default (strict) or cache=none" ;; esac
+    case ",$smb_opts," in *",cache=none,"*) warn "SMB mount uses cache=none: works, but writes are about half as fast (measured 61 vs 111 MB/s); the default cache=strict is recommended" ;; esac
   fi
 else
   bad "SMB share is not mounted at ${BK_SMB_MOUNT:-<unset>}"
