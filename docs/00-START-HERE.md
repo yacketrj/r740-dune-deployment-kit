@@ -80,7 +80,7 @@ original plan, kept as history):**
 
 | VM | vCPU | RAM | Disk | CPU pinning | Layout |
 |---|---|---|---|---|---|
-| dune-prod (VM 101, `192.168.20.10`) | 60 (2 NUMA nodes: 40 + 20) | 192 GB (node0 112 GB, node1 80 GB, `policy=bind`) | 300 GB | node0 even CPUs 0–78, node1 odd CPUs 41–79 | Live: 2 Sietches + Overmap always-on, 2 Deep Desert dimensions on-demand. **Planned, not yet configured:** 2 static Deep Deserts + 2 Sietches, more added dynamically as the server grows |
+| dune-prod (VM 101, `192.168.20.10`) | 60 (2 NUMA nodes: 40 + 20) | 192 GB (node0 112 GB, node1 80 GB, `policy=bind`) | 300 GB | node0 even CPUs 0–78, node1 odd CPUs 41–79 | Live (final for now, 2026-09-29): 3 Sietches + Overmap always-on, 3 Deep Desert dimensions on-demand; will expand as server need grows |
 | dune-dev (VM 102, `192.168.21.10`) | 8 | 26 GB | 300 GB | node1 odd CPUs 1–39 | 1 Sietch, 1 dynamic Deep Desert, Overmap |
 | acp-bot (VM 103, `192.168.22.10`) | 2 | 4 GB | 20 GB | unpinned | Mentat bot (own VM, Services VLAN 22) |
 

@@ -35,18 +35,7 @@ line-by-line throughout every file below:
   node1 20 vCPU/80GB); `dune-dev` (VM 102) is **8 vCPU / 26GB**;
   `acp-bot` (VM 103) is 2 vCPU/4GB. This repo's docs still describe the
   original 40 vCPU/152GB, 4-Deep-Desert plan.
-- **Map layout: what is live vs. planned.** Live today: 2 Sietches
-  (`Survival_1` dimensions, always-on) + Overmap, and 2 Deep Desert
-  dimensions configured but **on-demand** (scaled to zero when empty).
-  Operator's plan (not yet configured as of 2026-09-29): **2 static
-  (always-on) Deep Deserts and 2 Sietches now, with further Sietches and
-  Deep Deserts added dynamically as the server grows.** Capacity check
-  at the `memory.sh` ceilings (16GB per `Survival_1`/`DeepDesert_1`
-  partition, 3GB Overmap, ~4GB for the two always-on hubs, ~25GB OS and
-  infrastructure): the 2+2 layout is about 96GB of dune-prod's 192GB,
-  leaving roughly 96GB of headroom, about six more 16GB partitions at
-  ceiling. Those are ceilings, not typical use — measured live use for
-  2 Sietches + Overmap is about 24GB.
+- **Map layout.** Live layout (verified 2026-09-29, final for now; will expand as server need grows): **3 Sietches** (`Survival_1` dimensions, always-on: Abbir/partition 1, Alraab/37, Barkan/38) + Overmap always-on, and **3 Deep Desert dimensions** (partitions 8, 36, 40) configured as **on-demand** (Dedicated Scaling, `MinServers=0`, none running while empty). Whether any Deep Desert should instead be always-on is the operator's call and is not configured. Capacity check at the `memory.sh` ceilings (16GB per `Survival_1`/`DeepDesert_1` partition, 3GB Overmap, ~4GB for the two hubs, ~25GB OS and infrastructure): 3+3 is about 128GB of dune-prod's 192GB, leaving roughly 64GB of headroom, about four more 16GB partitions at ceiling. Those are ceilings, not typical use: measured guest use with 3 Sietches + Overmap up and all Deep Deserts idle is about 34GB (each Sietch ~9-10GB).
 - **The ACP bot ended up on its own dedicated VM (VMID 103, Services
   VLAN 22)**, not co-located on `dune-prod` as several of this repo's
   earlier-written sections still describe (`prompts/r740xd/03-bot-deploy-and-tunnel.md`
