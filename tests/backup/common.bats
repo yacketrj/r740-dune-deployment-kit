@@ -304,3 +304,175 @@ mk() { : >"$1/$2"; }
   [[ "$output" != *"secret2"* ]]
   [[ "$output" == *"[REDACTED]"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# v2 additions
+# ---------------------------------------------------------------------------
+
+@test "isolation: refuses a state dir outside the test temp dir" {
+  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_require_test_isolation
+  [ "$status" -eq 1 ]
+}
+
+@test "isolation: accepts a state dir under the test temp dir" {
+  BK_STATE_DIR="$BATS_TEST_TMPDIR/state" run bk_require_test_isolation
+  [ "$status" -eq 0 ]
+}
+
+@test "isolation: state-writing functions refuse and create nothing outside the test dir" {
+  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_lock t1
+  [ "$status" -eq 1 ]
+  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_state_touch daily
+  [ "$status" -eq 1 ]
+  [ ! -e /nonexistent-bk-test-root ]
+}
+
+@test "valid vmid accepts real ids and rejects everything else" {
+  for ok in 100 101 102 103 104 999999; do bk_valid_vmid "$ok"; done
+  for bad in "" 0 99 010 abc "101;rm" "1 2" "-1" '$(id)' "10.1"; do
+    run bk_valid_vmid "$bad"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "safe_rm removes a path inside the root" {
+  mkdir -p "$BATS_TEST_TMPDIR/root/a/b"; : >"$BATS_TEST_TMPDIR/root/a/b/f"
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root/a"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/root/a" ]
+}
+
+@test "safe_rm refuses empty arguments, the root itself, / and outside paths, deleting nothing" {
+  mkdir -p "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/other"; : >"$BATS_TEST_TMPDIR/other/keep"
+  run bk_safe_rm_under "" "$BATS_TEST_TMPDIR/other";                 [ "$status" -eq 1 ]
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "";                   [ "$status" -eq 1 ]
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root"; [ "$status" -eq 1 ]
+  run bk_safe_rm_under "/" "/usr";                                    [ "$status" -eq 1 ]
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/other"; [ "$status" -eq 1 ]
+  [ -d "$BATS_TEST_TMPDIR/root" ]
+  [ -e "$BATS_TEST_TMPDIR/other/keep" ]
+}
+
+@test "safe_rm refuses .. traversal and symlink escapes" {
+  mkdir -p "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/outside"; : >"$BATS_TEST_TMPDIR/outside/keep"
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root/../outside"
+  [ "$status" -eq 1 ]
+  ln -s "$BATS_TEST_TMPDIR/outside" "$BATS_TEST_TMPDIR/root/link"
+  run bk_safe_rm_under "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root/link"
+  [ "$status" -eq 1 ]
+  [ -e "$BATS_TEST_TMPDIR/outside/keep" ]
+}
+
+@test "manifest records sha256, size and name" {
+  printf 'abc' >"$BATS_TEST_TMPDIR/f.bin"
+  run bk_manifest_add "$BATS_TEST_TMPDIR/m.txt" "$BATS_TEST_TMPDIR/f.bin"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/m.txt")" = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  3  f.bin" ]
+}
+
+@test "manifest refuses a missing file and writes nothing" {
+  run bk_manifest_add "$BATS_TEST_TMPDIR/m.txt" "$BATS_TEST_TMPDIR/none"
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/m.txt" ]
+}
+
+@test "verify_copy passes for identical files and fails for a differing or missing one" {
+  printf 'same' >"$BATS_TEST_TMPDIR/a"; printf 'same' >"$BATS_TEST_TMPDIR/b"; printf 'diff' >"$BATS_TEST_TMPDIR/c"
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b"; [ "$status" -eq 0 ]
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/c"; [ "$status" -eq 1 ]
+  run bk_verify_copy "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/none"; [ "$status" -eq 1 ]
+}
+
+@test "dead_man: not configured returns 3 without failing the caller" {
+  BK_DEADMAN_URL_FILE="" run bk_dead_man_ping
+  [ "$status" -eq 3 ]
+  BK_DEADMAN_URL_FILE="$BATS_TEST_TMPDIR/none" run bk_dead_man_ping
+  [ "$status" -eq 3 ]
+}
+
+@test "dead_man: an unreachable service returns 4" {
+  stub curl 'cat >/dev/null; exit 22'
+  printf 'https://hc.example/ping/abc\n' >"$BATS_TEST_TMPDIR/dm"
+  BK_DEADMAN_URL_FILE="$BATS_TEST_TMPDIR/dm" run bk_dead_man_ping
+  [ "$status" -eq 4 ]
+}
+
+@test "dead_man: success returns 0 and the URL is on stdin, never in argv" {
+  stub curl 'cat >"$BATS_TEST_TMPDIR/curl.stdin"'
+  printf 'https://hc.example/ping/TOPSECRETID\n' >"$BATS_TEST_TMPDIR/dm"
+  BK_DEADMAN_URL_FILE="$BATS_TEST_TMPDIR/dm" run bk_dead_man_ping
+  [ "$status" -eq 0 ]
+  [ -f "$BATS_TEST_TMPDIR/curl.calls" ]
+  run grep -q TOPSECRETID "$BATS_TEST_TMPDIR/curl.calls"
+  [ "$status" -ne 0 ]
+  grep -q "TOPSECRETID" "$BATS_TEST_TMPDIR/curl.stdin"
+}
+
+@test "dead_man: 'fail' pings the failure endpoint" {
+  stub curl 'cat >"$BATS_TEST_TMPDIR/curl.stdin"'
+  printf 'https://hc.example/ping/abc/\n' >"$BATS_TEST_TMPDIR/dm"
+  BK_DEADMAN_URL_FILE="$BATS_TEST_TMPDIR/dm" run bk_dead_man_ping fail
+  [ "$status" -eq 0 ]
+  grep -q 'ping/abc/fail' "$BATS_TEST_TMPDIR/curl.stdin"
+}
+
+@test "alert: names the job, stage, error, re-run command and runbook" {
+  stub curl 'cat >/dev/null; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" BK_JOB="daily set" BK_RUNBOOK_URL="docs/08.md" \
+    run bk_alert upload "connection reset" "bash scripts/backup-daily.sh --tier daily"
+  [ "$status" -eq 0 ]
+  grep -q "daily set" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "stage 'upload'" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "connection reset" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "backup-daily.sh --tier daily" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "docs/08.md" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "alert: redacts secrets in the error and survives a dead webhook" {
+  stub curl 'cat >/dev/null; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"; exit 22'
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" run bk_alert upload "token=hunter2 failed" "rerun"
+  [ "$status" -eq 0 ]
+  [ -f "$BATS_TEST_TMPDIR/curl.args" ]
+  run grep -q hunter2 "$BATS_TEST_TMPDIR/curl.args"
+  [ "$status" -ne 0 ]
+}
+
+@test "audit: appends a JSON line with the fields and redacts values" {
+  run bk_audit_log run_ok tier=daily file=daily-1.tar.age note="password=hunter2"
+  [ "$status" -eq 0 ]
+  line="$(tail -n 1 "$BK_STATE_DIR/audit.log")"
+  [ "$(printf '%s' "$line" | jq -r .event)" = "run_ok" ]
+  [ "$(printf '%s' "$line" | jq -r .tier)" = "daily" ]
+  [ "$(printf '%s' "$line" | jq -r .file)" = "daily-1.tar.age" ]
+  [[ "$line" != *hunter2* ]]
+}
+
+@test "audit: ignores reserved and invalid keys instead of failing" {
+  run bk_audit_log e time=evil "bad key=x" 'ok_key=fine'
+  [ "$status" -eq 0 ]
+  line="$(tail -n 1 "$BK_STATE_DIR/audit.log")"
+  [ "$(printf '%s' "$line" | jq -r .ok_key)" = "fine" ]
+  [ "$(printf '%s' "$line" | jq -r .time)" != "evil" ]
+}
+
+@test "audit: mirrors to the ship directory when it exists, and tolerates it missing" {
+  mkdir -p "$BATS_TEST_TMPDIR/ship"
+  BK_AUDIT_SHIP_DIR="$BATS_TEST_TMPDIR/ship" run bk_audit_log shipped
+  [ "$status" -eq 0 ]
+  [ "$(tail -n 1 "$BATS_TEST_TMPDIR/ship/audit.log" | jq -r .event)" = "shipped" ]
+  BK_AUDIT_SHIP_DIR="$BATS_TEST_TMPDIR/absent" run bk_audit_log unshipped
+  [ "$status" -eq 0 ]
+}
+
+@test "audit: writes nothing outside the test temp dir" {
+  BK_STATE_DIR="/nonexistent-bk-test-root/state" run bk_audit_log x
+  [ "$status" -eq 0 ]
+  [ ! -e /nonexistent-bk-test-root ]
+}
+
+@test "secure_umask sets 077" {
+  bk_secure_umask
+  [ "$(umask)" = "0077" ]
+}

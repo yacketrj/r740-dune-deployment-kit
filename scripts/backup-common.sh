@@ -49,6 +49,7 @@ bk_notify() {
 
 # Exclusive per-name lock; the lock is held for the life of the calling shell.
 bk_lock() {
+  bk_require_test_isolation || return 1
   mkdir -p "$BK_STATE_DIR"
   exec 9>"$BK_STATE_DIR/$1.lock"
   if ! flock -n 9; then
@@ -161,6 +162,7 @@ bk_prune_remote() {
 }
 
 bk_state_touch() {
+  bk_require_test_isolation || return 1
   mkdir -p "$BK_STATE_DIR"
   date +%s >"$BK_STATE_DIR/last-success-$1"
 }
@@ -174,4 +176,127 @@ bk_state_age_seconds() {
   fi
   ts="$(cat "$f")"
   echo $(($(date +%s) - ts))
+}
+
+# =============================================================================
+# v2 additions (design v2, audit themes T4/T10/T11/T12)
+# =============================================================================
+
+# Backups hold secrets: files created by the jobs must not be world-readable.
+bk_secure_umask() {
+  umask 077
+}
+
+# Under bats, refuse to touch any state directory outside the test's own temp
+# dir (a test that forgets to override BK_STATE_DIR must not be able to alter
+# production state, e.g. silence the staleness alarm). No effect outside bats.
+bk_require_test_isolation() {
+  [ -n "${BATS_TEST_TMPDIR:-}" ] || return 0
+  case "$BK_STATE_DIR" in
+    "$BATS_TEST_TMPDIR"/*) return 0 ;;
+  esac
+  bk_log "refusing to run under bats: BK_STATE_DIR='$BK_STATE_DIR' is not under BATS_TEST_TMPDIR"
+  return 1
+}
+
+# Proxmox VM/CT ids are 100 and up; anything else must never reach a command.
+bk_valid_vmid() {
+  [[ "${1:-}" =~ ^[1-9][0-9]{2,8}$ ]]
+}
+
+# rm -rf PATH only if it resolves strictly inside ROOT. Refuses empty arguments,
+# "/", ROOT itself, "..", and symlink escapes (realpath -m resolves them).
+bk_safe_rm_under() {
+  local root="${1:-}" path="${2:-}" real_root real_path
+  if [ -z "$root" ] || [ -z "$path" ]; then
+    bk_log "bk_safe_rm_under: refusing an empty argument"
+    return 1
+  fi
+  real_root="$(realpath -m -- "$root")"
+  real_path="$(realpath -m -- "$path")"
+  if [ "$real_root" = "/" ] || [ "$real_path" = "/" ] || [ "$real_path" = "$real_root" ]; then
+    bk_log "bk_safe_rm_under: refusing to remove the root itself or /"
+    return 1
+  fi
+  case "$real_path" in
+    "$real_root"/*) ;;
+    *)
+      bk_log "bk_safe_rm_under: '$path' resolves outside '$root'"
+      return 1
+      ;;
+  esac
+  rm -rf -- "$real_path"
+}
+
+# Append "sha256  size  name" for FILE to MANIFEST.
+bk_manifest_add() {
+  local manifest="${1:?manifest}" f="${2:?file}" sum size
+  if [ ! -f "$f" ]; then
+    bk_log "manifest: no such file: $f"
+    return 1
+  fi
+  sum="$(sha256sum -- "$f" | cut -d' ' -f1)" || return 1
+  size="$(stat -c %s -- "$f")" || return 1
+  printf '%s  %s  %s\n' "$sum" "$size" "$(basename -- "$f")" >>"$manifest"
+}
+
+# Bit-exact comparison of a source file and its transferred copy.
+bk_verify_copy() {
+  if cmp -s -- "${1:?src}" "${2:?dst}"; then
+    return 0
+  fi
+  bk_log "copy verification FAILED: $(basename -- "$1") differs from its destination"
+  return 1
+}
+
+# Ping the external dead-man's-switch (URL in a root-only file, sent on curl's
+# stdin so it never appears in argv). Arg "fail" pings the failure endpoint.
+# Returns 0 ok, 3 not configured, 4 ping failed. Never aborts the caller.
+bk_dead_man_ping() {
+  local f="${BK_DEADMAN_URL_FILE:-}" url
+  if [ -z "$f" ] || [ ! -r "$f" ]; then
+    bk_log "dead-man ping skipped (no URL file configured)"
+    return 3
+  fi
+  url="$(tr -d '\r\n' <"$f")" || return 4
+  [ "${1:-}" = "fail" ] && url="${url%/}/fail"
+  if printf 'url = "%s"\n' "$url" | curl -fsS -m 10 -K - >/dev/null 2>&1; then
+    return 0
+  fi
+  bk_log "dead-man ping failed"
+  return 4
+}
+
+# Actionable failure alert: job, failed stage, redacted error, re-run command,
+# runbook. bk_notify redacts and never fails the caller.
+bk_alert() {
+  local stage="${1:-unknown}" err="${2:-}" rerun="${3:-}" job="${BK_JOB:-backup}"
+  bk_notify "${BK_ALERT_MENTION:-} r740 ${job} FAILED at stage '${stage}': ${err:-no detail} | re-run: ${rerun:-see runbook} | runbook: ${BK_RUNBOOK_URL:-docs/08-backup-runbook.md}"
+}
+
+# Append one JSON line (time, event, host, plus key=value pairs) to the audit
+# log, and mirror it to $BK_AUDIT_SHIP_DIR when that is a directory. Values are
+# redacted. Never fails the caller.
+bk_audit_log() {
+  local ev="${1:?event}" kv k v line filter='{time:$time,event:$event,host:$host'
+  shift
+  bk_require_test_isolation || return 0
+  mkdir -p "$BK_STATE_DIR" 2>/dev/null || return 0
+  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)")
+  for kv in "$@"; do
+    k="${kv%%=*}"
+    v="${kv#*=}"
+    [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    case "$k" in time | event | host) continue ;; esac
+    v="$(printf '%s' "$v" | bk_redact)"
+    args+=(--arg "$k" "$v")
+    filter="$filter,$k:\$$k"
+  done
+  filter="$filter}"
+  line="$(jq -nc "${args[@]}" "$filter")" || return 0
+  printf '%s\n' "$line" >>"$BK_STATE_DIR/audit.log" 2>/dev/null || return 0
+  if [ -n "${BK_AUDIT_SHIP_DIR:-}" ] && [ -d "$BK_AUDIT_SHIP_DIR" ]; then
+    printf '%s\n' "$line" >>"$BK_AUDIT_SHIP_DIR/audit.log" 2>/dev/null || bk_log "audit ship failed (ignored)"
+  fi
+  return 0
 }
