@@ -229,16 +229,25 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   # allowed to hold the live guest: the pipeline runs as its own process group and a
   # watchdog aborts it when the output stops growing.
   stalled=0
+  # Write in 4 MB blocks. With the share mounted cache=none every small write waits for a network
+  # round trip: measured 2026-09-30, tee's small writes gave 25.8 MB/s, 4 MB direct writes 46.6 MB/s.
+  ddflags=()
+  case "$(stat -f -c %T -- "$BK_SMB_MOUNT" 2>/dev/null)" in cifs | smb | smb2 | smb3) ddflags=(oflag=direct) ;; esac
   qopt=(--quiet 1)
   if [ "$progress" -eq 1 ] || [ "$verbose" -eq 1 ]; then qopt=(); fi   # let vzdump log its progress
   log_off=0
+  # vzdump alone runs with umask 022: under this script's umask 077 it creates a 0700 temp
+  # directory that a container backup's unprivileged tar (lxc-usernsexec) cannot open
+  # ("tar: ...vzdump-lxc-N.tmp: Cannot open: Permission denied", exit 255). Everything this
+  # script writes itself (the encrypted image) stays 0600.
   set -m
   (
     set -o pipefail
     timeout "$remaining" ionice -c3 nice -n 19 \
-      vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-153600}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
+      bash -c 'umask 022; exec vzdump "$@"' vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-153600}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
-      | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") >"$partial"
+      | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") \
+      | dd of="$partial" bs=4M iflag=fullblock "${ddflags[@]}" status=none
   ) &
   pipe_pid=$!
   last_size=-1
@@ -286,7 +295,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   fi
   if [ "$rc" -ne 0 ]; then
     rm -f -- "$partial"; partial=""
-    failures+=("$id: vzdump/encrypt/write failed (exit $rc): $(tr '\n' ' ' <"$tmpdir/vzdump.err" | cut -c1-200)")
+    failures+=("$id: vzdump/encrypt/write failed (exit $rc). Last lines of vzdump's log: $(tail -n 6 "$tmpdir/vzdump.err" | tr '\n' '|' | cut -c1-500)")
     return 1
   fi
   # the on-the-fly hash is written by a process substitution; wait for it

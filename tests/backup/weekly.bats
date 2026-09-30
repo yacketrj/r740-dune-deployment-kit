@@ -526,3 +526,47 @@ EOF
   [ "$status" -eq 0 ]
   grep -q -- '--bwlimit 40960' "$BATS_TEST_TMPDIR/vzdump.calls"
 }
+
+@test "a vzdump failure reports the END of its log (where the error is), not just the header" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+for i in \$(seq 1 30); do echo "INFO: routine line \$i" >&2; done
+echo "ERROR: the real cause is here" >&2
+exit 255
+EOF
+  echo 'BK_VMIDS="101"' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly
+  [ "$status" -eq 1 ]
+  grep -q "the real cause is here" "$BATS_TEST_TMPDIR/curl.args"
+  ! grep -q "routine line 1|" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+
+@test "vzdump itself runs with umask 022 (a container's unprivileged tar needs it) while the image stays mode 600" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+umask >"$BATS_TEST_TMPDIR/vzdump.umask"
+echo "$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
+head -c 3000 /dev/zero | tr '\\0' x
+EOF
+  echo 'BK_VMIDS="101"' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/vzdump.umask")" = "0022" ]
+  f="$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age)"
+  [ "$(stat -c %a "$f")" = "600" ]
+}
+
+
+@test "the image is written through dd in 4 MB blocks (sha256 of the stream still matches the file)" {
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  f="$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age)"
+  line="$(grep image_ok "$BK_STATE_DIR/audit.log" | tail -1)"
+  [ "$(printf '%s' "$line" | jq -r .sha256)" = "$(sha256sum "$f" | cut -d' ' -f1)" ]
+}
+
+@test "the weekly pipeline uses dd with a 4M block size and, on an SMB mount only, direct I/O" {
+  grep -q 'dd of="$partial" bs=4M iflag=fullblock' "$REPO_ROOT/scripts/backup-weekly.sh"
+  grep -q 'cifs | smb | smb2 | smb3) ddflags=(oflag=direct)' "$REPO_ROOT/scripts/backup-weekly.sh"
+}
