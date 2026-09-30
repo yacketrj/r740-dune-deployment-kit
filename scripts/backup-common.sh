@@ -21,9 +21,12 @@ bk_load_config() {
 # Strip anything secret-shaped from stdin (Strict Requirement 24).
 bk_redact() {
   sed -E \
-    -e 's#(https://discord(app)?\.com/api/webhooks/)[^[:space:]"]+#\1[REDACTED]#g' \
+    -e 's#(https://(ptb\.|canary\.)?discord(app)?\.com/api/webhooks/)[^[:space:]"]+#\1[REDACTED]#g' \
     -e 's#(AGE-SECRET-KEY-)[A-Z0-9]+#\1[REDACTED]#g' \
-    -e 's#((password|token|secret)[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#Ig'
+    -e 's#((password|token|secret|pass)[[:space:]]*[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#Ig' \
+    -e 's#"(password|token|secret)"[[:space:]]*:[[:space:]]*"[^"]*"#"\1":"[REDACTED]"#Ig' \
+    -e 's#(Authorization:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig' \
+    -e 's#(Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig'
 }
 
 bk_log() {
@@ -37,11 +40,10 @@ bk_notify() {
     bk_log "notify skipped (no webhook file)"
     return 0
   fi
-  url="$(cat "$BK_DISCORD_WEBHOOK_FILE")"
-  payload="$(jq -n --arg c "$msg" '{content:$c}')"
-  if ! curl -sS -m 10 -H 'Content-Type: application/json' -d "$payload" "$url" >/dev/null 2>&1; then
-    bk_log "notify failed (ignored)"
-  fi
+  url="$(cat "$BK_DISCORD_WEBHOOK_FILE")" || { bk_log "notify: could not read webhook file (ignored)"; return 0; }
+  msg="$(printf '%s' "$msg" | bk_redact)"
+  payload="$(jq -n --arg c "$msg" '{content:$c}')" || { bk_log "notify: could not build payload (ignored)"; return 0; }
+  printf 'url = "%s"\n' "$url" | curl -sS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1 || bk_log "notify failed (ignored)"
   return 0
 }
 
@@ -57,6 +59,10 @@ bk_lock() {
 
 bk_require_free_gb() {
   local dir="$1" need="$2" avail
+  if ! [[ "$need" =~ ^[0-9]+$ ]]; then
+    bk_log "invalid free space requirement: $need (must be numeric)"
+    return 1
+  fi
   avail="$(df -BG --output=avail "$dir" | tail -n 1 | tr -dc '0-9')"
   if [ -z "$avail" ] || [ "$avail" -lt "$need" ]; then
     bk_log "insufficient free space in $dir: ${avail:-?}GB free, ${need}GB required"
@@ -97,6 +103,14 @@ bk_prune_daily_monthly() {
   local dir="$1" prefix="$2" keep_daily="$3" keep_monthly="$4"
   local -a files=()
   local base ym months=" " mcount=0 n=0 keep_it f
+  if ! [[ "$keep_daily" =~ ^[0-9]+$ ]] || [ "$keep_daily" -lt 1 ]; then
+    bk_log "invalid keep_daily: $keep_daily (must be numeric and >= 1)"
+    return 1
+  fi
+  if ! [[ "$keep_monthly" =~ ^[0-9]+$ ]] || [ "$keep_monthly" -lt 1 ]; then
+    bk_log "invalid keep_monthly: $keep_monthly (must be numeric and >= 1)"
+    return 1
+  fi
   while IFS= read -r f; do
     files+=("$f")
   done < <(find "$dir" -maxdepth 1 -type f -name "${prefix}-[0-9]*.tar.age" -printf '%f\n' | sort -r)
@@ -119,6 +133,10 @@ bk_prune_daily_monthly() {
 # Keep the newest KEEP files whose name starts with PREFIX- (any extension).
 bk_prune_keep_newest() {
   local dir="$1" prefix="$2" keep="$3" f n=0
+  if ! [[ "$keep" =~ ^[0-9]+$ ]] || [ "$keep" -lt 1 ]; then
+    bk_log "invalid keep count: $keep (must be numeric and >= 1)"
+    return 1
+  fi
   while IFS= read -r f; do
     n=$((n + 1))
     [ "$n" -le "$keep" ] || rm -f -- "$dir/$f"

@@ -151,3 +151,156 @@ mk() { : >"$1/$2"; }
   age="$(bk_state_age_seconds weekly)"
   [ "$age" -gt 100000000 ]
 }
+
+# Finding 1: Prune functions validate retention counts
+@test "bk_prune_daily_monthly rejects empty keep_daily and keeps all files" {
+  d="$BATS_TEST_TMPDIR/p1"; mkdir -p "$d"
+  mk "$d" daily-20260901-040000.tar.age
+  mk "$d" daily-20260902-040000.tar.age
+  run bk_prune_daily_monthly "$d" daily "" 2
+  [ "$status" -eq 1 ]
+  [ -e "$d/daily-20260901-040000.tar.age" ]
+  [ -e "$d/daily-20260902-040000.tar.age" ]
+}
+
+@test "bk_prune_daily_monthly rejects non-numeric keep_daily and keeps all files" {
+  d="$BATS_TEST_TMPDIR/p2"; mkdir -p "$d"
+  mk "$d" daily-20260901-040000.tar.age
+  mk "$d" daily-20260902-040000.tar.age
+  run bk_prune_daily_monthly "$d" daily "abc" 2
+  [ "$status" -eq 1 ]
+  [ -e "$d/daily-20260901-040000.tar.age" ]
+  [ -e "$d/daily-20260902-040000.tar.age" ]
+}
+
+@test "bk_prune_daily_monthly rejects zero keep_daily and keeps all files" {
+  d="$BATS_TEST_TMPDIR/p3"; mkdir -p "$d"
+  mk "$d" daily-20260901-040000.tar.age
+  mk "$d" daily-20260902-040000.tar.age
+  run bk_prune_daily_monthly "$d" daily 0 2
+  [ "$status" -eq 1 ]
+  [ -e "$d/daily-20260901-040000.tar.age" ]
+  [ -e "$d/daily-20260902-040000.tar.age" ]
+}
+
+@test "bk_prune_daily_monthly strengthened: low retention with mixed files" {
+  d="$BATS_TEST_TMPDIR/p4"; mkdir -p "$d"
+  mk "$d" notes.txt
+  mk "$d" daily-20260901-040000.tar.age.partial
+  mk "$d" daily-20260901-040000.tar.age
+  mk "$d" daily-20260902-040000.tar.age
+  mk "$d" daily-20260903-040000.tar.age
+  bk_prune_daily_monthly "$d" daily 1 1
+  [ -e "$d/notes.txt" ]
+  [ -e "$d/daily-20260901-040000.tar.age.partial" ]
+  [ -e "$d/daily-20260903-040000.tar.age" ]
+  [ ! -e "$d/daily-20260901-040000.tar.age" ]
+  [ ! -e "$d/daily-20260902-040000.tar.age" ]
+}
+
+@test "bk_prune_keep_newest rejects empty keep and keeps all files" {
+  d="$BATS_TEST_TMPDIR/w1"; mkdir -p "$d"
+  mk "$d" vm101-20260901-020000.vma.zst.age
+  mk "$d" vm101-20260908-020000.vma.zst.age
+  run bk_prune_keep_newest "$d" vm101 ""
+  [ "$status" -eq 1 ]
+  [ -e "$d/vm101-20260901-020000.vma.zst.age" ]
+  [ -e "$d/vm101-20260908-020000.vma.zst.age" ]
+}
+
+@test "bk_prune_keep_newest rejects non-numeric keep and keeps all files" {
+  d="$BATS_TEST_TMPDIR/w2"; mkdir -p "$d"
+  mk "$d" vm101-20260901-020000.vma.zst.age
+  mk "$d" vm101-20260908-020000.vma.zst.age
+  run bk_prune_keep_newest "$d" vm101 "xyz"
+  [ "$status" -eq 1 ]
+  [ -e "$d/vm101-20260901-020000.vma.zst.age" ]
+  [ -e "$d/vm101-20260908-020000.vma.zst.age" ]
+}
+
+# Finding 2: bk_require_free_gb validates need parameter
+@test "bk_require_free_gb rejects empty need parameter" {
+  run bk_require_free_gb "$BATS_TEST_TMPDIR" ""
+  [ "$status" -eq 1 ]
+}
+
+@test "bk_require_free_gb rejects non-numeric need parameter" {
+  run bk_require_free_gb "$BATS_TEST_TMPDIR" "abc"
+  [ "$status" -eq 1 ]
+}
+
+# Finding 3: bk_notify survives under set -e when jq fails
+@test "bk_notify survives under set -e when jq fails" {
+  stub curl 'cat >/dev/null; exit 0'
+  stub jq 'exit 1'
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" run bash -c 'set -e; source "$REPO_ROOT/scripts/backup-common.sh"; bk_notify hi; echo survived'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"survived"* ]]
+}
+
+# Finding 4: bk_notify does not expose webhook URL on command line
+@test "bk_notify does not pass webhook URL as curl argument" {
+  stub curl 'cat >/dev/null; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
+  printf 'https://discord.com/api/webhooks/1/TOPSECRET99\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify "hello"
+  [[ ! "$(<"$BATS_TEST_TMPDIR/curl.args")" == *"TOPSECRET99"* ]]
+}
+
+# Finding 5: bk_notify redacts the message
+@test "bk_notify redacts secrets in the message" {
+  stub curl 'cat >/dev/null; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
+  stub jq 'printf "{\"content\":\"%s\"}" "$4"'
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify "password=hunter2 and token=secret123"
+  args="$(<"$BATS_TEST_TMPDIR/curl.args")"
+  [[ "$args" != *"hunter2"* ]]
+  [[ "$args" != *"secret123"* ]]
+  [[ "$args" == *"[REDACTED]"* ]]
+}
+
+# Finding 6: bk_redact handles additional secret shapes
+@test "bk_redact handles spaces around = in password/token/secret" {
+  run bash -c 'source "$REPO_ROOT/scripts/backup-common.sh"; printf "%s\n" \
+    "password = mypass" \
+    "token = mytoken" \
+    "secret = mysecret" \
+    "pass = mypass2" | bk_redact'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"mypass"* ]]
+  [[ "$output" != *"mytoken"* ]]
+  [[ "$output" != *"mysecret"* ]]
+  [[ "$output" != *"mypass2"* ]]
+  [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "bk_redact handles JSON-style secrets with closing quote before colon" {
+  run bash -c 'source "$REPO_ROOT/scripts/backup-common.sh"; printf "%s\n" \
+    "\"token\":\"abc123\"" \
+    "\"password\": \"secret\"" | bk_redact'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"abc123"* ]]
+  [[ "$output" != *"secret"* ]]
+  [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "bk_redact handles Authorization Bearer headers" {
+  run bash -c 'source "$REPO_ROOT/scripts/backup-common.sh"; printf "%s\n" \
+    "Authorization: Bearer mytoken123" \
+    "Bearer mytoken456" | bk_redact'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"mytoken123"* ]]
+  [[ "$output" != *"mytoken456"* ]]
+  [[ "$output" == *"Bearer"* ]]
+  [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "bk_redact handles additional Discord webhook hosts" {
+  run bash -c 'source "$REPO_ROOT/scripts/backup-common.sh"; printf "%s\n" \
+    "hook https://ptb.discord.com/api/webhooks/1/secret1" \
+    "hook https://canary.discord.com/api/webhooks/2/secret2" | bk_redact'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"secret1"* ]]
+  [[ "$output" != *"secret2"* ]]
+  [[ "$output" == *"[REDACTED]"* ]]
+}
