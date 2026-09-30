@@ -102,7 +102,24 @@ cmd_generate() {
       exit 1
       ;;
   esac
+  # The private key must not land beside the ciphertext it decrypts: refuse the backup
+  # share (and any network filesystem, whose snapshots would keep a "deleted" key).
   ensure_config
+  smb_mount="${BK_SMB_MOUNT:-$(cfg_get BK_SMB_MOUNT)}"
+  if [ -n "$smb_mount" ]; then
+    case "$(realpath -m -- "$handoff")" in
+      "$(realpath -m -- "$smb_mount")" | "$(realpath -m -- "$smb_mount")"/*)
+        echo "backup-key: the hand-off directory must not be on the backup share ($smb_mount)" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  case "$(stat -f -c %T -- "$handoff" 2>/dev/null || echo unknown)" in
+    cifs | smb | smb2 | nfs | fuse.sshfs)
+      echo "backup-key: the hand-off directory is on a network filesystem; use a removable disk or another local location" >&2
+      exit 1
+      ;;
+  esac
   existing="$(cfg_get BK_AGE_RECIPIENT)"
   case "$existing" in
     age1*)

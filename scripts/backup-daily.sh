@@ -143,13 +143,20 @@ fi
 # --- host config (daily only) ---------------------------------------------------
 if [ "$tier" = "daily" ]; then
   STAGE="host-config"
-  for p in ${BK_HOST_PATHS:-}; do
-    case "$p" in
-      root/.config* | /root/.config*) fail "BK_HOST_PATHS must not include /root/.config (it holds rclone and key material)" ;;
+  # Normalise every path (no glob expansion) before judging it: "root", "/root",
+  # "root/./.config" and "//root/.config" must not slip past a string match.
+  host_paths=()
+  read -r -a raw_paths <<<"${BK_HOST_PATHS:-}"
+  for p in "${raw_paths[@]}"; do
+    norm="$(realpath -m -- "/$p")"
+    case "$norm" in
+      / | /root | /root/.config | /root/.config/* | /root/.ssh | /root/.ssh/*)
+        fail "BK_HOST_PATHS entry '$p' resolves to $norm; it would archive rclone/key/ssh material or the whole disk"
+        ;;
     esac
+    host_paths+=("${norm#/}")
   done
-  # shellcheck disable=SC2086
-  if ! tar -C / -cf - ${BK_HOST_PATHS:-} 2>"$work/host.err" | tar -xf - -C "$work/bundle/host"; then
+  if ! tar -C / -cf - -- "${host_paths[@]}" 2>"$work/host.err" | tar -xf - -C "$work/bundle/host"; then
     fail "host config archive failed: $(tr '\n' ' ' <"$work/host.err" | cut -c1-200)"
   fi
   [ -n "$(find "$work/bundle/host" -type f -print -quit)" ] || fail "host config archive is empty (check BK_HOST_PATHS)"

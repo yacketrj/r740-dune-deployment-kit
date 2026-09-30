@@ -6,6 +6,7 @@ load helper
 setup() {
   setup_env
   GATE="$REPO_ROOT/scripts/dune-prod/r740-backup-gate.sh"
+  export R740_GATE_TEST_MODE=1
   export R740_GATE_REPO="$BATS_TEST_TMPDIR/repo"
   export R740_GATE_SIZE_FLOOR=100
   export R740_GATE_SETTLE_SECONDS=30
@@ -161,4 +162,18 @@ EOS
   env SSH_ORIGINAL_COMMAND="set 30 48" bash "$GATE" >/dev/null
   after="$(find "$R740_GATE_REPO" -type f -exec sha256sum {} + | sort)"
   [ "$before" = "$after" ]
+}
+
+@test "outside test mode the R740_GATE_* overrides are ignored (production cannot be steered by environment)" {
+  cat >"$BATS_TEST_TMPDIR/fake-dune" <<'EOF'
+#!/usr/bin/env bash
+echo ran >"$BATS_TEST_TMPDIR/fake-dune.ran"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/fake-dune"
+  unset R740_GATE_TEST_MODE
+  HOME="$BATS_TEST_TMPDIR/nohome" R740_GATE_DUNE="$BATS_TEST_TMPDIR/fake-dune" R740_GATE_SIZE_FLOOR=1 gate dump-now || true
+  [ ! -e "$BATS_TEST_TMPDIR/fake-dune.ran" ]
+  # the repo override is ignored too: nothing under the fake repo is read
+  run env -u R740_GATE_TEST_MODE HOME="$BATS_TEST_TMPDIR/nohome" R740_GATE_REPO="$R740_GATE_REPO" SSH_ORIGINAL_COMMAND="status" bash "$GATE"
+  [[ "$output" != *"auto-1"* ]]
 }

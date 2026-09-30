@@ -32,12 +32,24 @@
 # =============================================================================
 set -euo pipefail
 
-REPO="${R740_GATE_REPO:-$HOME/dune-awakening-selfhost-docker}"
+# The R740_GATE_* overrides exist only for the test suite. In production they are ignored
+# (an SSH client or a permissive AcceptEnv/PermitUserEnvironment must never be able to
+# swap the dune binary or weaken the freshness and size gates), and PATH is pinned.
+if [ "${R740_GATE_TEST_MODE:-}" = "1" ]; then
+  REPO="${R740_GATE_REPO:-$HOME/dune-awakening-selfhost-docker}"
+  DUNE_CMD="${R740_GATE_DUNE:-$REPO/runtime/scripts/dune}"
+  SIZE_FLOOR="${R740_GATE_SIZE_FLOOR:-1000000}"   # bytes
+  SETTLE_SECONDS="${R740_GATE_SETTLE_SECONDS:-30}"
+  NOW="${R740_GATE_NOW:-$(date +%s)}"
+else
+  export PATH=/usr/local/bin:/usr/bin:/bin
+  REPO="$HOME/dune-awakening-selfhost-docker"
+  DUNE_CMD="$REPO/runtime/scripts/dune"
+  SIZE_FLOOR=1000000   # bytes
+  SETTLE_SECONDS=30
+  NOW="$(date +%s)"
+fi
 DB_DIR="$REPO/runtime/backups/db"
-DUNE_CMD="${R740_GATE_DUNE:-$REPO/runtime/scripts/dune}"
-SIZE_FLOOR="${R740_GATE_SIZE_FLOOR:-1000000}"   # bytes
-SETTLE_SECONDS="${R740_GATE_SETTLE_SECONDS:-30}"
-NOW="${R740_GATE_NOW:-$(date +%s)}"
 
 GATE_TMP=""
 cleanup() { [ -z "$GATE_TMP" ] || rm -rf -- "$GATE_TMP"; }

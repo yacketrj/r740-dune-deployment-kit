@@ -63,7 +63,7 @@ stub_ssh_gate() {
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$BATS_TEST_TMPDIR/ssh.calls"
 req="\${@: -1}"
-SSH_ORIGINAL_COMMAND="\$req" R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 exec bash "$GATE"
+SSH_ORIGINAL_COMMAND="\$req" R740_GATE_TEST_MODE=1 R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 exec bash "$GATE"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/bin/ssh"
 }
@@ -166,7 +166,7 @@ decrypt_latest() { # prefix -> extracts into $BATS_TEST_TMPDIR/x
 @test "a truncated pull is rejected at stage verify" {
   cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOF
 #!/usr/bin/env bash
-SSH_ORIGINAL_COMMAND="\${@: -1}" R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 bash "$GATE" | head -c 700
+SSH_ORIGINAL_COMMAND="\${@: -1}" R740_GATE_TEST_MODE=1 R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 bash "$GATE" | head -c 700
 EOF
   run_daily --tier daily
   [ "$status" -eq 1 ]
@@ -180,7 +180,7 @@ tamper_pull() {
   cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOF
 #!/usr/bin/env bash
 req="\${@: -1}"
-SSH_ORIGINAL_COMMAND="\$req" R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 bash "$GATE" >"$BATS_TEST_TMPDIR/real.tar" || exit \$?
+SSH_ORIGINAL_COMMAND="\$req" R740_GATE_TEST_MODE=1 R740_GATE_REPO="$REPO" R740_GATE_SIZE_FLOOR=100 R740_GATE_SETTLE_SECONDS=5 bash "$GATE" >"$BATS_TEST_TMPDIR/real.tar" || exit \$?
 python3 - "$BATS_TEST_TMPDIR/real.tar" "$1" <<'PY'
 import sys, tarfile, io, os
 src, mode = sys.argv[1], sys.argv[2]
@@ -480,4 +480,15 @@ EOF
   run_daily --tier daily
   [ "$status" -eq 0 ]
   [ -z "$(find "$BK_SMB_MOUNT" -name '*.partial')" ]
+}
+
+@test "host path guard cannot be bypassed by dot segments, doubled slashes, bare root or /" {
+  for bad in "root" "/root" "root/./.config" "//root/.config/rclone" "root/.ssh" "/" "root/x/../.config"; do
+    sed -i "s#^BK_HOST_PATHS=.*#BK_HOST_PATHS=\"$bad\"#" "$BK_CONFIG_DIR/backup.env"
+    run_daily --tier daily
+    [ "$status" -eq 1 ]
+    grep -q "stage 'host-config'" "$BATS_TEST_TMPDIR/curl.args"
+    [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+    rm -f "$BATS_TEST_TMPDIR/curl.args"
+  done
 }

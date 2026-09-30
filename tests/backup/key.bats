@@ -145,3 +145,22 @@ gen() { run bash "$KEY" generate --handoff-dir "$HANDOFF"; }
   run bash "$KEY" verify
   [ "$status" -eq 2 ]
 }
+
+@test "generate refuses a hand-off directory on the backup share, and configures nothing" {
+  export BK_SMB_MOUNT="$BATS_TEST_TMPDIR/share"
+  mkdir -p "$BK_SMB_MOUNT/keyhandoff"
+  run bash "$KEY" generate --handoff-dir "$BK_SMB_MOUNT/keyhandoff"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"backup share"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  run grep -q '^BK_AGE_RECIPIENT=age1' "$BK_CONFIG_DIR/backup.env"
+  [ "$status" -ne 0 ]
+}
+
+@test "generate refuses a hand-off directory on any network filesystem" {
+  stub stat 'if [ "$1" = "-f" ]; then echo cifs; else exec /usr/bin/stat "$@"; fi'
+  run bash "$KEY" generate --handoff-dir "$HANDOFF"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"network filesystem"* ]]
+  [ -z "$(find "$HANDOFF" -type f)" ]
+}
