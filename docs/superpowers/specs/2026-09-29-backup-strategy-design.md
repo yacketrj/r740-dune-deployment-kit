@@ -1,6 +1,6 @@
 # R740 Backup Strategy — Design (v2, post Layer 1 audit)
 
-**Status:** v2, 2026-09-30. v1 was operator-approved 2026-09-29; the Layer 1 audit (`docs/superpowers/audits/2026-09-30-backup-layer1-audit.md`, themes T1–T12 = issues #121–#132) changed it substantially. **Seven items (D1–D7) need operator decisions; each states a recommended default.** Implementation of anything on the host is gated on those decisions and on the rollout gates in section 6.
+**Status:** v2, 2026-09-30. v1 was operator-approved 2026-09-29; the Layer 1 audit (`docs/superpowers/audits/2026-09-30-backup-layer1-audit.md`, themes T1–T12 = issues #121–#132) changed it substantially. **Operator accepted all recommended defaults for D1–D7 on 2026-09-30** ("go with the recommendations"); D3, D5 and D7 still need operator-supplied inputs (a dedicated Microsoft account, an external heartbeat account, and the desktop's network details) before the matching rollout steps. Implementation on the host is gated on the rollout gates in section 6.
 **Scope:** the R740 Proxmox host and guests: `dune-prod` (VM 101), `dune-dev` (VM 102), `acp-bot` (VM 103), `theparlor` (CT 104), plus the Kadir game database and the secrets that tie the battlegroup to its VM.
 **Tracking:** `Project-Arrakis/meta`#73 (context), issue #119 (this design), issues #121–#132 (audit themes).
 
@@ -26,7 +26,7 @@ Verified 2026-09-29/30: the host has one rotational 1.7TB disk behind a PERC H73
 ### Approved (v1)
 Tiered design; OneDrive via `rclone` crypt (never the OneDrive desktop client on Proxmox); second copy on the operator's always-on desktop over SMB; `age`; systemd timers on the host; Discord alerts.
 
-### Open — operator decisions (recommended default first)
+### Operator decisions — ACCEPTED 2026-09-30 (recommended defaults)
 | ID | Decision | Recommended default |
 |---|---|---|
 | D1 | Key custody and restore-drill procedure | Host holds only the age **public** key. Private key and rclone crypt password/salt live in the password manager plus a second escrow. Real-key restore drills are **assisted monthly**: the operator makes the key available for the drill, it is removed afterwards. |
