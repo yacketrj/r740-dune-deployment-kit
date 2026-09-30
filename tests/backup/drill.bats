@@ -67,6 +67,7 @@ case "\$1" in
   run) [ -f "\$S/run-fail" ] && exit 1
        name=""; while [ \$# -gt 0 ]; do [ "\$1" = "--name" ] && name="\$2"; shift; done; : >"\$S/container-\$name" ;;
   rm) name="\${@: -1}"; rm -f "\$S/container-\$name" ;;
+  logs) echo "database system is ready to accept connections"; [ -f "\$S/half-ready" ] || echo "database system is ready to accept connections" ;;
   exec)
     shift; [ "\$1" = "-i" ] && { inp=1; shift; }; name="\$1"; shift
     case "\$1" in
@@ -99,8 +100,9 @@ echo "\$*" >>"$T/qm.calls"
 F="$T/vmstate"; mkdir -p "\$F"
 case "\$1" in
   status) [ -f "\$F/scratch-exists" ]; exit \$? ;;
-  config) echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20" ;;
-  set) [ -f "$T/set-fail" ] && exit 1; exit 0 ;;
+  config) if [ -f "\$F/set-done" ]; then echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbrdrill"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
+          else echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
+  set) [ -f "$T/set-fail" ] && exit 1; : >"\$F/set-done"; exit 0 ;;
   start) [ -f "$T/start-fail" ] && exit 1; : >"\$F/started" ;;
   agent) [ -f "\$F/started" ] && [ ! -f "$T/noagent" ] ;;
   guest) if [ -f "$T/check-fail" ]; then echo '{"exitcode":1}'; else echo '{"exitcode":0,"out-data":"ok"}'; fi ;;
@@ -121,7 +123,10 @@ F="$T/vmstate"; mkdir -p "\$F"
 case "\$1" in
   status) if [ -f "\$F/ct-exists" ]; then echo "status: running"; exit 0; fi; exit 1 ;;
   restore) cat >"$T/restored.bin"; : >"\$F/ct-exists" ;;
-  set|start|stop) exit 0 ;;
+  config) if [ -f "\$F/set-done" ]; then echo "net0: name=eth0,bridge=vmbrdrill,ip=manual"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
+          else echo "net0: name=eth0,bridge=vmbr0"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
+  set) : >"\$F/set-done"; exit 0 ;;
+  start|stop) exit 0 ;;
   exec) [ -f "$T/check-fail" ] && exit 1; exit 0 ;;
   destroy) rm -f "\$F/ct-exists"; echo destroyed >>"$T/destroyed" ;;
 esac
@@ -284,6 +289,46 @@ EOF
   [[ "$runline" == *"postgres:17"* ]]
   dumpfile="$(ls "$T"/docker/dump-bk-drill-*)"
   [ "$(head -c 5 "$dumpfile")" = "PGDMP" ]
+}
+
+@test "db: restore mirrors production: dune role and database first, then a plain pg_restore into dune" {
+  make_set
+  drill db --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  c=$(grep -n 'create role dune' "$T/docker.calls" | head -1 | cut -d: -f1)
+  r=$(grep -n 'pg_restore' "$T/docker.calls" | head -1 | cut -d: -f1)
+  [ -n "$c" ] && [ -n "$r" ] && [ "$c" -lt "$r" ]
+  grep -q 'create database dune owner dune' "$T/docker.calls"
+  line=$(grep 'pg_restore' "$T/docker.calls" | head -1)
+  [[ "$line" == *"-d dune"* ]]
+  [[ "$line" != *"--create"* && "$line" != *"--exit-on-error"* ]]
+}
+
+@test "db: waits for the second ready message, so the init-server restart cannot break the restore" {
+  make_set
+  touch "$T/docker/half-ready"
+  BK_DRILL_READY_TRIES=2 BK_DRILL_READY_SLEEP=0 drill db --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "did not become ready" "$T/curl.args"
+  ! grep -q 'pg_restore' "$T/docker.calls"
+}
+
+@test "db: the throwaway container's tmpfs is size-bounded" {
+  make_set
+  BK_DRILL_TMPFS_SIZE=1g drill db --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [[ "$(grep '^run ' "$T/docker.calls")" == *"--tmpfs /var/lib/postgresql/data:rw,size=1g"* ]]
+}
+
+@test "db: restore errors are tolerated only up to BK_DRILL_MAX_RESTORE_ERRORS" {
+  make_set
+  touch "$T/docker/restore-fail"
+  BK_DRILL_MAX_RESTORE_ERRORS=1 drill db --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  rm -f "$T/curl.args"
+  BK_DRILL_MAX_RESTORE_ERRORS=0 drill db --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "pg_restore FAILED with 1 error" "$T/curl.args"
 }
 
 @test "db: only ever removes containers it created (bk-drill-<epoch>-<n>)" {
@@ -460,6 +505,31 @@ EOF
 # =====================================================================================
 # VM / CT drill
 # =====================================================================================
+
+@test "vm: every extra NIC is deleted and the drill refuses to boot if any NIC is still off the drill bridge" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  printf 'net1: virtio=11:22:33:44:55:66,bridge=vmbr1\nnet2: virtio=11:22:33:44:55:77,bridge=vmbr2\n' >"$T/vm.extra"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [[ "$(grep '^set 990' "$T/qm.calls")" == *"--delete affinity,numa0,numa1,net1,net2"* ]]
+  rm -f "$T/qm.calls" "$T/curl.args" "$T/vmstate/set-done"
+  touch "$T/keep-extra"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "outside vmbrdrill" "$T/curl.args"
+  ! grep -q '^start 990' "$T/qm.calls"
+  [ ! -e "$T/vmstate/scratch-exists" ]
+}
+
+@test "vm: a restored config with host-bound devices is refused before boot" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  printf 'hostpci0: 0000:01:00.0\n' >"$T/vm.extra"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "host-bound devices" "$T/curl.args"
+  ! grep -q '^start 990' "$T/qm.calls"
+  [ ! -e "$T/vmstate/scratch-exists" ]
+}
 
 @test "vm: restores to the scratch id, caps and isolates BEFORE boot, checks in-guest, records PASS, destroys everything" {
   make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA

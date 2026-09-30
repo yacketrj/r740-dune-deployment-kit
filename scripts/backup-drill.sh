@@ -212,22 +212,37 @@ drill_db() {
   [ -n "${BK_DRILL_PG_IMAGE:-}" ] || fail_drill "BK_DRILL_PG_IMAGE is not set (use the same Postgres image tag as prod)"
   [[ "${BK_DRILL_MIN_TABLES:-}" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_MIN_TABLES must be a number"
   [ -n "${BK_DRILL_ROW_CHECKS:-}" ] || fail_drill "no row-count assertions configured (BK_DRILL_ROW_CHECKS); a restore that asserts nothing proves nothing"
+  local mem="${BK_DRILL_MEMORY:-4g}" tmpfs="${BK_DRILL_TMPFS_SIZE:-2g}" max_err="${BK_DRILL_MAX_RESTORE_ERRORS:-0}"
+  [[ "$mem" =~ ^[0-9]+[mMgG]$ ]] || fail_drill "BK_DRILL_MEMORY must look like 4g"
+  [[ "$tmpfs" =~ ^[0-9]+[mMgG]$ ]] || fail_drill "BK_DRILL_TMPFS_SIZE must look like 2g"
+  [[ "$max_err" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_MAX_RESTORE_ERRORS must be a number"
 
   STAGE="start-container"
   name="bk-drill-$(date +%s)-$RANDOM"
   [[ "$name" =~ ^bk-drill-[0-9]+-[0-9]+$ ]] || fail_drill "internal: bad container name"
   container="$name"
-  remote "docker run -d --name $name --label r740-backup-drill=1 --network none --memory 4g --tmpfs /var/lib/postgresql/data -e POSTGRES_HOST_AUTH_METHOD=trust $BK_DRILL_PG_IMAGE" >/dev/null || fail_drill "could not start the throwaway Postgres container on $BK_DRILL_SSH"
+  remote "docker run -d --name $name --label r740-backup-drill=1 --network none --memory $mem --tmpfs /var/lib/postgresql/data:rw,size=$tmpfs -e POSTGRES_HOST_AUTH_METHOD=trust $BK_DRILL_PG_IMAGE" >/dev/null || fail_drill "could not start the throwaway Postgres container on $BK_DRILL_SSH"
   local tries="${BK_DRILL_READY_TRIES:-60}"
   for i in $(seq 1 "$tries"); do
-    if remote "docker exec $name pg_isready -U postgres" >/dev/null 2>&1; then break; fi
+    # The image starts a temporary init server, stops it, then starts the real one: wait for
+    # the SECOND "ready to accept connections", or the restore can hit the shutdown.
+    if remote "docker exec $name pg_isready -U postgres && [ \$(docker logs $name 2>&1 | grep -c 'ready to accept connections') -ge 2 ]" >/dev/null 2>&1; then break; fi
     [ "$i" -lt "$tries" ] || fail_drill "the throwaway Postgres did not become ready"
     sleep "${BK_DRILL_READY_SLEEP:-2}"
   done
 
   STAGE="restore"
   remote "docker exec -i $name sh -c 'cat > /tmp/drill.backup'" <"$dump" || fail_drill "could not copy the dump into the container"
-  remote "docker exec $name pg_restore -U postgres --no-owner --create --exit-on-error -d postgres /tmp/drill.backup" >/dev/null 2>"$ram/restore.err" || fail_drill "pg_restore FAILED: $(tr '\n' ' ' <"$ram/restore.err" | cut -c1-300)"
+  # Mirror the real restore (dune db restore): create the dune role and database, then a
+  # plain pg_restore into it. Errors are counted, not ignored: the default allows none.
+  remote "docker exec $name psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'create role dune login' -c 'create database dune owner dune'" >/dev/null 2>"$ram/restore.err" || fail_drill "could not create the dune role/database in the throwaway container: $(tr '\n' ' ' <"$ram/restore.err" | cut -c1-300)"
+  restore_rc=0
+  remote "docker exec $name pg_restore -U postgres -d dune /tmp/drill.backup" >/dev/null 2>"$ram/restore.err" || restore_rc=$?
+  errs="$(grep -c 'error:' "$ram/restore.err" || true)"
+  if [ "$restore_rc" -ne 0 ] && [ "$errs" -eq 0 ]; then errs=1; fi
+  if [ "$errs" -gt "$max_err" ]; then
+    fail_drill "pg_restore FAILED with $errs error(s) (allowed $max_err): $(tr '\n' ' ' <"$ram/restore.err" | cut -c1-300)"
+  fi
 
   STAGE="assert"
   tables="$(remote "docker exec $name psql -U postgres -d dune -Atc 'select count(*) from information_schema.tables where table_schema not in (\$\$pg_catalog\$\$,\$\$information_schema\$\$)'" 2>/dev/null || true)"
@@ -298,11 +313,21 @@ drill_vm() {
 
   STAGE="isolate"
   if [ "$kind" = "vm" ]; then
-    model="$(qm config "$scratch" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
+    conf="$(qm config "$scratch")" || fail_drill "could not read the scratch VM config"
+    # A copy of a guest must not fight the live one for a host device.
+    if printf '%s\n' "$conf" | grep -Eq '^(hostpci|usb|serial|parallel)[0-9]+:'; then
+      fail_drill "the restored config has host-bound devices (hostpci/usb/serial/parallel); refusing to boot a copy that could contend with the live guest"
+    fi
+    model="$(printf '%s\n' "$conf" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
     [ -n "$model" ] || model="virtio"
-    qm set "$scratch" --onboot 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 0 --delete affinity,numa0,numa1 --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
+    extra_nets="$(printf '%s\n' "$conf" | awk -F: '/^net[1-9][0-9]*:/ { print $1 }' | paste -sd, -)"
+    qm set "$scratch" --onboot 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 0 --delete "affinity,numa0,numa1${extra_nets:+,$extra_nets}" --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
+    stray="$(qm config "$scratch" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
+    [ -z "$stray" ] || fail_drill "scratch VM still has network device(s) outside $DRILL_BRIDGE ($stray); refusing to boot"
   else
     pct set "$scratch" --onboot 0 --memory "$mem" --cores "$cores" --net0 "name=eth0,bridge=$DRILL_BRIDGE,ip=manual" >/dev/null || fail_drill "could not isolate and cap the scratch CT"
+    stray="$(pct config "$scratch" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
+    [ -z "$stray" ] || fail_drill "scratch CT still has network device(s) outside $DRILL_BRIDGE ($stray); refusing to boot"
   fi
 
   STAGE="boot"
