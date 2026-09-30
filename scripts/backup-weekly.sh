@@ -238,8 +238,10 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   # ~115 MB/s (the 1 Gb line rate) while keeping dirty memory at ~3 MiB (without nocache a 4 GiB
   # write left 4 GiB dirty and stalled at the final flush). conv=fdatasync flushes at the end.
   # Do NOT add oflag=direct: it fails on the last (unaligned) block with EINVAL.
-  qopt=(--quiet 1)
-  if [ "$progress" -eq 1 ] || [ "$verbose" -eq 1 ]; then qopt=(); fi   # let vzdump log its progress
+  # vzdump always logs (to $tmpdir/vzdump.err, one line per 1%): the stall watchdog below needs it
+  # as a sign of life, because a long stretch of EMPTY disk produces no output at all (measured
+  # 2026-09-30 on a 300 GB guest: `write: 195 B/s` while reading at 150 MiB/s).
+  qopt=()
   log_off=0
   # vzdump alone runs with umask 022: under this script's umask 077 it creates a 0700 temp
   # directory that a container backup's unprivileged tar (lxc-usernsexec) cannot open
@@ -269,8 +271,8 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
         now_s="$(date +%s)"
         sz="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
         rate=$(((sz - prev_size) / progress_s)); prev_size="$sz"
-        pct="$(grep -oE 'INFO: [0-9]+% \([^)]*\)' "$tmpdir/vzdump.err" 2>/dev/null | tail -n 1 || true)"
-        bk_log "guest $id: $(hms $((now_s - g_start))) elapsed, $(hsize "$sz") written, $(hsize "$rate")/s${pct:+, vzdump ${pct#INFO: }}"
+        pct="$(grep -oE 'INFO: +[0-9]+% \([^)]*\)' "$tmpdir/vzdump.err" 2>/dev/null | tail -n 1 | sed -E 's/^INFO: +//' || true)"
+        bk_log "guest $id: $(hms $((now_s - g_start))) elapsed, $(hsize "$sz") written, $(hsize "$rate")/s${pct:+, vzdump $pct}"
       fi
       if [ "$verbose" -eq 1 ] && [ $((tick % progress_s)) -eq 0 ] && [ -s "$tmpdir/vzdump.err" ]; then
         tail -c +$((log_off + 1)) "$tmpdir/vzdump.err" 2>/dev/null | sed 's/^/    vzdump: /' | bk_redact || true
@@ -278,7 +280,9 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
       fi
     done
     kill -0 "$pipe_pid" 2>/dev/null || break
-    cur_size="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
+    # Alive = the output file grew OR vzdump logged something. A genuinely hung share stops both
+    # (vzdump blocks on its write), a long empty stretch of disk stops only the first.
+    cur_size="$(stat -c %s -- "$partial" 2>/dev/null || echo 0):$(stat -c %s -- "$tmpdir/vzdump.err" 2>/dev/null || echo 0)"
     if [ "$cur_size" != "$last_size" ]; then
       last_size="$cur_size"
       last_change="$(date +%s)"

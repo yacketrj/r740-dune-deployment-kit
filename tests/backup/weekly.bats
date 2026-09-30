@@ -470,7 +470,7 @@ slow_vzdump() {
   cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
-echo "INFO: 35% (7.0 GiB of 20.0 GiB) in 3s, read: 100 MiB/s" >&2
+echo "INFO:  35% (7.0 GiB of 20.0 GiB) in 3s, read: 100 MiB/s" >&2
 head -c 4000 /dev/zero | tr '\\0' x
 sleep 3
 head -c 4000 /dev/zero | tr '\\0' x
@@ -495,18 +495,18 @@ EOF
   run_weekly --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping 3 images"* ]]
-  [[ "$output" == *"vzdump: INFO: 35%"* ]]
+  [[ "$output" == *"vzdump: INFO:  35%"* ]]
   [[ "$output" == *"verifying the written file by reading it back"* ]]
 }
 
-@test "without either flag the output is brief (start and OK lines only) and vzdump stays quiet" {
+@test "without either flag the output is brief (start and OK lines only), yet vzdump still logs (the watchdog needs it)" {
   slow_vzdump
   run_weekly
   [ "$status" -eq 0 ]
   [[ "$output" == *"guest 101 (vm): starting"* ]]
   [[ "$output" == *"guest 101: OK"* ]]
   [[ "$output" != *"written"* ]]
-  grep -q -- '--quiet 1' "$BATS_TEST_TMPDIR/vzdump.calls"
+  ! grep -q -- '--quiet' "$BATS_TEST_TMPDIR/vzdump.calls"
 }
 
 @test "-p and -v are accepted as short forms" {
@@ -620,4 +620,33 @@ netfs_weekly_stubs() { # RES bytes reported by fincore
   grep -q 'iflag=direct' "$BATS_TEST_TMPDIR/ops"
   [[ "$output" == *"could not be dropped"* ]]
   ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+}
+
+
+@test "a long stretch with no OUTPUT is not a stall while vzdump keeps logging progress" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+head -c 4000 /dev/zero | tr '\\0' x
+for i in 1 2 3 4 5 6 7 8; do echo "INFO:  \$((i * 10))% (\$i GiB of 20.0 GiB) in \${i}s, read: 150 MiB/s, write: 195 B/s" >&2; sleep 1; done
+head -c 4000 /dev/zero | tr '\\0' x
+EOF
+  { echo 'BK_VMIDS="101"'; echo 'BK_WEEKLY_STALL_S=3'; echo 'BK_WEEKLY_STALL_POLL_S=1'; echo 'BK_WEEKLY_KILL_GRACE_S=1'; } >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly
+  [ "$status" -eq 0 ]
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+  [[ "$output" != *"stalled"* ]]
+}
+
+@test "--progress shows vzdump's percent even with the padded format vzdump really prints (INFO:  5%)" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "INFO:   5% (1.0 GiB of 20.0 GiB) in 2s, read: 150 MiB/s, write: 50 MiB/s" >&2
+head -c 4000 /dev/zero | tr '\\0' x
+sleep 3
+head -c 4000 /dev/zero | tr '\\0' x
+EOF
+  { echo 'BK_VMIDS="101"'; echo 'BK_WEEKLY_PROGRESS_S=1'; } >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly --progress
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"vzdump 5% (1.0 GiB of 20.0 GiB)"* ]]
 }
