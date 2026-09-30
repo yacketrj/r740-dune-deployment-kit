@@ -105,7 +105,7 @@ imgs() { ls "$BK_SMB_MOUNT"/vm/ 2>/dev/null; }
   [[ "$c" == *"--stdout"* ]]
   [[ "$c" == *"--compress zstd"* ]]
   [[ "$c" == *"--mode snapshot"* ]]
-  [[ "$c" == *"--bwlimit 51200"* ]]
+  [[ "$c" == *"--bwlimit 153600"* ]]
 }
 
 @test "outside the maintenance window nothing runs and one alert is raised" {
@@ -513,4 +513,16 @@ EOF
   run_weekly -p -v
   [ "$status" -eq 0 ]
   [[ "$output" == *"elapsed"* ]]
+}
+
+
+@test "the read-rate cap is configurable and defaults to 150 MiB/s" {
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  grep -q -- '--bwlimit 153600' "$BATS_TEST_TMPDIR/vzdump.calls"
+  rm -f "$BATS_TEST_TMPDIR/vzdump.calls"
+  echo 'BK_VZDUMP_BWLIMIT_KIB=40960' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly --only 101
+  [ "$status" -eq 0 ]
+  grep -q -- '--bwlimit 40960' "$BATS_TEST_TMPDIR/vzdump.calls"
 }

@@ -14,6 +14,12 @@
 # hard-stop timeout then comes from BK_WEEKLY_FORCE_MINUTES, default 180; tests
 # use BK_WEEKLY_FORCE_SECONDS and BK_MIN_REMAINING_S).
 #
+# Speed: vzdump's --bwlimit caps the rate it READS the source disk (uncompressed), not the output.
+# Measured on this host (2026-09-30): 50 MiB/s of reads gave only ~12 MB/s of compressed output
+# (about 4:1), i.e. ~1.7 h per 300 GB disk; uncapped it reaches ~250 MB/s of reads / 66 MB/s of
+# output, where zstd and the share's write speed become the limits. Default: 150 MiB/s
+# (BK_VZDUMP_BWLIMIT_KIB=153600); lower it if game latency suffers during a watched run.
+#
 # Options:  --progress (-p)    print a status line every BK_WEEKLY_PROGRESS_S (default 10)
 #                              seconds: bytes written, rate, elapsed, vzdump's own percent
 #           --verbose (-v)     also show vzdump's log lines and each stage (read-back etc.)
@@ -230,7 +236,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   (
     set -o pipefail
     timeout "$remaining" ionice -c3 nice -n 19 \
-      vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-51200}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
+      vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-153600}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
       | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") >"$partial"
   ) &
