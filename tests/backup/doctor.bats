@@ -290,3 +290,12 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"OneDrive not used"* ]]
 }
+
+@test "optional heartbeat: a configured-but-missing file is a warning, not a failure" {
+  echo 'BK_HEARTBEAT_REQUIRED=0' >>"$BK_CONFIG_DIR/backup.env"
+  rm -f "$T/deadman" "$T/deadman-check"
+  doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no external dead-man's-switch configured"* ]]
+  [[ "$output" != *"[FAIL] dead-man"* ]]
+}

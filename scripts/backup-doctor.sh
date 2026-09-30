@@ -46,11 +46,16 @@ cfgdir_mode="$(mode_of "$BK_CONFIG_DIR")"
 if [ "$cfgdir_mode" = "700" ]; then ok "config directory $BK_CONFIG_DIR (mode 700)"; else bad "config directory $BK_CONFIG_DIR has mode $cfgdir_mode (must be 700)"; fi
 check_private "$BK_CONFIG_DIR/backup.env" "config file"
 check_private "${BK_DISCORD_WEBHOOK_FILE:-}" "Discord webhook file"
-if [ "${BK_HEARTBEAT_REQUIRED:-1}" = "1" ] || [ -n "${BK_DEADMAN_URL_FILE:-}" ]; then
+if [ "${BK_HEARTBEAT_REQUIRED:-1}" = "1" ]; then
   check_private "${BK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (backup jobs)"
   check_private "${BK_CHECK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (alarm)"
 else
-  warn "no external dead-man's-switch configured (BK_HEARTBEAT_REQUIRED=0): if this host or the alarm dies, nothing will tell you; Discord alerts are the only signal"
+  # Optional: use it if it is there (and then it must be private), otherwise just say so.
+  hb_any=0
+  for hb in "${BK_DEADMAN_URL_FILE:-}" "${BK_CHECK_DEADMAN_URL_FILE:-}"; do
+    [ -n "$hb" ] && [ -e "$hb" ] && { check_private "$hb" "dead-man's-switch URL file"; hb_any=1; }
+  done
+  [ "$hb_any" -eq 1 ] || warn "no external dead-man's-switch configured (BK_HEARTBEAT_REQUIRED=0): if this host or the alarm dies, nothing will tell you; Discord alerts are the only signal"
 fi
 check_private "${BK_BACKUP_SSH_KEY:-}" "backup SSH key"
 check_private "${BK_KNOWN_HOSTS:-}" "pinned known_hosts"
