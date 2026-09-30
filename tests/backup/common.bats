@@ -636,3 +636,14 @@ PY
   run bk_prune_remote fake:r740/daily daily 1 1
   [ "$status" -ne 0 ]
 }
+
+@test "bk_tar_prefix_safe judges only the named prefixes" {
+  d="$BATS_TEST_TMPDIR/tp"; mkdir -p "$d/prod" "$d/host"; echo a >"$d/prod/f"; ln -s /etc "$d/host/link"
+  tar -C "$d" -cf "$BATS_TEST_TMPDIR/p1.tar" .
+  run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/p1.tar" ./prod; [ "$status" -eq 0 ]
+  ln -s /etc "$d/prod/link"
+  tar -C "$d" -cf "$BATS_TEST_TMPDIR/p2.tar" .
+  run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/p2.tar" ./prod; [ "$status" -ne 0 ]
+  run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/p2.tar" ./host; [ "$status" -ne 0 ]
+  run bk_tar_prefix_safe "$BATS_TEST_TMPDIR/missing.tar" ./prod; [ "$status" -ne 0 ]
+}

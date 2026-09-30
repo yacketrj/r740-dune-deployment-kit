@@ -154,7 +154,9 @@ EOF
 # make_set [dumpmagic] [manifest_ok=1] [with_bgid=1]: a real daily set encrypted to the test recipient.
 make_set() {
   local magic="${1:-PGDMP}" mok="${2:-1}" bgid="${3:-1}" b="$T/setbuild"
-  rm -rf "$b"; mkdir -p "$b/prod/runtime/backups/db" "$b/host"
+  rm -rf "$b"; mkdir -p "$b/prod/runtime/backups/db" "$b/host/etc/pve"
+  # the real host config holds symlinks (Proxmox /etc/pve) and regular files
+  ln -s nodes/local "$b/host/etc/pve/local"; echo hostconf >"$b/host/etc/hostname"
   { printf '%s' "$magic"; head -c 800 /dev/zero | tr '\0' 'x'; } >"$b/prod/runtime/backups/db/dump-1.backup"
   { [ "$bgid" = "1" ] && echo "battlegroup_id: sh-test"; echo "format: pg_dump_custom"; echo "backup_origin: automatic"; } >"$b/prod/runtime/backups/db/dump-1.backup.yaml"
   printf 'authoritative=runtime/backups/db/dump-1.backup\n' >"$b/prod/gate-manifest.txt"
@@ -743,4 +745,18 @@ EOF
   [ ! -e "$T/rclone.calls" ]
   [ -z "$(find "$BK_SMB_MOUNT/drill" -type f 2>/dev/null)" ]
   ram_empty
+}
+
+
+@test "db: a host-config symlink in the set is fine (only prod/ is extracted), a link inside prod/ is refused" {
+  make_set
+  drill db --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 0 ]
+  b="$T/setbuild"; ln -s /etc "$b/prod/evil-link"
+  tar -C "$b" -cf "$T/set.tar" .
+  age -r "$BK_AGE_RECIPIENT" -o "$BK_SMB_MOUNT/daily/daily-20260930-051500.tar.age" "$T/set.tar"
+  rm -f "$T/curl.args"
+  drill db --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  grep -q "non-regular member" "$T/curl.args"
 }

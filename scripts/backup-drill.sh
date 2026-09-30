@@ -134,11 +134,14 @@ open_daily_set() {
   age -d -i "$identity" -o "$ram/set.tar" "$path" 2>/dev/null || fail_drill "cannot decrypt $archive with the supplied key (wrong key or damaged archive)"
   tar -tf "$ram/set.tar" >"$ram/set.list" 2>/dev/null || fail_drill "decrypted archive is not a readable tar"
   if grep -qE '^/|(^|/)\.\.(/|$)' "$ram/set.list"; then fail_drill "archive contains an absolute or parent-relative path"; fi
-  bk_tar_members_safe "$ram/set.tar" || fail_drill "archive contains a link, device or other non-regular member"
+  # Only ./prod (the dump and its manifest) is extracted, and only after it is shown to hold
+  # nothing but regular files and directories. The host part of the set (whose /etc/pve is
+  # made of symlinks) is never unpacked by the drill.
+  bk_tar_prefix_safe "$ram/set.tar" ./prod ./MANIFEST.sha256 || fail_drill "the prod part of the archive contains a link, device or other non-regular member (or the archive is empty)"
   mkdir -p "$ram/set"
-  tar -xf "$ram/set.tar" -C "$ram/set" --no-same-owner --no-same-permissions || fail_drill "could not unpack the decrypted archive"
+  tar -xf "$ram/set.tar" -C "$ram/set" --no-same-owner --no-same-permissions ./prod ./MANIFEST.sha256 || fail_drill "could not unpack the prod part of the decrypted archive"
   STAGE="integrity"
-  ( cd "$ram/set" && sha256sum -c --quiet MANIFEST.sha256 >/dev/null 2>&1 ) || fail_drill "MANIFEST.sha256 does not verify: the archive contents are damaged"
+  ( cd "$ram/set" && grep -E '  \./prod/' MANIFEST.sha256 | sha256sum -c --quiet >/dev/null 2>&1 ) || fail_drill "MANIFEST.sha256 does not verify for the prod files: the archive contents are damaged"
   authoritative="$(awk -F= '$1 == "authoritative" { print $2; exit }' "$ram/set/prod/gate-manifest.txt" 2>/dev/null || true)"
   [ -n "$authoritative" ] || fail_drill "no authoritative dump named in the archive manifest"
   dump="$ram/set/prod/$authoritative"

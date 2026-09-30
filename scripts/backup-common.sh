@@ -302,6 +302,22 @@ bk_tar_members_safe() {
   return 0
 }
 
+# Like bk_tar_members_safe, but only for the named prefixes (e.g. "./prod"): every member
+# named exactly a prefix or under "<prefix>/" must be a regular file or a directory. Other
+# members (the host's /etc/pve is made of symlinks) are allowed here because the caller
+# never extracts them. Fails on an unreadable or empty archive.
+bk_tar_prefix_safe() { # tarfile prefix...
+  local tarfile="${1:?tar file}"
+  shift
+  tar -tvf "$tarfile" 2>/dev/null | awk -v prefixes="$*" '
+    BEGIN { n = split(prefixes, P, " ") }
+    { seen = 1; t = substr($0, 1, 1); name = $6
+      for (i = 7; i <= NF; i++) name = name " " $i
+      sub(/ -> .*/, "", name); sub(/ link to .*/, "", name)
+      for (j = 1; j <= n; j++) if (name == P[j] || index(name, P[j] "/") == 1) { if (t != "-" && t != "d") bad = 1 } }
+    END { exit (seen && !bad) ? 0 : 1 }'
+}
+
 # Append "sha256  size  name" for FILE to MANIFEST.
 bk_manifest_add() {
   local manifest="${1:?manifest}" f="${2:?file}" sum size
