@@ -760,3 +760,36 @@ EOF
   [ "$status" -eq 1 ]
   grep -q "non-regular member" "$T/curl.args"
 }
+
+
+# ---- abort handling ------------------------------------------------------------------------------
+
+hang_container_start() {
+  cat >"$T/bin/ssh" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$T/ssh.calls"
+case "\${@: -1}" in *"docker run"*) exec sleep 319 ;; esac
+exec bash -c "\${@: -1}"
+EOF
+  chmod +x "$T/bin/ssh"
+}
+teardown() { pkill -KILL -fx "sleep 319" 2>/dev/null || true; }
+
+@test "abort while the throwaway container is starting: children stopped, container removed, RAM wiped" {
+  make_set
+  hang_container_start
+  run run_with_signal INT 319 "$SCRIPT" db --identity "$BK_AGE_IDENTITY"
+  [[ "$output" == *"rc=130 leftover=0"* ]] || { printf '%s\n' "$output" >&3; false; }
+  grep -q "^rm -f bk-drill-" "$T/docker.calls"
+  [ -z "$(ls "$T/docker" | grep '^container-')" ]
+  ram_empty
+}
+
+@test "kill (SIGTERM) during the same stage cleans up the same way" {
+  make_set
+  hang_container_start
+  run run_with_signal TERM 319 "$SCRIPT" db --identity "$BK_AGE_IDENTITY"
+  [[ "$output" == *"rc=143 leftover=0"* ]] || { printf '%s\n' "$output" >&3; false; }
+  grep -q "^rm -f bk-drill-" "$T/docker.calls"
+  ram_empty
+}

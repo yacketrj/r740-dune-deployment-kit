@@ -64,6 +64,8 @@ EOF
   stub curl 'cat >>"$BATS_TEST_TMPDIR/curl.stdin"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
 }
 
+teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; }
+
 run_weekly() { run bash "$SCRIPT" "$@"; }
 imgs() { ls "$BK_SMB_MOUNT"/vm/ 2>/dev/null; }
 
@@ -391,4 +393,124 @@ EOF
   run_weekly
   [ "$status" -eq 0 ]
   [ -e "$BK_STATE_DIR/last-success-weekly" ]
+}
+
+# ---- abort handling: Ctrl-C, Ctrl-Z, kill, hangup must stop everything the job started ----
+
+# sigtest SIGNAL : run the weekly job with a vzdump that hangs, send SIGNAL to the script,
+# and print "rc=<exit code> leftover=<processes still running>".
+sigtest() {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
+echo first-bytes
+exec sleep 317
+EOF
+  { echo 'BK_VMIDS="101"'; echo 'BK_KILL_GRACE_S=3'; echo 'BK_WEEKLY_STALL_S=600'; } >>"$BK_CONFIG_DIR/backup.env"
+  python3 - "$SCRIPT" "$1" "$BATS_TEST_TMPDIR/sig.out" <<'PY'
+import os, signal, subprocess, sys, time
+script, name, outfile = sys.argv[1], sys.argv[2], sys.argv[3]
+sig = getattr(signal, "SIG" + name)
+def left():
+    return subprocess.run(["pgrep", "-fx", "sleep 317"], capture_output=True, text=True).stdout.split()
+def reap():
+    subprocess.run(["pkill", "-KILL", "-fx", "sleep 317"], capture_output=True)
+# output goes to a FILE: a surviving child holding a pipe open must never be able to hang the test
+with open(outfile, "w") as out:
+    p = subprocess.Popen(["bash", script], stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    for _ in range(200):
+        if left(): break
+        time.sleep(0.1)
+    else:
+        p.kill(); reap(); print("never started"); sys.exit(1)
+    time.sleep(1)
+    os.kill(p.pid, sig)
+    try:
+        rc = p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        p.kill(); reap(); print("script did not exit"); sys.exit(1)
+time.sleep(0.5)
+n = len(left())
+reap()
+print("rc=%d leftover=%d" % (rc, n))
+print(open(outfile).read())
+PY
+}
+
+@test "Ctrl-C stops the whole pipeline, removes the partial, exits 130 and raises no alert" {
+  run sigtest INT
+  [[ "$output" == *"rc=130 leftover=0"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  [ ! -e "$BATS_TEST_TMPDIR/curl.args" ] || ! grep -q "FAILED" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "Ctrl-Z does not suspend the job holding a snapshot: it aborts like Ctrl-C" {
+  run sigtest TSTP
+  [[ "$output" == *"rc=148 leftover=0"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+}
+
+@test "kill (SIGTERM) stops everything and raises an alert" {
+  run sigtest TERM
+  [[ "$output" == *"rc=143 leftover=0"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  grep -q "aborted by SIGTERM" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "hangup (closing the terminal) also stops everything" {
+  run sigtest HUP
+  [[ "$output" == *"rc=129 leftover=0"* ]]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+}
+
+# ---- progress output ---------------------------------------------------------------------------
+
+slow_vzdump() {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
+echo "INFO: 35% (7.0 GiB of 20.0 GiB) in 3s, read: 100 MiB/s" >&2
+head -c 4000 /dev/zero | tr '\\0' x
+sleep 3
+head -c 4000 /dev/zero | tr '\\0' x
+EOF
+  { echo 'BK_VMIDS="101"'; echo 'BK_WEEKLY_PROGRESS_S=1'; } >>"$BK_CONFIG_DIR/backup.env"
+}
+
+@test "--progress prints periodic status lines with bytes written, rate and vzdump's percent" {
+  slow_vzdump
+  run_weekly --progress
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"progress lines every 1s"* ]]
+  [[ "$output" == *"elapsed"*"written"*"/s"* ]]
+  [[ "$output" == *"35% (7.0 GiB of 20.0 GiB)"* ]]
+  [[ "$output" == *"reading it back"* ]]
+  [[ "$output" == *"guest 101: OK"* ]]
+  ! grep -q -- '--quiet' "$BATS_TEST_TMPDIR/vzdump.calls"
+}
+
+@test "--verbose shows each stage and vzdump's own log lines" {
+  slow_vzdump
+  run_weekly --verbose
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping 3 images"* ]]
+  [[ "$output" == *"vzdump: INFO: 35%"* ]]
+  [[ "$output" == *"verifying the written file by reading it back"* ]]
+}
+
+@test "without either flag the output is brief (start and OK lines only) and vzdump stays quiet" {
+  slow_vzdump
+  run_weekly
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"guest 101 (vm): starting"* ]]
+  [[ "$output" == *"guest 101: OK"* ]]
+  [[ "$output" != *"written"* ]]
+  grep -q -- '--quiet 1' "$BATS_TEST_TMPDIR/vzdump.calls"
+}
+
+@test "-p and -v are accepted as short forms" {
+  slow_vzdump
+  run_weekly -p -v
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"elapsed"* ]]
 }

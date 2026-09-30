@@ -110,6 +110,73 @@ bk_pool_headroom() { # min_free_gb [max_pct]
   return 0
 }
 
+# --- abort handling: nothing a job started may outlive it ---------------------------------
+# Kill PID and everything below it (children first), whatever process group they are in.
+bk_kill_tree() { # signal pid
+  local sig="$1" pid="$2" c
+  for c in $(pgrep -P "$pid" 2>/dev/null || true); do bk_kill_tree "$sig" "$c"; done
+  kill "-$sig" "$pid" 2>/dev/null || true
+}
+# Kill every child of the running script (the whole tree below the main shell).
+# NOTE: $BASHPID inside $( ) is the PID of the substitution's own subshell, so the script's PID
+# must be captured first, in the current shell (that mistake made this function kill nothing).
+bk_kill_children() { # signal
+  local sig="$1" me="$BASHPID" c
+  for c in $(pgrep -P "$me" 2>/dev/null || true); do bk_kill_tree "$sig" "$c"; done
+}
+# Run a command as a background job and wait for it. Bash runs a trap only AFTER the current
+# foreground command finishes, so a signal sent to a script blocked in a hung ssh/cp/rclone would be
+# deferred until that command ends. The `wait` builtin returns at once when a trapped signal
+# arrives, so a long command run through here can be aborted immediately (bk_abort then kills its
+# tree). stdin is kept (an async command would otherwise get /dev/null).
+bk_run_bg() { # command args...
+  local pid
+  "$@" <&0 &
+  pid=$!
+  wait "$pid"
+}
+
+# Every descendant of PID, parents before children (one per line).
+bk_tree_pids() { # pid
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null || true); do
+    echo "$c"
+    bk_tree_pids "$c"
+  done
+}
+# Abort handler: log, optional hook, then stop the whole tree of processes the script started.
+# The tree is snapshotted first so the grace wait only watches THOSE processes (not its own
+# `sleep`). Order: CONT (Ctrl-Z stops children; a stopped process cannot act on TERM), TERM, wait
+# up to BK_KILL_GRACE_S, KILL what is left, then `exit` so the script's own EXIT trap removes
+# partial files and scratch resources. Set BK_ABORT_HOOK to a function name to be called with the
+# signal name first.
+bk_abort() { # signal-name number
+  local sig="$1" n="$2" me="$BASHPID" kids k alive
+  trap '' INT TERM HUP QUIT TSTP
+  kids="$(bk_tree_pids "$me")"
+  bk_log "aborted by SIG$sig: stopping everything this job started"
+  if [ -n "${BK_ABORT_HOOK:-}" ]; then "$BK_ABORT_HOOK" "$sig" || true; fi
+  for k in $kids; do kill -CONT "$k" 2>/dev/null || true; done
+  for k in $kids; do kill -TERM "$k" 2>/dev/null || true; done
+  for _ in $(seq 1 "${BK_KILL_GRACE_S:-20}"); do
+    alive=0
+    for k in $kids; do if kill -0 "$k" 2>/dev/null; then alive=1; break; fi; done
+    [ "$alive" -eq 1 ] || break
+    sleep 1
+  done
+  for k in $kids; do kill -KILL "$k" 2>/dev/null || true; done
+  exit $((128 + n))
+}
+# Ctrl-C, kill, hangup, quit and Ctrl-Z (a SUSPENDED backup would hold its snapshot forever)
+# all abort the job. Call once near the top of a script that starts long-running children.
+bk_install_abort_traps() {
+  trap 'bk_abort INT 2' INT
+  trap 'bk_abort TERM 15' TERM
+  trap 'bk_abort HUP 1' HUP
+  trap 'bk_abort QUIT 3' QUIT
+  trap 'bk_abort TSTP 20' TSTP
+}
+
 # Refuse to write into an unmounted mountpoint (it would fill the local disk).
 bk_require_mounted() {
   if ! timeout 20 mountpoint -q "$1"; then

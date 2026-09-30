@@ -73,11 +73,14 @@ remote() {
     -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ClearAllForwardings=yes
     -o "UserKnownHostsFile=${BK_DRILL_KNOWN_HOSTS:?BK_DRILL_KNOWN_HOSTS must pin the dune-dev host key}")
   [ -z "${BK_DRILL_SSH_KEY:-}" ] || o+=(-i "$BK_DRILL_SSH_KEY")
-  ssh "${o[@]}" -- "${BK_DRILL_SSH:?}" "$@"
+  bk_run_bg ssh "${o[@]}" -- "${BK_DRILL_SSH:?}" "$@"   # background + wait: an abort is immediate
 }
 
 cleanup() {
   local rc=$?
+  trap - ERR   # returning rc (e.g. 130 after an abort) must not fire the error handler
+  # nothing this script started (ssh, pg_restore, qmrestore, a booting scratch VM) may outlive it
+  bk_kill_children TERM
   if [ -n "$container" ] && [[ "$container" =~ ^bk-drill-[0-9]+-[0-9]+$ ]]; then
     remote "docker rm -f $container" >/dev/null 2>&1 || true
   fi
@@ -97,6 +100,9 @@ cleanup() {
   return "$rc"
 }
 trap cleanup EXIT
+# Ctrl-C / Ctrl-Z / kill / hangup: stop the children, then the EXIT trap above removes the
+# throwaway container, the scratch VM or CT, the drill bridge and the decrypted RAM files.
+bk_install_abort_traps
 
 report_failure() {
   if [ "$alerted" -eq 0 ]; then
@@ -327,9 +333,12 @@ drill_vm() {
   scratch_kind="$kind"
   scratch_created=1
   if [ "$kind" = "vm" ]; then
-    age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 || fail_drill "restore of $image failed"
+    # background + wait so an abort during this (long) restore is immediate
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 ) &
+    wait "$!" || fail_drill "restore of $image failed"
   else
-    age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 || fail_drill "restore of $image failed"
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 ) &
+    wait "$!" || fail_drill "restore of $image failed"
   fi
 
   STAGE="isolate"

@@ -52,6 +52,9 @@ partial=""
 result_name=""
 
 cleanup() {
+  trap - ERR   # cleanup's own exit status (e.g. 130 after an abort) must not fire the error handler
+  # whatever way the script ends (error, exit, signal), nothing it started may keep running
+  bk_kill_children TERM
   [ -z "$partial" ] || rm -f -- "$partial"
   [ -z "$work" ] || bk_safe_rm_under "${BK_STAGE_DIR:-/nonexistent}" "$work" || true
 }
@@ -65,6 +68,15 @@ report_failure() { # message
     bk_dead_man_ping fail || true
   fi
 }
+
+# Ctrl-C / Ctrl-Z / kill / hangup: stop whatever the job started (ssh pull, cp, rclone), remove
+# partial files, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or timeout is.
+abort_hook() {
+  case "$1" in INT | TSTP) ;; *) report_failure "aborted by SIG$1 (timeout, shutdown or kill) at stage $STAGE" ;; esac
+}
+# shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
+BK_ABORT_HOOK=abort_hook
+bk_install_abort_traps
 
 # One alert only: subshells (command substitutions) inherit this trap under -E,
 # but only the main shell reports.
@@ -119,7 +131,7 @@ mkdir -p "$work/bundle/prod" "$work/bundle/host"
 # --- pull ---------------------------------------------------------------------
 STAGE="pull"
 bk_ssh_opts_init
-if ! ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$gate_verb $gate_max_age $gate_since" >"$work/pull.tar" 2>"$work/pull.err"; then
+if ! bk_run_bg ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$gate_verb $gate_max_age $gate_since" >"$work/pull.tar" 2>"$work/pull.err"; then
   fail "pull from $BK_BACKUP_SSH failed: $(tr '\n' ' ' <"$work/pull.err" | cut -c1-300)"
 fi
 
@@ -191,9 +203,9 @@ if [ -z "$smb_err" ]; then
     # a killed earlier run can leave a partial; we hold the lock, so none is live
     timeout 60 find "$BK_SMB_MOUNT/$prefix" -maxdepth 1 -type f -name '*.partial' -delete 2>/dev/null || true
     partial="$BK_SMB_MOUNT/$prefix/$name.partial"
-    if ! timeout "$smb_timeout" cp -f -- "$work/$name" "$partial"; then
+    if ! bk_run_bg timeout "$smb_timeout" cp -f -- "$work/$name" "$partial"; then
       smb_err="copy to the SMB share failed"
-    elif ! timeout "$smb_timeout" bash -c '. "$1"; bk_verify_copy "$2" "$3"' _ "$here/backup-common.sh" "$work/$name" "$partial"; then
+    elif ! bk_run_bg timeout "$smb_timeout" bash -c '. "$1"; bk_verify_copy "$2" "$3"' _ "$here/backup-common.sh" "$work/$name" "$partial"; then
       smb_err="SMB copy did not verify bit-exactly"
     elif ! mv -f -- "$partial" "$BK_SMB_MOUNT/$prefix/$name"; then
       smb_err="could not finalise the SMB copy"
@@ -213,9 +225,9 @@ if [ "$remote_on" -eq 1 ]; then
   # --- OneDrive ---------------------------------------------------------------------
   STAGE="upload"
   rclone_timeout="${BK_RCLONE_TIMEOUT_S:-5400}"
-  timeout "$rclone_timeout" rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" --transfers 2 --timeout 120s --contimeout 30s --bwlimit "${BK_RCLONE_BWLIMIT:-8M}" || fail "upload to $BK_RCLONE_REMOTE failed"
+  bk_run_bg timeout "$rclone_timeout" rclone copyto "$work/$name" "$BK_RCLONE_REMOTE/$prefix/$name" --transfers 2 --timeout 120s --contimeout 30s --bwlimit "${BK_RCLONE_BWLIMIT:-8M}" || fail "upload to $BK_RCLONE_REMOTE failed"
   STAGE="verify-transfer"
-  timeout "$rclone_timeout" rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
+  bk_run_bg timeout "$rclone_timeout" rclone "${BK_RCLONE_CHECK_CMD:-cryptcheck}" --one-way --include "/$name" "$work" "$BK_RCLONE_REMOTE/$prefix" || fail "the uploaded copy does not match (rclone ${BK_RCLONE_CHECK_CMD:-cryptcheck})"
 fi
 
 # --- prune: each target only after ITS OWN new copy is verified ----------------------

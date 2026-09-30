@@ -60,3 +60,40 @@ make_age_key() {
   BK_AGE_RECIPIENT="$(age-keygen -y "$BK_AGE_IDENTITY")"
   export BK_AGE_IDENTITY BK_AGE_RECIPIENT
 }
+
+# run_with_signal SIGNAL MARKER SCRIPT [ARGS...]
+# Start `bash SCRIPT ARGS` (with default signal handling, unlike a bats background job), wait until a
+# process whose whole command line is "sleep MARKER" exists (the hung stub), send SIGNAL to the script,
+# then print "rc=<exit code> leftover=<number of sleep MARKER still running>" and the script's output.
+# The output goes to a file, so a surviving child can never hang the test; leftovers are force-killed.
+run_with_signal() {
+  python3 - "$@" <<'PY'
+import os, signal, subprocess, sys, tempfile, time
+name, marker, script, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+sig = getattr(signal, "SIG" + name)
+pat = "sleep " + marker
+def left():
+    return subprocess.run(["pgrep", "-fx", pat], capture_output=True, text=True).stdout.split()
+def reap():
+    subprocess.run(["pkill", "-KILL", "-fx", pat], capture_output=True)
+outfile = os.path.join(os.environ["BATS_TEST_TMPDIR"], "sig.out")
+with open(outfile, "w") as out:
+    p = subprocess.Popen(["bash", script] + args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    for _ in range(300):
+        if left(): break
+        time.sleep(0.1)
+    else:
+        p.kill(); reap(); print("never started"); print(open(outfile).read()); sys.exit(1)
+    time.sleep(1)
+    os.kill(p.pid, sig)
+    try:
+        rc = p.wait(timeout=40)
+    except subprocess.TimeoutExpired:
+        p.kill(); reap(); print("script did not exit"); sys.exit(1)
+time.sleep(0.5)
+n = len(left())
+reap()
+print("rc=%d leftover=%d" % (rc, n))
+print(open(outfile).read())
+PY
+}

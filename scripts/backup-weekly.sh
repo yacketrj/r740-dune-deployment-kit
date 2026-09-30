@@ -14,7 +14,11 @@
 # hard-stop timeout then comes from BK_WEEKLY_FORCE_MINUTES, default 180; tests
 # use BK_WEEKLY_FORCE_SECONDS and BK_MIN_REMAINING_S).
 #
-# Options:  --only "104 103"   image just these guests (each must be in BK_VMIDS); used to
+# Options:  --progress (-p)    print a status line every BK_WEEKLY_PROGRESS_S (default 10)
+#                              seconds: bytes written, rate, elapsed, vzdump's own percent
+#           --verbose (-v)     also show vzdump's log lines and each stage (read-back etc.)
+#                              (use both together for the full picture)
+#           --only "104 103"   image just these guests (each must be in BK_VMIDS); used to
 #                              stage a first run. A partial run never records weekly
 #                              success and never sends the heartbeat.
 # =============================================================================
@@ -24,10 +28,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/backup-common.sh"
 
 only=""
+progress=0
+verbose=0
+usage() { echo "usage: $0 [--progress] [--verbose] [--only \"ID ID\"]" >&2; exit 2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --only) only="${2:-}"; [ -n "$only" ] || { echo "usage: $0 [--only \"ID ID\"]" >&2; exit 2; }; shift 2 ;;
-    *) echo "usage: $0 [--only \"ID ID\"]" >&2; exit 2 ;;
+    --only) only="${2:-}"; [ -n "$only" ] || usage; shift 2 ;;
+    --progress | -p) progress=1; shift ;;
+    --verbose | -v) verbose=1; shift ;;
+    *) usage ;;
   esac
 done
 
@@ -46,13 +55,16 @@ if [ -n "$only" ]; then
 fi
 
 STAGE="preflight"
-RERUN="bash $here/backup-weekly.sh${only:+ --only \"$only\"}"
+RERUN="bash $here/backup-weekly.sh --progress${only:+ --only \"$only\"}"
 alerted=0
 main_pid=$$
 partial=""
 tmpdir=""
 
 cleanup() {
+  trap - ERR   # cleanup's own exit status (e.g. 130 after an abort) must not fire the error handler
+  # whatever way the script ends (error, exit, signal), nothing it started may keep running
+  bk_kill_children TERM
   [ -z "$partial" ] || rm -f -- "$partial"
   [ -z "$tmpdir" ] || bk_safe_rm_under "${TMPDIR:-/var/tmp}" "$tmpdir" || true
 }
@@ -74,6 +86,16 @@ on_err() {
 }
 trap 'on_err $LINENO' ERR
 fail() { bk_log "FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
+
+# Ctrl-C / Ctrl-Z / kill / hangup: stop the whole pipeline (releasing the guest backup), remove
+# the partial file, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or a
+# timeout from outside is.
+abort_hook() {
+  case "$1" in INT | TSTP) ;; *) report_failure "aborted by SIG$1 (timeout, shutdown or kill) while imaging $STAGE" ;; esac
+}
+# shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
+BK_ABORT_HOOK=abort_hook
+bk_install_abort_traps
 
 bk_lock backup-weekly || exit 1
 
@@ -127,13 +149,42 @@ stop_pipeline() { # signal pid
   kill "-$sig" -- "-$pid" 2>/dev/null || true
 }
 
+hsize() { numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
+hms() { printf '%02d:%02d:%02d' $(($1 / 3600)) $(($1 % 3600 / 60)) $(($1 % 60)); }
+progress_s="${BK_WEEKLY_PROGRESS_S:-10}"
+
+# sha256 of a file just written, printing progress while it reads (a 100 GB read-back is silent
+# for a long time otherwise). Reads /proc/<pid>/io for bytes read so far.
+readback_sha() { # file total_bytes
+  local f="$1" total="$2" pid t0 n r
+  # Always a background job + wait, so an abort during the (long) read-back is immediate.
+  sha256sum -- "$f" >"$tmpdir/post.sha" &
+  pid=$!
+  if [ "$progress" -eq 0 ]; then
+    wait "$pid" || true
+    cut -d' ' -f1 <"$tmpdir/post.sha"
+    return
+  fi
+  t0="$(date +%s)"
+  while kill -0 "$pid" 2>/dev/null; do
+    for _ in $(seq 1 "$progress_s"); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$pid" 2>/dev/null || break
+    r="$(awk '/^rchar:/ { print $2 }' "/proc/$pid/io" 2>/dev/null || echo 0)"
+    n=$(($(date +%s) - t0))
+    bk_log "guest $id: read-back $(hms "$n") elapsed, $(hsize "${r:-0}") of $(hsize "$total") ($((${r:-0} * 100 / (total > 0 ? total : 1)))%)" >&2
+  done
+  wait "$pid" || true
+  cut -d' ' -f1 <"$tmpdir/post.sha"
+}
+
 gate_ssh() { # request
   bk_ssh_opts_init
-  timeout "${BK_GATE_TIMEOUT_S:-900}" ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$1"
+  bk_run_bg timeout "${BK_GATE_TIMEOUT_S:-900}" ssh "${BK_SSH_OPTS[@]}" -- "$BK_BACKUP_SSH" "$1"
 }
 
 failures=()
 successes=()
+pipe_pid=""
 
 backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   local id="$1" kind ext keep_var keep out final pre_sha post_sha bytes remaining rc
@@ -161,6 +212,10 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
 
   out="$BK_SMB_MOUNT/vm/${kind}${id}-${stamp}.${ext}.age"
   partial="$out.partial"
+  g_start="$(date +%s)"
+  bk_log "guest $id ($kind): starting -> $(basename "$out")"
+  [ "$progress" -eq 0 ] || bk_log "guest $id: progress lines every ${progress_s}s (the first appears after that long)"
+  [ "$verbose" -eq 0 ] || bk_log "guest $id: keeping $keep images; window ends in $(hms "$remaining"); a snapshot backup runs while the guest stays up"
   rm -f -- "$partial" "$tmpdir/sha.pre"
   bk_require_mounted "$BK_SMB_MOUNT" || { failures+=("$id: SMB share dropped"); partial=""; return 1; }
 
@@ -168,21 +223,39 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   # allowed to hold the live guest: the pipeline runs as its own process group and a
   # watchdog aborts it when the output stops growing.
   stalled=0
+  qopt=(--quiet 1)
+  if [ "$progress" -eq 1 ] || [ "$verbose" -eq 1 ]; then qopt=(); fi   # let vzdump log its progress
+  log_off=0
   set -m
   (
     set -o pipefail
     timeout "$remaining" ionice -c3 nice -n 19 \
-      vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-51200}" --quiet 1 2>"$tmpdir/vzdump.err" \
+      vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-51200}" "${qopt[@]}" 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
       | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") >"$partial"
   ) &
   pipe_pid=$!
   last_size=-1
   last_change="$(date +%s)"
+  tick=0
+  prev_size=0
+  poll="${BK_WEEKLY_STALL_POLL_S:-15}"
   while kill -0 "$pipe_pid" 2>/dev/null; do
-    for _ in $(seq 1 "${BK_WEEKLY_STALL_POLL_S:-15}"); do
+    for _ in $(seq 1 "$poll"); do
       kill -0 "$pipe_pid" 2>/dev/null || break
       sleep 1
+      tick=$((tick + 1))
+      if [ "$progress" -eq 1 ] && [ $((tick % progress_s)) -eq 0 ]; then
+        now_s="$(date +%s)"
+        sz="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
+        rate=$(((sz - prev_size) / progress_s)); prev_size="$sz"
+        pct="$(grep -oE 'INFO: [0-9]+% \([^)]*\)' "$tmpdir/vzdump.err" 2>/dev/null | tail -n 1 || true)"
+        bk_log "guest $id: $(hms $((now_s - g_start))) elapsed, $(hsize "$sz") written, $(hsize "$rate")/s${pct:+, vzdump ${pct#INFO: }}"
+      fi
+      if [ "$verbose" -eq 1 ] && [ $((tick % progress_s)) -eq 0 ] && [ -s "$tmpdir/vzdump.err" ]; then
+        tail -c +$((log_off + 1)) "$tmpdir/vzdump.err" 2>/dev/null | sed 's/^/    vzdump: /' | bk_redact || true
+        log_off="$(stat -c %s -- "$tmpdir/vzdump.err" 2>/dev/null || echo "$log_off")"
+      fi
     done
     kill -0 "$pipe_pid" 2>/dev/null || break
     cur_size="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
@@ -198,6 +271,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
     fi
   done
   if wait "$pipe_pid" 2>/dev/null; then rc=0; else rc=$?; fi
+  pipe_pid=""
   set +m
   if [ "$stalled" -eq 1 ]; then
     rm -f -- "$partial"; partial=""
@@ -224,7 +298,8 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
     return 1
   fi
   if [ "${BK_WEEKLY_READBACK:-1}" = "1" ]; then
-    post_sha="$(sha256sum -- "$partial" | cut -d' ' -f1)"
+    [ "$verbose" -eq 0 ] && [ "$progress" -eq 0 ] || bk_log "guest $id: verifying the written file by reading it back ($(hsize "$bytes")); this takes about as long as the write"
+    post_sha="$(readback_sha "$partial" "$bytes")"
     if [ "$post_sha" != "$pre_sha" ]; then
       rm -f -- "$partial"; partial=""
       failures+=("$id: read-back hash differs from the streamed hash")
@@ -237,6 +312,8 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   bk_prune_keep_newest "$BK_SMB_MOUNT/vm" "${kind}${id}" "$keep" || bk_log "prune for $id failed (ignored)"
   bk_audit_log image_ok "guest=$id" "file=$(basename "$final")" "sha256=$pre_sha" "size=$bytes" "kind=$kind"
   successes+=("$id")
+  g_secs=$(($(date +%s) - g_start))
+  bk_log "guest $id: OK, $(hsize "$bytes") in $(hms "$g_secs") ($(hsize $((bytes / (g_secs > 0 ? g_secs : 1))))/s average)"
   return 0
 }
 

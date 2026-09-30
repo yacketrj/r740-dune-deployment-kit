@@ -539,3 +539,39 @@ no_remote() { sed -i 's#^BK_RCLONE_REMOTE=.*#BK_RCLONE_REMOTE=#' "$BK_CONFIG_DIR
   [ ! -e "$BK_SMB_MOUNT/daily/daily-20260101-040000.tar.age" ]
   [ -e "$BK_SMB_MOUNT/daily/daily-20260131-040000.tar.age" ]
 }
+
+
+# ---- abort handling ------------------------------------------------------------------------------
+
+hang_pull() {
+  cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOF
+#!/usr/bin/env bash
+exec sleep 318
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/ssh"
+}
+teardown() { pkill -KILL -fx "sleep 318" 2>/dev/null || true; }
+
+@test "Ctrl-C during the pull stops the ssh child, cleans the staging dir, writes nothing, records no success, no alert" {
+  hang_pull
+  run run_with_signal INT 318 "$SCRIPT" --tier daily
+  [[ "$output" == *"rc=130 leftover=0"* ]]
+  [ -z "$(ls -A "$BK_STAGE_DIR" 2>/dev/null)" ]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+  [ ! -e "$BATS_TEST_TMPDIR/curl.args" ] || ! grep -q FAILED "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "kill (SIGTERM) during the pull stops everything and raises an alert" {
+  hang_pull
+  run run_with_signal TERM 318 "$SCRIPT" --tier daily
+  [[ "$output" == *"rc=143 leftover=0"* ]]
+  grep -q "aborted by SIGTERM" "$BATS_TEST_TMPDIR/curl.args"
+  [ -z "$(ls -A "$BK_STAGE_DIR" 2>/dev/null)" ]
+}
+
+@test "Ctrl-Z does not suspend the daily job: it aborts" {
+  hang_pull
+  run run_with_signal TSTP 318 "$SCRIPT" --tier daily
+  [[ "$output" == *"rc=148 leftover=0"* ]]
+}

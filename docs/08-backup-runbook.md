@@ -37,11 +37,15 @@ Where things live on the hypervisor:
 | `scripts/backup-key.sh generate --handoff-dir DIR` | One-time key creation (private key handed off, never stored on the host or the share). |
 | `scripts/backup-key.sh verify --identity FILE` | Prove the escrowed key really decrypts. |
 | `scripts/backup-daily.sh --tier db\|daily` | Run a tier by hand. |
-| `scripts/backup-weekly.sh` | Run the weekly images by hand (`BK_WEEKLY_FORCE=1 scripts/backup-weekly.sh` for a watched run outside the window). |
+| `scripts/backup-weekly.sh [--progress] [--verbose] [--only "ID ID"]` | Run the weekly images by hand (`BK_WEEKLY_FORCE=1` for a watched run outside the window). **Use `--progress` (`-p`) for a manual run: it prints a status line every 10 seconds (time elapsed, bytes written, speed, vzdump's own percent), so a long image never looks hung.** `--verbose` (`-v`) adds vzdump's log lines and each stage; `--only` images just the named guests. |
 | `scripts/backup-check.sh` | Run the alarm by hand. |
 | `scripts/backup-drill.sh pipeline\|db\|vm` | Restore drills (section 7). |
 | `scripts/backup-install-timers.sh [--no-enable]` | Write and enable the timers. |
 | `scripts/run-backup-tests.sh` | Run the test suite in the read-only sandbox (never run tests any other way on the hypervisor). |
+
+### Stopping a job safely
+
+Ctrl-C, Ctrl-Z, a `kill`, or closing the terminal **stops the whole job and everything it started** (the ssh pull, the `vzdump` image pipeline, a scratch VM or container in a drill), removes its partial file and exits. Ctrl-Z does not suspend a job: a suspended image would keep holding its snapshot. A deliberate Ctrl-C or Ctrl-Z raises no alert; a `kill` or timeout from outside does. Never stop a run with `kill -9` on a single process: use Ctrl-C, or `kill <PID of the backup-*.sh script>`.
 
 ## 3. Definition of P1
 
