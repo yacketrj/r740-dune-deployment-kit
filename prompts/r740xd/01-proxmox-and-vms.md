@@ -4,8 +4,9 @@
 40 vCPU/152GB, dune-dev at 20 vCPU/50GB, fresh "Tabr Tau" battlegroups
 with new Funcom tokens) reflects the original stand-up plan, already
 executed and since revised multiple times — the current real state
-involves dune-prod split into dune-prod1/dune-prod2, different sizing
-throughout, and the actual live battlegroup titled "Chronicles of
+is a single dune-prod again (60 vCPU/192GB, after a short-lived
+dune-prod1/dune-prod2 split reverted 2026-09-29), dune-dev at 8 vCPU/26GB,
+and the actual live battlegroup titled "Chronicles of
 Kanly"/Sietch Kadir, not "Tabr Tau". See the top-of-`README.md`
 correction and `Project-Arrakis/meta`#73. The mechanical/procedural
 content below (NUMA-affinity detection, VLAN-aware bridge setup, the

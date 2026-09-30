@@ -5,8 +5,10 @@ July 2026 stand-up plan as a forward-looking runbook. The stand-up
 already happened, and real execution diverged from several specifics
 below — see the top-of-`README.md` correction for the full list (bot
 ended up on its own VM not dune-prod; VM sizing revised multiple times,
-dune-prod later split into dune-prod1/dune-prod2 per
-`Project-Arrakis/meta`#73; the real battlegroup is "Chronicles of
+dune-prod was split into dune-prod1/dune-prod2 per
+`Project-Arrakis/meta`#73 and then **reverted to a single dune-prod on
+2026-09-29** — current sizing is in the table added below the original
+one; the real battlegroup is "Chronicles of
 Kanly"/Sietch Kadir, not the "Tabr Tau" fresh-battlegroup plan below).
 Treat this file as a historical record of the original plan, not a
 description of current state — check `Project-Arrakis/meta`'s README
@@ -72,6 +74,20 @@ the corrected, verified assignment.
 | dune-prod | 40 (all of socket 0 — CPUs 0,2,4,...,78) | 152 GB | 300 GB | Socket 0 | 2 Sietch (40p/ea), 4 Deep Desert, Overmap, dynamics |
 | dune-dev | 20 (first 20 of socket 1 — CPUs 1,3,5,...,39) | 50 GB | 300 GB | Socket 1 | 1 Sietch, 1 Deep Desert, Overmap, dynamics |
 | _free_ | 20 (remaining socket 1 — CPUs 41,43,...,79) | 54 GB | — | Socket 1 | Proxmox overhead + future expansion |
+
+**Current state (2026-09-29, verified live; the table above is the
+original plan, kept as history):**
+
+| VM | vCPU | RAM | Disk | CPU pinning | Layout |
+|---|---|---|---|---|---|
+| dune-prod (VM 101, `192.168.20.10`) | 60 (2 NUMA nodes: 40 + 20) | 192 GB (node0 112 GB, node1 80 GB, `policy=bind`) | 300 GB | node0 even CPUs 0–78, node1 odd CPUs 41–79 | Live (final for now, 2026-09-29): 3 Sietches + Overmap always-on, 3 Deep Desert dimensions on-demand; will expand as server need grows |
+| dune-dev (VM 102, `192.168.21.10`) | 8 | 26 GB | 300 GB | node1 odd CPUs 1–39 | 1 Sietch, 1 dynamic Deep Desert, Overmap |
+| acp-bot (VM 103, `192.168.22.10`) | 2 | 4 GB | 20 GB | unpinned | Mentat bot (own VM, Services VLAN 22) |
+
+dune-prod was 192 GB rather than the 200 GB first proposed because
+measured host headroom at 200 GB was only about 13 GB. See
+`Project-Arrakis/meta`#73 and its README Live Systems section for the
+full history, including the short-lived dune-prod1/dune-prod2 split.
 
 ## Prerequisites Checklist (do these BEFORE 7/30)
 
