@@ -476,3 +476,15 @@ mk() { : >"$1/$2"; }
   bk_secure_umask
   [ "$(umask)" = "0077" ]
 }
+
+@test "notify records delivery: 0 delivered, 1 failed, 2 skipped, and never fails the caller" {
+  BK_DISCORD_WEBHOOK_FILE="" bk_notify hi
+  [ "$BK_NOTIFY_LAST_RC" -eq 2 ]
+  printf 'https://discord.com/api/webhooks/1/x\n' >"$BK_CONFIG_DIR/hook"
+  stub curl 'cat >/dev/null; exit 22'
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify hi
+  [ "$BK_NOTIFY_LAST_RC" -eq 1 ]
+  stub curl 'cat >/dev/null'
+  BK_DISCORD_WEBHOOK_FILE="$BK_CONFIG_DIR/hook" bk_notify hi
+  [ "$BK_NOTIFY_LAST_RC" -eq 0 ]
+}

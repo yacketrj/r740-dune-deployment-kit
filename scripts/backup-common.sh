@@ -33,17 +33,26 @@ bk_log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | bk_redact
 }
 
-# Post a message to the Discord webhook. Never fails the caller.
+# Post a message to the Discord webhook. Never fails the caller, but records the
+# outcome in BK_NOTIFY_LAST_RC (0 delivered, 1 failed, 2 skipped: no webhook) so
+# a caller that MUST know (the alarm) can react to a dead webhook.
+export BK_NOTIFY_LAST_RC=2
 bk_notify() {
   local msg="$1" url payload
+  BK_NOTIFY_LAST_RC=2
   if [ -z "${BK_DISCORD_WEBHOOK_FILE:-}" ] || [ ! -r "$BK_DISCORD_WEBHOOK_FILE" ]; then
     bk_log "notify skipped (no webhook file)"
     return 0
   fi
+  BK_NOTIFY_LAST_RC=1
   url="$(cat "$BK_DISCORD_WEBHOOK_FILE")" || { bk_log "notify: could not read webhook file (ignored)"; return 0; }
   msg="$(printf '%s' "$msg" | bk_redact)"
   payload="$(jq -n --arg c "$msg" '{content:$c}')" || { bk_log "notify: could not build payload (ignored)"; return 0; }
-  printf 'url = "%s"\n' "$url" | curl -sS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1 || bk_log "notify failed (ignored)"
+  if printf 'url = "%s"\n' "$url" | curl -sS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1; then
+    BK_NOTIFY_LAST_RC=0
+  else
+    bk_log "notify failed (ignored)"
+  fi
   return 0
 }
 
