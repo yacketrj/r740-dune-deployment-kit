@@ -46,8 +46,12 @@ cfgdir_mode="$(mode_of "$BK_CONFIG_DIR")"
 if [ "$cfgdir_mode" = "700" ]; then ok "config directory $BK_CONFIG_DIR (mode 700)"; else bad "config directory $BK_CONFIG_DIR has mode $cfgdir_mode (must be 700)"; fi
 check_private "$BK_CONFIG_DIR/backup.env" "config file"
 check_private "${BK_DISCORD_WEBHOOK_FILE:-}" "Discord webhook file"
-check_private "${BK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (backup jobs)"
-check_private "${BK_CHECK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (alarm)"
+if [ "${BK_HEARTBEAT_REQUIRED:-1}" = "1" ] || [ -n "${BK_DEADMAN_URL_FILE:-}" ]; then
+  check_private "${BK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (backup jobs)"
+  check_private "${BK_CHECK_DEADMAN_URL_FILE:-}" "dead-man's-switch URL file (alarm)"
+else
+  warn "no external dead-man's-switch configured (BK_HEARTBEAT_REQUIRED=0): if this host or the alarm dies, nothing will tell you; Discord alerts are the only signal"
+fi
 check_private "${BK_BACKUP_SSH_KEY:-}" "backup SSH key"
 check_private "${BK_KNOWN_HOSTS:-}" "pinned known_hosts"
 check_private "${BK_DRILL_KNOWN_HOSTS:-}" "pinned known_hosts for the drill host"
@@ -170,7 +174,7 @@ if [ "$e" -eq 0 ]; then warn "no database restore drill recorded yet"; else ok "
 
 # --- timers ---------------------------------------------------------------------------------------------------------------
 inactive=""
-for u in daily dbtier weekly check; do
+for u in daily $([ "${BK_DBTIER_ENABLED:-1}" = "1" ] && echo dbtier) weekly check; do
   systemctl is-active "r740-backup-$u.timer" >/dev/null 2>&1 || inactive="$inactive $u"
 done
 if [ -z "$inactive" ]; then ok "backup timers active"; else warn "timers not active:$inactive (expected until the rollout enables them)"; fi

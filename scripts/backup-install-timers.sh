@@ -18,7 +18,14 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unit_dir="${UNIT_DIR:-/etc/systemd/system}"
 enable=1
-[ "${1:-}" = "--no-enable" ] && enable=0
+dbtier=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-enable) enable=0 ;;
+    --no-dbtier) dbtier=0 ;;   # lite profile: daily + weekly only (set BK_DBTIER_ENABLED=0 too)
+    *) echo "usage: $0 [--no-enable] [--no-dbtier]" >&2; exit 2 ;;
+  esac
+done
 
 # name | command | OnCalendar | description | TimeoutStartSec | idle-io (1/0)
 jobs=(
@@ -28,6 +35,12 @@ jobs=(
   "check|$here/backup-check.sh|hourly|backup alarm|10min|0"
   "pipeline|$here/backup-drill.sh pipeline|Sat *-*-08..14 03:00:00|automated pipeline restore drill|1h|1"
 )
+
+if [ "$dbtier" -eq 0 ]; then
+  kept=()
+  for j in "${jobs[@]}"; do case "$j" in dbtier\|*) ;; *) kept+=("$j") ;; esac; done
+  jobs=("${kept[@]}")
+fi
 
 mkdir -p "$unit_dir"
 for j in "${jobs[@]}"; do

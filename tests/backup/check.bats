@@ -276,3 +276,10 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
   echo 'BK_DAILY_ALARM_AGE_H=12' >>"$BK_CONFIG_DIR/backup.env"
   run_check; [ "$status" -eq 1 ]
 }
+
+@test "with the db tier disabled (lite profile) its absence is not an alarm" {
+  rm -f "$BK_SMB_MOUNT"/dbtier/* "$REMOTE_ROOT"/dbtier/*
+  run_check; [ "$status" -eq 1 ]
+  echo 'BK_DBTIER_ENABLED=0' >>"$BK_CONFIG_DIR/backup.env"
+  run_check; [ "$status" -eq 0 ]
+}

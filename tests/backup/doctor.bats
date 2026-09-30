@@ -275,3 +275,11 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
   [[ "$output" == *"missing option(s): vers=3.1.1 seal cache=none"* ]]
   [ "$status" -eq 0 ]
 }
+
+@test "with BK_HEARTBEAT_REQUIRED=0 a missing dead-man's-switch is a warning, not a failure" {
+  sed -i '/BK_DEADMAN_URL_FILE/d;/BK_CHECK_DEADMAN_URL_FILE/d' "$BK_CONFIG_DIR/backup.env"
+  echo 'BK_HEARTBEAT_REQUIRED=0' >>"$BK_CONFIG_DIR/backup.env"
+  doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no external dead-man's-switch configured"* ]]
+}

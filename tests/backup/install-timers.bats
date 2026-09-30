@@ -89,3 +89,15 @@ setup() {
   bash "$INSTALL" --no-enable
   [ "$before" = "$(cat "$UNIT_DIR"/*.timer "$UNIT_DIR"/*.service | sha256sum)" ]
 }
+
+@test "--no-dbtier installs daily, weekly, check and pipeline only" {
+  bash "$INSTALL" --no-enable --no-dbtier
+  [ ! -e "$UNIT_DIR/r740-backup-dbtier.timer" ]
+  [ ! -e "$UNIT_DIR/r740-backup-dbtier.service" ]
+  for j in daily weekly check pipeline; do [ -f "$UNIT_DIR/r740-backup-$j.timer" ]; done
+}
+
+@test "an unknown option is refused" {
+  run bash "$INSTALL" --bogus
+  [ "$status" -eq 2 ]
+}

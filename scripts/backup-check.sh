@@ -106,7 +106,7 @@ floor_image="${BK_MIN_IMAGE_ALARM_BYTES:-10000000}"
 
 if [ "$smb_ok" -eq 1 ]; then
   check_smb_newest "$BK_SMB_MOUNT/daily" 'daily-*.tar.age' "$daily_max" "$floor_set" "daily set"
-  check_smb_newest "$BK_SMB_MOUNT/dbtier" 'dbtier-*.tar.age' "$db_max" "$floor_set" "db tier"
+  if [ "${BK_DBTIER_ENABLED:-1}" = "1" ]; then check_smb_newest "$BK_SMB_MOUNT/dbtier" 'dbtier-*.tar.age' "$db_max" "$floor_set" "db tier"; fi
   for id in $BK_VMIDS; do
     bk_valid_vmid "$id" || { add "invalid guest id in BK_VMIDS: $id"; continue; }
     check_smb_newest "$BK_SMB_MOUNT/vm" "[vc][mt]${id}-*.age" "$weekly_max" "$floor_image" "image $id"
@@ -116,7 +116,7 @@ fi
 # --- OneDrive ------------------------------------------------------------------------
 if timeout 60 rclone lsd "$BK_RCLONE_REMOTE" >/dev/null 2>&1; then
   check_remote_newest daily "$daily_max" "$floor_set"
-  check_remote_newest dbtier "$db_max" "$floor_set"
+  if [ "${BK_DBTIER_ENABLED:-1}" = "1" ]; then check_remote_newest dbtier "$db_max" "$floor_set"; fi
 else
   add "OneDrive probe failed (token expired or revoked, network, or account problem)"
 fi
