@@ -174,6 +174,8 @@ if [ -z "$smb_err" ]; then
   elif ! timeout 30 mkdir -p "$BK_SMB_MOUNT/$prefix"; then
     smb_err="cannot create $BK_SMB_MOUNT/$prefix"
   else
+    # a killed earlier run can leave a partial; we hold the lock, so none is live
+    timeout 60 find "$BK_SMB_MOUNT/$prefix" -maxdepth 1 -type f -name '*.partial' -delete 2>/dev/null || true
     partial="$BK_SMB_MOUNT/$prefix/$name.partial"
     if ! timeout "$smb_timeout" cp -f -- "$work/$name" "$partial"; then
       smb_err="copy to the SMB share failed"

@@ -91,7 +91,20 @@ fi
 
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$BK_SMB_MOUNT/vm"
+# A killed earlier run can leave a huge .partial; we hold the lock, so none is live.
+find "$BK_SMB_MOUNT/vm" -maxdepth 1 -type f -name '*.partial' -delete 2>/dev/null || true
 tmpdir="$(mktemp -d "${TMPDIR:-/var/tmp}/backup-weekly.XXXXXX")"
+
+# Signal the pipeline's subshell group AND each child's own group: `timeout` moves its
+# command into a separate process group, which a plain group kill would miss.
+stop_pipeline() { # signal pid
+  local sig="$1" pid="$2" c
+  for c in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill "-$sig" -- "-$c" 2>/dev/null || true
+    kill "-$sig" "$c" 2>/dev/null || true
+  done
+  kill "-$sig" -- "-$pid" 2>/dev/null || true
+}
 
 gate_ssh() { # request
   bk_ssh_opts_init
@@ -130,15 +143,46 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   rm -f -- "$partial" "$tmpdir/sha.pre"
   bk_require_mounted "$BK_SMB_MOUNT" || { failures+=("$id: SMB share dropped"); partial=""; return 1; }
 
-  # Status is captured through `if` so a failing guest is handled here and does
-  # not fire the ERR trap (which would abort the remaining guests).
-  if (
+  # A snapshot backup makes guest writes wait on the sink, so a hung share must never be
+  # allowed to hold the live guest: the pipeline runs as its own process group and a
+  # watchdog aborts it when the output stops growing.
+  stalled=0
+  set -m
+  (
     set -o pipefail
     timeout "$remaining" ionice -c3 nice -n 19 \
       vzdump "$id" --mode snapshot --compress zstd --stdout --bwlimit "${BK_VZDUMP_BWLIMIT_KIB:-51200}" --quiet 1 2>"$tmpdir/vzdump.err" \
       | age -r "$BK_AGE_RECIPIENT" \
       | tee >(sha256sum | cut -d' ' -f1 >"$tmpdir/sha.pre") >"$partial"
-  ); then rc=0; else rc=$?; fi
+  ) &
+  pipe_pid=$!
+  last_size=-1
+  last_change="$(date +%s)"
+  while kill -0 "$pipe_pid" 2>/dev/null; do
+    for _ in $(seq 1 "${BK_WEEKLY_STALL_POLL_S:-15}"); do
+      kill -0 "$pipe_pid" 2>/dev/null || break
+      sleep 1
+    done
+    kill -0 "$pipe_pid" 2>/dev/null || break
+    cur_size="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
+    if [ "$cur_size" != "$last_size" ]; then
+      last_size="$cur_size"
+      last_change="$(date +%s)"
+    elif [ $(( $(date +%s) - last_change )) -ge "${BK_WEEKLY_STALL_S:-300}" ]; then
+      stalled=1
+      stop_pipeline TERM "$pipe_pid"
+      sleep "${BK_WEEKLY_KILL_GRACE_S:-20}"
+      stop_pipeline KILL "$pipe_pid"
+      break
+    fi
+  done
+  if wait "$pipe_pid" 2>/dev/null; then rc=0; else rc=$?; fi
+  set +m
+  if [ "$stalled" -eq 1 ]; then
+    rm -f -- "$partial"; partial=""
+    failures+=("$id: output stalled for ${BK_WEEKLY_STALL_S:-300}s (share or network hung); aborted so the live guest is not held")
+    return 1
+  fi
   if [ "$rc" -ne 0 ]; then
     rm -f -- "$partial"; partial=""
     failures+=("$id: vzdump/encrypt/write failed (exit $rc): $(tr '\n' ' ' <"$tmpdir/vzdump.err" | cut -c1-200)")
@@ -175,11 +219,12 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   return 0
 }
 
-for id in $BK_VMIDS; do
-  backup_one "$id" || true
+read -r -a guest_list <<<"$BK_VMIDS"
+for idx in "${!guest_list[@]}"; do
+  backup_one "${guest_list[$idx]}" || true
   # a later guest must never start after the hard stop
-  if [ "$(date +%s)" -ge "$hard_stop" ]; then
-    failures+=("hard stop reached before all guests finished")
+  if [ "$(date +%s)" -ge "$hard_stop" ] && [ $((idx + 1)) -lt "${#guest_list[@]}" ]; then
+    failures+=("hard stop reached; not started: ${guest_list[*]:$((idx + 1))}")
     break
   fi
 done

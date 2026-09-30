@@ -473,3 +473,11 @@ EOF
   run_daily
   [ "$status" -eq 2 ]
 }
+
+@test "a leftover .partial on the share from a killed earlier run is swept" {
+  mkdir -p "$BK_SMB_MOUNT/daily"
+  : >"$BK_SMB_MOUNT/daily/daily-20260901-050000.tar.age.partial"
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  [ -z "$(find "$BK_SMB_MOUNT" -name '*.partial')" ]
+}

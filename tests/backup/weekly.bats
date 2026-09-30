@@ -310,3 +310,57 @@ EOF
   [ "$(printf '%s' "$line" | jq -r .sha256)" = "$(sha256sum "$f" | cut -d' ' -f1)" ]
   [ "$(printf '%s' "$line" | jq -r .size)" = "$(stat -c %s "$f")" ]
 }
+
+seed_old_images() {
+  mkdir -p "$BK_SMB_MOUNT/vm"
+  for st in 20260901-010000 20260908-010000 20260915-010000; do : >"$BK_SMB_MOUNT/vm/vm101-$st.vma.zst.age"; done
+  : >"$BK_SMB_MOUNT/vm/vm102-20260915-010000.vma.zst.age"
+}
+
+@test "failed images never cost an existing image: every older copy survives" {
+  seed_old_images
+  touch "$BATS_TEST_TMPDIR/fail-101" "$BATS_TEST_TMPDIR/fail-102"
+  run_weekly
+  [ "$status" -eq 1 ]
+  [ "$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age | wc -l)" -eq 3 ]
+  [ "$(ls "$BK_SMB_MOUNT"/vm/vm102-*.age | wc -l)" -eq 1 ]
+}
+
+@test "a read-back mismatch also leaves every older image in place" {
+  seed_old_images
+  cat >"$BATS_TEST_TMPDIR/bin/sha256sum" <<EOF
+#!/usr/bin/env bash
+if [ "\$#" -ge 1 ] && [ -f "\${@: -1}" ]; then echo "deadbeef  \${@: -1}"; exit 0; fi
+exec /usr/bin/sha256sum "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/sha256sum"
+  run_weekly
+  [ "$status" -eq 1 ]
+  [ "$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age | wc -l)" -eq 3 ]
+  [ "$(ls "$BK_SMB_MOUNT"/vm/vm102-*.age | wc -l)" -eq 1 ]
+}
+
+@test "a hung share is detected by the stall watchdog: the pipeline is killed, no partial remains, the run fails" {
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
+echo first-bytes
+exec sleep 120
+EOF
+  { echo 'BK_VMIDS="101"'; echo 'BK_WEEKLY_STALL_S=3'; echo 'BK_WEEKLY_STALL_POLL_S=1'; echo 'BK_WEEKLY_KILL_GRACE_S=1'; } >>"$BK_CONFIG_DIR/backup.env"
+  start=$SECONDS
+  run_weekly
+  [ "$status" -eq 1 ]
+  [ $((SECONDS - start)) -lt 60 ]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  grep -q "stalled" "$BATS_TEST_TMPDIR/curl.args"
+  ! pgrep -f "sleep 120" >/dev/null
+}
+
+@test "a leftover .partial from a killed earlier run is swept" {
+  mkdir -p "$BK_SMB_MOUNT/vm"
+  : >"$BK_SMB_MOUNT/vm/vm101-20260901-010000.vma.zst.age.partial"
+  run_weekly
+  [ "$status" -eq 0 ]
+  [ -z "$(find "$BK_SMB_MOUNT" -name '*.partial')" ]
+}
