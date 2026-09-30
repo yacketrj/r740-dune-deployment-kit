@@ -93,6 +93,23 @@ bk_ssh_opts_init() {
   [ -z "${BK_KNOWN_HOSTS:-}" ] || BK_SSH_OPTS+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
 }
 
+# Thin-pool headroom: fail (message on stderr) when free space or usage is out of bounds.
+# A full thin pool freezes I/O for every guest, so anything that writes a big volume into
+# it (a snapshot backup, a scratch restore) must check first.
+bk_pool_headroom() { # min_free_gb [max_pct]
+  local min_free="${1:?min free GB}" max_pct="${2:-${BK_MAX_POOL_PCT:-80}}" pool line size pct free
+  pool="${BK_THIN_POOL:-pve/data}"
+  if ! line="$(lvs --noheadings --nosuffix --units g -o lv_size,data_percent "$pool" 2>/dev/null)" || [ -z "$line" ]; then
+    echo "cannot read thin pool usage for $pool" >&2
+    return 1
+  fi
+  read -r size pct <<<"$line"
+  free="$(awk -v s="$size" -v p="$pct" 'BEGIN { printf "%d", s * (100 - p) / 100 }')"
+  if [ "$free" -lt "$min_free" ]; then echo "thin pool $pool has only ${free}GB free (need ${min_free}GB)" >&2; return 1; fi
+  if awk -v p="$pct" -v m="$max_pct" 'BEGIN { exit !(p + 0 > m + 0) }'; then echo "thin pool $pool is ${pct}% full (limit ${max_pct}%)" >&2; return 1; fi
+  return 0
+}
+
 # Refuse to write into an unmounted mountpoint (it would fill the local disk).
 bk_require_mounted() {
   if ! timeout 20 mountpoint -q "$1"; then
@@ -135,7 +152,7 @@ bk_stamp_plausible() {
 bk_prune_daily_monthly() {
   local dir="$1" prefix="$2" keep_daily="$3" keep_monthly="$4"
   local -a files=()
-  local base ym months=" " mcount=0 n=0 keep_it f
+  local base ym months=" " mcount=0 n=0 keep_it f failed=0
   if ! [[ "$keep_daily" =~ ^[0-9]+$ ]] || [ "$keep_daily" -lt 1 ]; then
     bk_log "invalid keep_daily: $keep_daily (must be numeric and >= 1)"
     return 1
@@ -160,8 +177,9 @@ bk_prune_daily_monthly() {
       mcount=$((mcount + 1))
       [ "$mcount" -le "$keep_monthly" ] && keep_it=1
     fi
-    [ "$keep_it" -eq 1 ] || rm -f -- "$dir/$base"
+    if [ "$keep_it" -ne 1 ]; then rm -f -- "$dir/$base" || failed=1; fi
   done
+  return "$failed"
 }
 
 # Keep the newest KEEP files whose name starts with PREFIX- (any extension).
@@ -171,13 +189,14 @@ bk_prune_keep_newest() {
     bk_log "invalid keep count: $keep (must be numeric and >= 1)"
     return 1
   fi
-  local stamp
+  local stamp failed=0
   while IFS= read -r f; do
     stamp="$(printf '%s' "$f" | sed -nE "s/^${prefix}-([0-9]{8}-[0-9]{6})\.[A-Za-z0-9.]+\.age$/\1/p")"
     [ -n "$stamp" ] && bk_stamp_plausible "$stamp" || continue
     n=$((n + 1))
-    [ "$n" -le "$keep" ] || rm -f -- "$dir/$f"
+    if [ "$n" -gt "$keep" ]; then rm -f -- "$dir/$f" || failed=1; fi
   done < <(find "$dir" -maxdepth 1 -type f -name "${prefix}-[0-9]*.age" -printf '%f\n' | sort -r)
+  return "$failed"
 }
 
 # Apply the daily/monthly rule to an rclone remote by mirroring names locally.
@@ -191,10 +210,14 @@ bk_prune_remote() {
     before+=("$name")
   done < <(rclone lsf --files-only "$remote")
   bk_prune_daily_monthly "$tmp" "$prefix" "$keep_daily" "$keep_monthly"
+  local failed=0
   for name in "${before[@]}"; do
-    [ -e "$tmp/$name" ] || rclone deletefile "$remote/$name"
+    if [ ! -e "$tmp/$name" ]; then
+      rclone deletefile "$remote/$name" || { bk_log "could not delete $remote/$name"; failed=1; }
+    fi
   done
   rm -rf "$tmp"
+  return "$failed"
 }
 
 bk_state_touch() {
@@ -329,17 +352,11 @@ bk_alert() {
 # log, and mirror it to $BK_AUDIT_SHIP_DIR when that is a directory. Values are
 # redacted. Never fails the caller.
 bk_audit_log() {
-  local ev="${1:?event}" kv k v line prev filter='{time:$time,event:$event,host:$host,prev:$prev'
+  local ev="${1:?event}" kv k v filter='{time:$time,event:$event,host:$host,prev:$prev'
   shift
   bk_require_test_isolation || return 0
   mkdir -p "$BK_STATE_DIR" 2>/dev/null || return 0
-  # Hash chain: every record carries the sha256 of the previous line, so an edit, a
-  # deletion or a reordering anywhere breaks every later link (bk_audit_verify).
-  prev="genesis"
-  if [ -s "$BK_STATE_DIR/audit.log" ]; then
-    prev="$(tail -n 1 "$BK_STATE_DIR/audit.log" | sha256sum | cut -d' ' -f1)"
-  fi
-  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)" --arg prev "$prev")
+  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)")
   for kv in "$@"; do
     k="${kv%%=*}"
     v="${kv#*=}"
@@ -350,11 +367,22 @@ bk_audit_log() {
     filter="$filter,$k:\$$k"
   done
   filter="$filter}"
-  line="$(jq -nc "${args[@]}" "$filter")" || return 0
-  printf '%s\n' "$line" >>"$BK_STATE_DIR/audit.log" 2>/dev/null || return 0
-  if [ -n "${BK_AUDIT_SHIP_DIR:-}" ] && [ -d "$BK_AUDIT_SHIP_DIR" ]; then
-    printf '%s\n' "$line" >>"$BK_AUDIT_SHIP_DIR/audit.log" 2>/dev/null || bk_log "audit ship failed (ignored)"
-  fi
+  # Hash chain: every record carries the sha256 of the previous line, so an edit, a
+  # deletion or a reordering anywhere breaks every later link (bk_audit_verify). Reading
+  # the last line and appending happen under one lock, or two overlapping jobs would
+  # both link to the same predecessor and fork the chain.
+  (
+    flock -x -w 30 9 || exit 0
+    prev="genesis"
+    if [ -s "$BK_STATE_DIR/audit.log" ]; then
+      prev="$(tail -n 1 "$BK_STATE_DIR/audit.log" | sha256sum | cut -d' ' -f1)"
+    fi
+    line="$(jq -nc "${args[@]}" --arg prev "$prev" "$filter")" || exit 0
+    printf '%s\n' "$line" >>"$BK_STATE_DIR/audit.log" 2>/dev/null || exit 0
+    if [ -n "${BK_AUDIT_SHIP_DIR:-}" ] && [ -d "$BK_AUDIT_SHIP_DIR" ]; then
+      printf '%s\n' "$line" >>"$BK_AUDIT_SHIP_DIR/audit.log" 2>/dev/null || bk_log "audit ship failed (ignored)"
+    fi
+  ) 9>"$BK_STATE_DIR/audit.lock" || true
   return 0
 }
 

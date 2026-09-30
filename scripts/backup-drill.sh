@@ -190,7 +190,9 @@ drill_pipeline() {
   head -c $((size / 2)) "$ram/set.age" >"$ram/trunc.age"
   if age -d -i "$ram/test.key" -o "$ram/x1" "$ram/trunc.age" 2>/dev/null && tar -tf "$ram/x1" >/dev/null 2>&1; then fail_drill "a TRUNCATED archive was accepted"; fi
   cp -- "$ram/set.age" "$ram/tamper.age"
-  printf '\xff' | dd of="$ram/tamper.age" bs=1 seek=$((size / 2)) conv=notrunc 2>/dev/null
+  orig_byte="$(dd if="$ram/set.age" bs=1 skip=$((size / 2)) count=1 2>/dev/null | od -An -tu1 | tr -d ' ')"
+  new_byte=$(( (orig_byte ^ 255) & 255 ))   # always a different value, never a no-op
+  printf "$(printf '\\%03o' "$new_byte")" | dd of="$ram/tamper.age" bs=1 seek=$((size / 2)) conv=notrunc 2>/dev/null
   if age -d -i "$ram/test.key" -o "$ram/x2" "$ram/tamper.age" 2>/dev/null; then fail_drill "a TAMPERED archive was accepted"; fi
   age-keygen -o "$ram/wrong.key" 2>/dev/null
   if age -d -i "$ram/wrong.key" -o "$ram/x3" "$ram/set.age" 2>/dev/null; then fail_drill "a WRONG key decrypted the archive"; fi
@@ -228,7 +230,7 @@ drill_db() {
   name="bk-drill-$(date +%s)-$RANDOM"
   [[ "$name" =~ ^bk-drill-[0-9]+-[0-9]+$ ]] || fail_drill "internal: bad container name"
   container="$name"
-  remote "docker run -d --name $name --label r740-backup-drill=1 --network none --memory $mem --tmpfs /var/lib/postgresql/data:rw,size=$tmpfs -e POSTGRES_HOST_AUTH_METHOD=trust $BK_DRILL_PG_IMAGE" >/dev/null || fail_drill "could not start the throwaway Postgres container on $BK_DRILL_SSH"
+  remote "docker run -d --name $name --label r740-backup-drill=1 --network none --memory $mem --tmpfs /var/lib/postgresql/data:rw,size=$tmpfs --tmpfs /tmp:rw,size=$tmpfs -e POSTGRES_HOST_AUTH_METHOD=trust $BK_DRILL_PG_IMAGE" >/dev/null || fail_drill "could not start the throwaway Postgres container on $BK_DRILL_SSH"
   local tries="${BK_DRILL_READY_TRIES:-60}"
   for i in $(seq 1 "$tries"); do
     # The image starts a temporary init server, stops it, then starts the real one: wait for
@@ -303,6 +305,8 @@ drill_vm() {
     return 0
   fi
 
+  STAGE="capacity"
+  pool_msg="$(bk_pool_headroom "${BK_DRILL_MIN_POOL_FREE_GB:-200}" 2>&1)" || fail_drill "refusing to restore into a nearly full thin pool: $pool_msg"
   STAGE="network"
   if ip link show "$DRILL_BRIDGE" >/dev/null 2>&1; then fail_drill "bridge $DRILL_BRIDGE already exists; refusing to reuse it"; fi
   ip link add name "$DRILL_BRIDGE" type bridge

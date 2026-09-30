@@ -164,3 +164,15 @@ gen() { run bash "$KEY" generate --handoff-dir "$HANDOFF"; }
   [[ "$output" == *"network filesystem"* ]]
   [ -z "$(find "$HANDOFF" -type f)" ]
 }
+
+@test "verify records the escrow PASS in the configured state dir, where the alarm looks" {
+  gen
+  [ "$status" -eq 0 ]
+  cfgstate="$BATS_TEST_TMPDIR/cfgstate"; mkdir -p "$cfgstate"
+  echo "BK_STATE_DIR=$cfgstate" >>"$BK_CONFIG_DIR/backup.env"
+  key="$(find "$HANDOFF" -type f)"
+  unset BK_STATE_DIR
+  run bash "$KEY" verify --identity "$key"
+  [ "$status" -eq 0 ]
+  grep -q $'\tescrow\tPASS\t' "$cfgstate/evidence.log"
+}

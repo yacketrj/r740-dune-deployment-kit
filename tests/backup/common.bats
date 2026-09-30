@@ -621,3 +621,18 @@ PY
   grep -q '"kind":"drill-db"' "$BK_STATE_DIR/audit.log"
   run bk_audit_verify; [ "$status" -eq 0 ]
 }
+
+@test "concurrent audit writers do not fork the hash chain" {
+  export BK_STATE_DIR="$BATS_TEST_TMPDIR/stc"
+  for i in $(seq 1 12); do ( bk_audit_log run_ok "n=$i" ) & done
+  wait
+  [ "$(wc -l <"$BK_STATE_DIR/audit.log")" -eq 12 ]
+  run bk_audit_verify; [ "$status" -eq 0 ]
+}
+
+@test "a failing remote delete makes the remote prune fail instead of reporting success" {
+  d="$BATS_TEST_TMPDIR/rp"; mkdir -p "$d"
+  stub rclone 'case "$1" in lsf) printf "daily-20260101-010000.tar.age\ndaily-20260102-010000.tar.age\n" ;; deletefile) exit 1 ;; esac'
+  run bk_prune_remote fake:r740/daily daily 1 1
+  [ "$status" -ne 0 ]
+}

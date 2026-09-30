@@ -21,6 +21,10 @@
 # =============================================================================
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Remember what the caller set explicitly (tests, one-off runs) before the library applies defaults.
+env_state_dir="${BK_STATE_DIR:-}"
+env_ship_dir="${BK_AUDIT_SHIP_DIR:-}"
+env_ram_dir="${BK_RAM_DIR:-}"
 # shellcheck source=backup-common.sh
 . "$here/backup-common.sh"
 bk_secure_umask
@@ -74,8 +78,18 @@ set_cfg() {
 }
 
 cfg_get() {
-  awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$cfg" 2>/dev/null || true
+  awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); v = $0; f = 1 } END { if (f) print v }' "$cfg" 2>/dev/null || true
 }
+
+# Honour the configured state/ship/RAM directories (the alarm and doctor read them from the
+# config), unless the caller overrode them explicitly: otherwise the escrow record would land
+# somewhere the alarm never looks.
+if [ -f "$cfg" ]; then
+  if [ -z "$env_state_dir" ]; then v="$(cfg_get BK_STATE_DIR)"; [ -z "$v" ] || BK_STATE_DIR="$v"; fi
+  if [ -z "$env_ship_dir" ]; then v="$(cfg_get BK_AUDIT_SHIP_DIR)"; [ -z "$v" ] || BK_AUDIT_SHIP_DIR="$v"; fi
+  if [ -z "$env_ram_dir" ]; then v="$(cfg_get BK_RAM_DIR)"; [ -z "$v" ] || { BK_RAM_DIR="$v"; ram_base="$v"; }; fi
+  export BK_STATE_DIR BK_AUDIT_SHIP_DIR
+fi
 
 evidence() { bk_evidence "$@"; }
 

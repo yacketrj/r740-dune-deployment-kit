@@ -25,6 +25,8 @@ assert_safe_tmpdir() {
 
 setup_env() {
   assert_safe_tmpdir || return 1
+  # Tests may be run from an ssh session; the gate refuses test mode on a real ssh connection.
+  unset SSH_CONNECTION
   export BK_STATE_DIR="$BATS_TEST_TMPDIR/state"
   export BK_CONFIG_DIR="$BATS_TEST_TMPDIR/config"
   export BK_STAGE_DIR="$BATS_TEST_TMPDIR/stage"

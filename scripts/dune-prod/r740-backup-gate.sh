@@ -35,7 +35,8 @@ set -euo pipefail
 # The R740_GATE_* overrides exist only for the test suite. In production they are ignored
 # (an SSH client or a permissive AcceptEnv/PermitUserEnvironment must never be able to
 # swap the dune binary or weaken the freshness and size gates), and PATH is pinned.
-if [ "${R740_GATE_TEST_MODE:-}" = "1" ]; then
+# Never honoured on a real SSH session, whatever the client managed to put in the environment.
+if [ "${R740_GATE_TEST_MODE:-}" = "1" ] && [ -z "${SSH_CONNECTION:-}" ]; then
   REPO="${R740_GATE_REPO:-$HOME/dune-awakening-selfhost-docker}"
   DUNE_CMD="${R740_GATE_DUNE:-$REPO/runtime/scripts/dune}"
   SIZE_FLOOR="${R740_GATE_SIZE_FLOOR:-1000000}"   # bytes
@@ -64,7 +65,7 @@ origin_of() { # sidecar path -> backup_origin value
 
 # Fixed integer arguments only.
 int_arg() { # name value min max
-  [[ "$2" =~ ^[0-9]{1,4}$ ]] || refuse "$1 must be an integer"
+  [[ "$2" =~ ^(0|[1-9][0-9]{0,3})$ ]] || refuse "$1 must be an integer without leading zeros"
   [ "$2" -ge "$3" ] && [ "$2" -le "$4" ] || refuse "$1 out of range ($3-$4)"
 }
 

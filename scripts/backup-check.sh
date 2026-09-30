@@ -49,9 +49,9 @@ on_err() {
 trap 'on_err $LINENO' ERR
 
 # --- SMB share -------------------------------------------------------------------
-ls "$BK_SMB_MOUNT" >/dev/null 2>&1 || true   # triggers a systemd automount
+timeout 20 ls "$BK_SMB_MOUNT" >/dev/null 2>&1 || true   # triggers a systemd automount
 smb_ok=1
-if ! mountpoint -q "$BK_SMB_MOUNT"; then
+if ! timeout 20 mountpoint -q "$BK_SMB_MOUNT"; then
   add "SMB share is not mounted at $BK_SMB_MOUNT"
   smb_ok=0
 fi
@@ -98,7 +98,7 @@ check_remote_newest() {
   fi
 }
 
-daily_max=$((${BK_DAILY_MAX_AGE_H:-26} * 3600))
+daily_max=$((${BK_DAILY_ALARM_AGE_H:-26} * 3600))
 db_max=$((${BK_DBTIER_MAX_AGE_H:-8} * 3600))
 weekly_max=$((${BK_WEEKLY_MAX_AGE_D:-8} * 86400))
 floor_set="${BK_MIN_SET_BYTES:-500000}"

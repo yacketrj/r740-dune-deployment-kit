@@ -177,3 +177,22 @@ EOF
   run env -u R740_GATE_TEST_MODE HOME="$BATS_TEST_TMPDIR/nohome" R740_GATE_REPO="$R740_GATE_REPO" SSH_ORIGINAL_COMMAND="status" bash "$GATE"
   [[ "$output" != *"auto-1"* ]]
 }
+
+@test "leading zeros are refused (they would be read as octal)" {
+  gen_dump() { :; }
+  gate set 08 48
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"leading zeros"* ]]
+  gate set 010 48
+  [ "$status" -eq 2 ]
+}
+
+@test "test mode is never honoured on a real ssh session" {
+  cat >"$BATS_TEST_TMPDIR/fake-dune" <<'EOF'
+#!/usr/bin/env bash
+echo ran >"$BATS_TEST_TMPDIR/fake-dune.ran"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/fake-dune"
+  SSH_CONNECTION="1.2.3.4 5 6.7.8.9 22" HOME="$BATS_TEST_TMPDIR/nohome" R740_GATE_DUNE="$BATS_TEST_TMPDIR/fake-dune" gate dump-now || true
+  [ ! -e "$BATS_TEST_TMPDIR/fake-dune.ran" ]
+}

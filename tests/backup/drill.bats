@@ -143,7 +143,11 @@ case "\$1 \$2" in
   "link del") rm -f "\$B" ;;
 esac
 EOF
-  chmod +x "$T/bin/qm" "$T/bin/qmrestore" "$T/bin/pct" "$T/bin/ip"
+  cat >"$T/bin/lvs" <<EOF
+#!/usr/bin/env bash
+if [ -f "$T/poolvals" ]; then cat "$T/poolvals"; else echo "  1634.87 20.00"; fi
+EOF
+  chmod +x "$T/bin/qm" "$T/bin/qmrestore" "$T/bin/pct" "$T/bin/ip" "$T/bin/lvs"
 }
 
 # ---------- fixtures -----------------------------------------------------------------
@@ -506,6 +510,16 @@ EOF
 # =====================================================================================
 # VM / CT drill
 # =====================================================================================
+
+@test "vm: a nearly full thin pool stops the drill before anything is restored or created" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  echo "  1634.87 91.00" >"$T/poolvals"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "nearly full thin pool" "$T/curl.args"
+  [ ! -e "$T/qmrestore.calls" ]
+  [ ! -e "$T/vmstate/bridge" ]
+}
 
 @test "vm: every extra NIC is deleted and the drill refuses to boot if any NIC is still off the drill bridge" {
   make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA

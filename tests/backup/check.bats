@@ -266,3 +266,13 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
   run_check; [ "$status" -eq 1 ]
   [ "$(grep -c 'Content-Type' "$T/curl.args")" -eq 2 ]
 }
+
+@test "the alarm's daily age limit is its own setting, independent of the daily job's dump-freshness gate" {
+  rm -f "$BK_SMB_MOUNT"/daily/* "$REMOTE_ROOT"/daily/*
+  mkfile "$BK_SMB_MOUNT/daily/daily-20260930-051500.tar.age" $((20 * 3600))
+  mkfile "$REMOTE_ROOT/daily/daily-20260930-051500.tar.age" $((20 * 3600))
+  echo 'BK_DAILY_MAX_AGE_H=12' >>"$BK_CONFIG_DIR/backup.env"
+  run_check; [ "$status" -eq 0 ]
+  echo 'BK_DAILY_ALARM_AGE_H=12' >>"$BK_CONFIG_DIR/backup.env"
+  run_check; [ "$status" -eq 1 ]
+}
