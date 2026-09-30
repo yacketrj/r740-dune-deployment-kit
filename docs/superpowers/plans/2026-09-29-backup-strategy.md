@@ -47,11 +47,144 @@ Failure modes the spec implies that no happy-path test would exercise, most like
 | `scripts/backup-restore-test.sh` | Monthly restore test (`db` or `vm` mode) |
 | `scripts/backup-install-timers.sh` | Generate and enable the systemd units |
 | `backup.env.example` | Documented config template (no secrets) |
-| `tests/backup/*.bats`, `tests/backup/helper.bash` | bats tests with stub binaries |
+| `tests/backup/*.bats`, `tests/backup/helper.bash` | bats tests with stub binaries; helper refuses unsafe paths |
+| `scripts/run-backup-tests.sh` | Runs the tests in a sandbox with `/usr` and `/etc` read-only (see Execution safety) |
 | `.github/workflows/ci.yml` | Add a `backup-tests` job, include it in `ci-gate` |
 | `docs/07-backup-runbook.md` | Operator runbook: setup, restore, key handling, alarms |
 
 ---
+
+## Execution safety (added after the 2026-09-29 incident)
+
+While this plan was first executed by subagents, a test helper used outside bats with `BATS_TEST_TMPDIR` unset wrote stub executables to `/bin` (= `/usr/bin`) as root and overwrote the real `mkdir`, `ssh`, `curl` and `mountpoint` on the production hypervisor. The host failed at its next reboot and the game server was offline. These rules are mandatory for every task and every subagent:
+
+1. **Run tests only through `scripts/run-backup-tests.sh`**, never `bats` directly on the hypervisor and never a hand-written `bash -c` that recreates the harness. The runner mounts `/usr` and `/etc` read-only in a private mount namespace, so even a broken helper cannot damage the system.
+2. `tests/backup/helper.bash` refuses to create anything unless `BATS_TEST_TMPDIR` is a real, non-system directory (`assert_safe_tmpdir`). Do not weaken or bypass it.
+3. Set `TMPDIR` to a scratch directory outside `/tmp` (for example the session scratchpad).
+4. After any agent has worked on the host, run `dpkg -V coreutils curl openssh-client util-linux` (or full `dpkg -V`) and expect no output for binaries.
+5. Prefer running agent work in dune-dev or a throwaway container, not on the hypervisor as root.
+
+These two files are created by Task 1 together with the library (commit them first):
+
+```bash file=scripts/run-backup-tests.sh
+#!/usr/bin/env bash
+# =============================================================================
+# run-backup-tests.sh -- run the backup bats tests inside a sandbox.
+#
+# WHY: the tests create stub executables. On 2026-09-29 a test helper used
+# outside bats, as root, overwrote /usr/bin/{mkdir,ssh,curl,mountpoint} on a
+# production hypervisor, and the host failed at its next boot. This wrapper
+# makes /usr (and therefore /bin, /sbin, /lib) and /etc read-only in a private
+# mount namespace, so even a broken helper cannot damage the system: the write
+# fails with "Read-only file system". The host's own view is never changed.
+#
+# USAGE: run-backup-tests.sh [bats arguments]      (default: tests/backup)
+#        run-backup-tests.sh --exec CMD [ARGS...]  (run CMD in the sandbox)
+# Needs root (mount namespaces). Set TMPDIR to a scratch directory outside /tmp.
+# In CI (non-root ephemeral runner) run `bats tests/backup` directly instead.
+# =============================================================================
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run-backup-tests.sh: needs root to create a mount namespace" >&2
+  exit 1
+fi
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/.." && pwd)"
+
+if [ "${1:-}" = "--exec" ]; then
+  shift
+  [ "$#" -gt 0 ] || { echo "run-backup-tests.sh: --exec needs a command" >&2; exit 2; }
+  cmd=("$@")
+else
+  if [ "$#" -eq 0 ]; then
+    set -- "$repo/tests/backup"
+  fi
+  cmd=(bats "$@")
+fi
+
+exec unshare --mount --propagation private bash -c '
+  set -euo pipefail
+  for d in /usr /etc; do
+    mount --bind "$d" "$d"
+    mount -o remount,ro,bind "$d"
+  done
+  exec "$@"
+' _ "${cmd[@]}"
+```
+
+```bash file=tests/backup/helper.bats
+#!/usr/bin/env bats
+# Tests for the safety guards in tests/backup/helper.bash and the sandbox
+# wrapper. These exist because of the 2026-09-29 incident (see helper.bash).
+load helper
+
+@test "assert_safe_tmpdir rejects empty and system directories" {
+  for d in "" / /bin /bin/x /usr /usr/bin /usr/local/bin /sbin /lib /lib64 /etc /etc/x /boot /var/lib/dpkg; do
+    BATS_TEST_TMPDIR="$d" run assert_safe_tmpdir
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "assert_safe_tmpdir rejects a non-directory" {
+  BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR/does-not-exist" run assert_safe_tmpdir
+  [ "$status" -eq 1 ]
+}
+
+@test "assert_safe_tmpdir accepts the real bats temp directory" {
+  run assert_safe_tmpdir
+  [ "$status" -eq 0 ]
+}
+
+@test "stub refuses to run when BATS_TEST_TMPDIR is empty and writes nothing" {
+  BATS_TEST_TMPDIR="" run stub bk-guard-probe 'exit 0'
+  [ "$status" -eq 1 ]
+  [ ! -e /bin/bk-guard-probe ]
+  [ ! -e /usr/bin/bk-guard-probe ]
+}
+
+@test "stub refuses names that could escape the stub directory" {
+  for n in "../../usr/bin/bk-guard-probe" "a/b" ".." "." ""; do
+    run stub "$n" 'exit 0'
+    [ "$status" -eq 1 ]
+  done
+  [ ! -e /usr/bin/bk-guard-probe ]
+}
+
+@test "setup_env refuses to run when BATS_TEST_TMPDIR is empty" {
+  BATS_TEST_TMPDIR="" run setup_env
+  [ "$status" -eq 1 ]
+}
+
+@test "stub creates an executable inside the bats temp dir when safe" {
+  setup_env
+  stub bk-guard-ok 'echo fine'
+  [ -x "$BATS_TEST_TMPDIR/bin/bk-guard-ok" ]
+  run bk-guard-ok
+  [ "$output" = "fine" ]
+}
+
+@test "the sandbox wrapper makes /usr and /etc read-only even for root" {
+  [ "$(id -u)" -eq 0 ] || skip "needs root"
+  command -v unshare >/dev/null || skip "unshare not installed"
+  run bash "$BATS_TEST_DIRNAME/../../scripts/run-backup-tests.sh" --exec touch /usr/bin/.bk-ro-probe
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Read-only file system"* ]]
+  [ ! -e /usr/bin/.bk-ro-probe ]
+  run bash "$BATS_TEST_DIRNAME/../../scripts/run-backup-tests.sh" --exec touch /etc/.bk-ro-probe
+  [ "$status" -ne 0 ]
+  [ ! -e /etc/.bk-ro-probe ]
+}
+
+@test "the sandbox wrapper still lets the tests write to the scratch directory" {
+  [ "$(id -u)" -eq 0 ] || skip "needs root"
+  command -v unshare >/dev/null || skip "unshare not installed"
+  run bash "$BATS_TEST_DIRNAME/../../scripts/run-backup-tests.sh" --exec touch "$BATS_TEST_TMPDIR/writable"
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/writable" ]
+}
+```
 
 ### Task 0: Gate — Layer 1 design audit
 
@@ -90,7 +223,32 @@ Strict Requirement 20 requires a Layer 1 (design) audit before implementation. T
 
 ```bash file=tests/backup/helper.bash
 # Shared bats helper: isolated temp dirs and stub binaries on PATH.
+#
+# SAFETY: these helpers create executables. If BATS_TEST_TMPDIR is empty (for
+# example when a helper is copied into an ad-hoc `bash -c` outside bats),
+# "$BATS_TEST_TMPDIR/bin/mkdir" becomes /bin/mkdir and, as root, silently
+# replaces a real system binary. That happened on 2026-09-29 and took a
+# production host down at its next reboot. Every function below therefore
+# refuses to act unless BATS_TEST_TMPDIR is a real, non-system directory.
+# Run these tests with scripts/run-backup-tests.sh, which also mounts /usr and
+# /etc read-only for the duration, so a bug here cannot reach the system.
+
+assert_safe_tmpdir() {
+  local d="${BATS_TEST_TMPDIR:-}"
+  case "$d" in
+    "" | "/" | /bin | /bin/* | /sbin | /sbin/* | /usr | /usr/* | /lib | /lib/* | /lib64 | /lib64/* | /etc | /etc/* | /boot | /boot/* | /var/lib/dpkg*)
+      echo "helper: refusing unsafe BATS_TEST_TMPDIR='$d'" >&2
+      return 1
+      ;;
+  esac
+  if [ ! -d "$d" ]; then
+    echo "helper: BATS_TEST_TMPDIR is not a directory: '$d'" >&2
+    return 1
+  fi
+}
+
 setup_env() {
+  assert_safe_tmpdir || return 1
   export BK_STATE_DIR="$BATS_TEST_TMPDIR/state"
   export BK_CONFIG_DIR="$BATS_TEST_TMPDIR/config"
   export BK_STAGE_DIR="$BATS_TEST_TMPDIR/stage"
@@ -102,7 +260,12 @@ setup_env() {
 
 # stub NAME 'shell body' : create an executable stub that logs its args to $BATS_TEST_TMPDIR/NAME.calls
 stub() {
+  assert_safe_tmpdir || return 1
   local name="$1" body="${2:-:}"
+  if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$name" = "." ] || [ "$name" = ".." ]; then
+    echo "helper: refusing unsafe stub name '$name'" >&2
+    return 1
+  fi
   cat >"$BATS_TEST_TMPDIR/bin/$name" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$BATS_TEST_TMPDIR/$name.calls"
@@ -113,6 +276,7 @@ EOF
 
 # make a real age keypair for tests; sets BK_AGE_RECIPIENT and BK_AGE_IDENTITY
 make_age_key() {
+  assert_safe_tmpdir || return 1
   BK_AGE_IDENTITY="$BATS_TEST_TMPDIR/age.key"
   age-keygen -o "$BK_AGE_IDENTITY" 2>/dev/null
   BK_AGE_RECIPIENT="$(age-keygen -y "$BK_AGE_IDENTITY")"
@@ -278,7 +442,7 @@ mk() { : >"$1/$2"; }
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `bats tests/backup/common.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/common.bats`
 Expected: FAIL — `scripts/backup-common.sh: No such file or directory` on every test.
 
 - [ ] **Step 3: Write the implementation**
@@ -447,7 +611,7 @@ bk_state_age_seconds() {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bats tests/backup/common.bats && shellcheck -S warning scripts/backup-common.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/common.bats && shellcheck -S warning scripts/backup-common.sh`
 Expected: all tests `ok`; shellcheck prints nothing.
 
 - [ ] **Step 5: Commit**
@@ -503,7 +667,7 @@ setup() { setup_env; }
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `bats tests/backup/init-keys.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/init-keys.bats`
 Expected: FAIL — script not found.
 
 - [ ] **Step 3: Write the implementation and the config template**
@@ -583,7 +747,7 @@ BK_DISCORD_WEBHOOK_FILE=/root/.config/r740-backup/discord-webhook
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `bats tests/backup/init-keys.bats && shellcheck -S warning scripts/backup-init-keys.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/init-keys.bats && shellcheck -S warning scripts/backup-init-keys.sh`
 Expected: 3 tests `ok`; shellcheck clean.
 
 - [ ] **Step 5: Commit**
@@ -702,7 +866,7 @@ EOF
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `bats tests/backup/daily.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/daily.bats`
 Expected: FAIL — `scripts/backup-daily.sh` not found.
 
 - [ ] **Step 3: Write the implementation**
@@ -775,7 +939,7 @@ bk_notify "r740 daily backup OK: $name"
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `bats tests/backup/daily.bats && shellcheck -S warning scripts/backup-daily.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/daily.bats && shellcheck -S warning scripts/backup-daily.sh`
 Expected: 8 tests `ok`; shellcheck clean.
 
 - [ ] **Step 5: Commit**
@@ -888,7 +1052,7 @@ EOF
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `bats tests/backup/weekly.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/weekly.bats`
 Expected: FAIL — script not found.
 
 - [ ] **Step 3: Write the implementation**
@@ -978,7 +1142,7 @@ bk_log "weekly backup OK"
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `bats tests/backup/weekly.bats && shellcheck -S warning scripts/backup-weekly.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/weekly.bats && shellcheck -S warning scripts/backup-weekly.sh`
 Expected: 6 tests `ok`; shellcheck clean.
 
 - [ ] **Step 5: Commit**
@@ -1051,7 +1215,7 @@ setup() {
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `bats tests/backup/check.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/check.bats`
 Expected: FAIL — script not found.
 
 - [ ] **Step 3: Write the implementation**
@@ -1090,7 +1254,7 @@ bk_log "backup freshness OK (daily ${d}s, weekly ${w}s)"
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `bats tests/backup/check.bats && shellcheck -S warning scripts/backup-check.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/check.bats && shellcheck -S warning scripts/backup-check.sh`
 Expected: 5 tests `ok`; shellcheck clean.
 
 - [ ] **Step 5: Commit**
@@ -1217,7 +1381,7 @@ EOF
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `bats tests/backup/restore-test.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/restore-test.bats`
 Expected: FAIL — script not found.
 
 - [ ] **Step 3: Write the implementation**
@@ -1322,7 +1486,7 @@ log_result PASS "$image restored to VMID $scratch, booted, destroyed"
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `bats tests/backup/restore-test.bats && shellcheck -S warning scripts/backup-restore-test.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup/restore-test.bats && shellcheck -S warning scripts/backup-restore-test.sh`
 Expected: 7 tests `ok`; shellcheck clean.
 
 - [ ] **Step 5: Commit**
@@ -1405,7 +1569,7 @@ setup() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `bats tests/backup/install-timers.bats`
+Run: `bash scripts/run-backup-tests.sh tests/backup/install-timers.bats`
 Expected: FAIL — script not found.
 
 - [ ] **Step 3: Write the installer**
@@ -1491,7 +1655,7 @@ Modify `.github/workflows/ci.yml`: insert this job immediately before `ci-gate:`
 
 - [ ] **Step 5: Run everything locally**
 
-Run: `bats tests/backup && shellcheck -S warning scripts/*.sh tests/*.sh && for f in scripts/*.sh; do bash -n "$f"; done && bash tests/no-personal-identifiers.sh`
+Run: `bash scripts/run-backup-tests.sh tests/backup && shellcheck -S warning scripts/*.sh tests/*.sh && for f in scripts/*.sh; do bash -n "$f"; done && bash tests/no-personal-identifiers.sh`
 Expected: all bats tests `ok`; shellcheck, `bash -n` and the identifier guard print no errors.
 
 - [ ] **Step 6: Commit**
