@@ -171,8 +171,10 @@ trap cleanup EXIT
 bk_install_abort_traps
 
 report_failure() {
-  # a --dry-run only prints: it never raises an alert, writes evidence or pings the dead-man's switch
-  if [ "$dry" -eq 1 ]; then alerted=1; return 0; fi
+  # A VM-drill --dry-run that is refused at PREFLIGHT (blackout, memory, a running backup, the guard) is an
+  # expected "not now", not a failure: print it, raise no alert, record nothing. Other dry-run failures
+  # (a damaged archive, no image on the share) are real findings and still alert.
+  if [ "$dry" -eq 1 ] && [ "$sub" = "vm" ] && [ "$STAGE" = "preflight" ]; then alerted=1; return 0; fi
   if [ "$alerted" -eq 0 ]; then
     alerted=1
     bk_evidence "drill-$sub" FAIL "stage=$STAGE $1"

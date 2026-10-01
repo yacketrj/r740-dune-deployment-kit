@@ -1064,7 +1064,7 @@ EOS
   [ "$status" -eq 0 ]
   BK_DRILL_BLACKOUT=nonsense drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
   [ "$status" -eq 1 ]
-  grep -q "BK_DRILL_BLACKOUT must look like" "$T/curl.args"
+  [[ "$output" == *"BK_DRILL_BLACKOUT must look like"* ]]
 }
 
 @test "vm guardrail: a running weekly or daily backup stops the drill; a STALE lock file does not" {

@@ -815,12 +815,13 @@ teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "s
   grep -q 'In 1 minute ' "$BATS_TEST_TMPDIR/curl.args"
 }
 
-@test "announce: the job waits out the whole lead time (first warning to start >= 4 s) before it starts imaging" {
-  ann_cfg "4 3 2 1"; ann_vzdump 1
+@test "announce: the job waits out the whole lead time (first warning to start >= 4 s of a 6 s lead) before it starts imaging" {
+  # the log has whole-second timestamps, so a true 6 s wait can read as 5 or even 4: assert with slack
+  ann_cfg "6 3 2 1"; ann_vzdump 1
   run_weekly --announce
   [ "$status" -eq 0 ]
   log="$BK_STATE_DIR/weekly-progress.log"
-  first="$(grep -m1 'announce: warning, 4 minute' "$log" | cut -d' ' -f1)"
+  first="$(grep -m1 'announce: warning, 6 minute' "$log" | cut -d' ' -f1)"
   begin="$(grep -m1 'announce: the backup starts now' "$log" | cut -d' ' -f1)"
   [ -n "$first" ]
   [ -n "$begin" ]
