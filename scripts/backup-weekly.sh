@@ -20,7 +20,13 @@
 # output, where zstd and the share's write speed become the limits. Default: 150 MiB/s
 # (BK_VZDUMP_BWLIMIT_KIB=153600); lower it if game latency suffers during a watched run.
 #
-# Options:  --progress (-p)    print a status line every BK_WEEKLY_PROGRESS_S (default 10)
+# Safety guard (--guard, or BK_WEEKLY_GUARD=1 in the config): for UNATTENDED runs. It refuses to
+# start unless the game is READY and the host is calm, and while the job runs it stops it cleanly
+# (the same abort as Ctrl-C) if the game or the host looks stressed for several samples in a row.
+# See scripts/backup-guard.sh.
+#
+# Options:  --guard            enable the safety guard (see above)
+#           --progress (-p)    print a status line every BK_WEEKLY_PROGRESS_S (default 10)
 #                              seconds: bytes written, rate, elapsed, vzdump's own percent
 #           --verbose (-v)     also show vzdump's log lines and each stage (read-back etc.)
 #                              (use both together for the full picture)
@@ -37,10 +43,12 @@ orig_args="$*"
 only=""
 progress=0
 verbose=0
-usage() { echo "usage: $0 [--progress] [--verbose] [--only \"ID ID\"]" >&2; exit 2; }
+guard=0
+usage() { echo "usage: $0 [--guard] [--progress] [--verbose] [--only \"ID ID\"]" >&2; exit 2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --only) only="${2:-}"; [ -n "$only" ] || usage; shift 2 ;;
+    --guard) guard=1; shift ;;
     --progress | -p) progress=1; shift ;;
     --verbose | -v) verbose=1; shift ;;
     *) usage ;;
@@ -52,6 +60,7 @@ export BK_JOB
 bk_secure_umask
 bk_load_config
 
+[ "${BK_WEEKLY_GUARD:-0}" != "1" ] || guard=1
 subset_run=0
 if [ -n "$only" ]; then
   for want in $only; do
@@ -97,8 +106,14 @@ fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
 # Ctrl-C / Ctrl-Z / kill / hangup: stop the whole pipeline (releasing the guest backup), remove
 # the partial file, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or a
 # timeout from outside is.
+guard_reason="$BK_STATE_DIR/weekly-guard.reason"
 abort_hook() {
   printf '%s aborted by SIG%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$progress_log" 2>/dev/null || true
+  if [ -s "$guard_reason" ]; then
+    plog "STOPPED by the safety guard to protect the game: $(cat "$guard_reason")" >/dev/null
+    report_failure "stopped by the safety guard to protect the game: $(cat "$guard_reason")"
+    return 0
+  fi
   case "$1" in INT | TSTP) ;; *) report_failure "aborted by SIG$1 (timeout, shutdown or kill) while imaging $STAGE" ;; esac
 }
 # shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
@@ -355,6 +370,17 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   plog "guest $id: OK, $(hsize "$bytes") in $(hms "$g_secs") ($(hsize $((bytes / (g_secs > 0 ? g_secs : 1))))/s average)"
   return 0
 }
+
+rm -f -- "$guard_reason" 2>/dev/null || true
+if [ "$guard" -eq 1 ]; then
+  STAGE="guard-precheck"
+  if ! pre="$(bash "$here/backup-guard.sh" --once)"; then
+    fail "not starting: the safety guard sees a problem right now: $pre"
+  fi
+  plog "guard: pre-check OK; watching the game and the host while the job runs"
+  bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
+    --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >>"$progress_log" 2>&1 &
+fi
 
 read -r -a guest_list <<<"$BK_VMIDS"
 for idx in "${!guest_list[@]}"; do

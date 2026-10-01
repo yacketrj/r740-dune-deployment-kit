@@ -683,3 +683,86 @@ EOF
   run_weekly --progress
   [ "$(printf '%s\n' "$output" | grep -c 'guest 101: OK')" -eq 1 ]
 }
+
+# ---- safety guard (--guard): refuses to start when unhealthy, stops the job when stress is sustained ----
+
+guard_stubs() {
+  stub iostat 'echo "Device r/s rMB/s rrqm/s %rrqm r_await rareq-sz w/s wMB/s wrqm/s %wrqm w_await wareq-sz d/s dMB/s drqm/s %drqm d_await dareq-sz f/s f_await aqu-sz %util"
+for i in 1 2; do echo "sda 100.0 50.0 0 0 3.0 128 20.0 2.0 0 0 0.5 100 0 0 0 0 0 0 0 0 0 12.0"; done'
+  export BK_PSI_DIR="$BATS_TEST_TMPDIR/psi"; mkdir -p "$BK_PSI_DIR"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  # lvs: two columns (size, used%) for the job's own pool check, one number (used%) for the guard
+  stub lvs 'case "$*" in *lv_size*) echo "  1634.87 20.00" ;; *) echo "  17.7" ;; esac'
+  # game status: READY until the file "$T/degrade-after" says how many status calls to allow
+  cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/ssh.calls"
+case "\${@: -1}" in
+  *"dune status"*)
+    n=\$(( \$(cat "$BATS_TEST_TMPDIR/status.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$BATS_TEST_TMPDIR/status.n"
+    lim="\$(cat "$BATS_TEST_TMPDIR/degrade-after" 2>/dev/null || echo 99999)"
+    if [ "\$n" -gt "\$lim" ]; then echo "Overall:     DEGRADED"; else echo "Overall:     READY"; fi ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/ssh"
+  { echo 'BK_GUARD_INTERVAL_S=1'; echo 'BK_GUARD_CONSECUTIVE=2'; echo 'BK_KILL_GRACE_S=2'; } >>"$BK_CONFIG_DIR/backup.env"
+}
+
+@test "guard: a healthy run completes, and the progress log shows the pre-check and the watch" {
+  guard_stubs
+  slow_vzdump
+  run_weekly --guard
+  [ "$status" -eq 0 ] || { printf 'STATUS=%s\n%s\n--- log:\n' "$status" "$output" >&3; cat "$BK_STATE_DIR/weekly-progress.log" >&3; false; }
+  grep -q 'guard: pre-check OK' "$BK_STATE_DIR/weekly-progress.log"
+  grep -q 'guard: watching PID' "$BK_STATE_DIR/weekly-progress.log"
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+}
+
+@test "guard: refuses to START when the game is not READY (nothing is imaged, one alert)" {
+  guard_stubs
+  echo 0 >"$BATS_TEST_TMPDIR/degrade-after"
+  slow_vzdump
+  run_weekly --guard
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  grep -q "not starting" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "not READY" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "guard: a problem that appears DURING the run stops it cleanly, removes the partial, alerts, and leaves nothing running" {
+  guard_stubs
+  echo 1 >"$BATS_TEST_TMPDIR/degrade-after"      # the pre-check (call 1) passes, later samples fail
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/vzdump.calls"
+echo first-bytes
+exec sleep 317
+EOF
+  echo 'BK_VMIDS="101"' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly --guard
+  [ "$status" -ne 0 ]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  ! pgrep -fx 'sleep 317' >/dev/null
+  grep -q "stopped by the safety guard" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "STOPPED by the safety guard" "$BK_STATE_DIR/weekly-progress.log"
+  [ ! -e "$BK_STATE_DIR/last-success-weekly" ]
+}
+
+@test "guard: off by default - the game is never queried" {
+  guard_stubs
+  slow_vzdump
+  run_weekly
+  [ "$status" -eq 0 ]
+  ! grep -q "dune status" "$BATS_TEST_TMPDIR/ssh.calls"
+}
+
+@test "guard: can be turned on from the config (BK_WEEKLY_GUARD=1)" {
+  guard_stubs
+  echo 'BK_WEEKLY_GUARD=1' >>"$BK_CONFIG_DIR/backup.env"
+  slow_vzdump
+  run_weekly
+  [ "$status" -eq 0 ]
+  grep -q "dune status" "$BATS_TEST_TMPDIR/ssh.calls"
+}
