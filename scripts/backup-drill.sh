@@ -66,6 +66,16 @@ scratch_kind=""
 scratch_created=0
 bridge_created=0
 DRILL_BRIDGE="vmbrdrill"
+guard_reason="$BK_STATE_DIR/drill-guard.reason"
+
+# A guard stop arrives as SIGINT; say why, once, before the generic abort cleanup runs.
+drill_abort_hook() {
+  if [ -s "$guard_reason" ]; then
+    report_failure "stopped by the safety guard to protect the game and the host: $(cat "$guard_reason")"
+  fi
+}
+# shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
+BK_ABORT_HOOK=drill_abort_hook
 
 # Pinned host key and no user ssh config: this leg carries the decrypted production dump.
 remote() {
@@ -289,9 +299,34 @@ drill_db() {
   bk_log "database drill PASSED: $archive -> $authoritative restored into a throwaway container; $tables tables; row checks OK"
 }
 
+# ---- guardrail helpers for the VM drill (all read-only) ------------------------------------
+# True when local time is inside "HH:MM-HH:MM" (may wrap midnight). A malformed spec is an error
+# (the caller's `if` treats it as "not in blackout", so validate it first).
+in_blackout() {
+  local spec="$1" now s e
+  [[ "$spec" =~ ^([0-2][0-9]):([0-5][0-9])-([0-2][0-9]):([0-5][0-9])$ ]] || fail_drill "BK_DRILL_BLACKOUT must look like 04:20-05:20"
+  s=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
+  e=$((10#${BASH_REMATCH[3]} * 60 + 10#${BASH_REMATCH[4]}))
+  now="${BK_DRILL_NOW_MIN:-$((10#$(date +%H) * 60 + 10#$(date +%M)))}"
+  if [ "$s" -le "$e" ]; then [ "$now" -ge "$s" ] && [ "$now" -lt "$e" ]; else [ "$now" -ge "$s" ] || [ "$now" -lt "$e" ]; fi
+}
+# Prints the lock name and succeeds if any backup job (backup-weekly, backup-daily, ...) holds its lock.
+other_backup_running() {
+  local f
+  for f in "$BK_STATE_DIR"/backup-*.lock; do
+    [ -e "$f" ] || continue
+    if ! ( flock -n 8 ) 8<"$f" 2>/dev/null; then f="${f##*/}"; echo "${f%.lock}"; return 0; fi
+  done
+  return 1
+}
+node_free_mb() { # NUMA node number -> free MB on that node
+  awk '/MemFree:/ { printf "%d", $4 / 1024 }' "${BK_DRILL_NODE_SYSFS:-/sys/devices/system/node}/node$1/meminfo" 2>/dev/null
+}
+
 # ---- VM / CT drill ------------------------------------------------------------------------
 drill_vm() {
   local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets min_read disk_read base_rx sent
+  local node aff units bwlimit blackout other avail_gb min_avail node_free node_need guard_on gpre conf extra_nets stray rtmo
   bk_valid_vmid "$guest" || fail_drill "--guest must be a VM/CT id"
   case " $BK_VMIDS " in *" $guest "*) ;; *) fail_drill "guest $guest is not in BK_VMIDS" ;; esac
   [ -n "$identity" ] && [ -r "$identity" ] || fail_drill "--identity FILE is required and must be readable"
@@ -315,11 +350,40 @@ drill_vm() {
   [ "$check_cmd" = "boot-only" ] && boot_only=1
   mem="${BK_DRILL_VM_MEMORY_MB:-8192}"
   cores="${BK_DRILL_VM_CORES:-4}"
-  [[ "$mem" =~ ^[0-9]+$ && "$cores" =~ ^[0-9]+$ ]] || fail_drill "invalid drill memory/cores"
+  [[ "$mem" =~ ^[0-9]+$ && "$cores" =~ ^[0-9]+$ && "$cores" -ge 1 ]] || fail_drill "invalid drill memory/cores"
+  node="${BK_DRILL_NUMA_NODE:-1}"
+  aff="${BK_DRILL_AFFINITY:-1,3,5,7}"
+  units="${BK_DRILL_CPUUNITS:-10}"
+  bwlimit="${BK_DRILL_BWLIMIT_KIB:-40960}"
+  [[ "$node" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_NUMA_NODE must be a node number"
+  [[ "$aff" =~ ^[0-9]+([-,][0-9]+)*$ ]] || fail_drill "BK_DRILL_AFFINITY must look like 1,3,5,7 or 1-7"
+  [[ "$units" =~ ^[0-9]+$ ]] && [ "$units" -ge 1 ] && [ "$units" -le 10000 ] || fail_drill "BK_DRILL_CPUUNITS must be 1-10000"
+  [[ "$bwlimit" =~ ^[0-9]+$ ]] && [ "$bwlimit" -ge 1024 ] || fail_drill "BK_DRILL_BWLIMIT_KIB must be a number of KiB/s, at least 1024 (an unlimited restore is not allowed)"
+
+  # ---- preflight: read-only guardrails, run for --dry-run too so the plan is a real forecast ----
+  STAGE="preflight"
+  blackout="${BK_DRILL_BLACKOUT:-04:20-05:20}"
+  if in_blackout "$blackout"; then
+    fail_drill "refusing to run inside the blackout $blackout (the 04:30 database dump and the 05:00 game restart)"
+  fi
+  other="$(other_backup_running)" && fail_drill "a $other backup is running right now; refusing to compete with it for the disk"
+  avail_gb="$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576 }' "${BK_DRILL_MEMINFO:-/proc/meminfo}" 2>/dev/null)"
+  [[ "${avail_gb:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the host's available memory"
+  min_avail="${BK_DRILL_MIN_AVAIL_GB:-40}"
+  [ "$avail_gb" -ge "$min_avail" ] || fail_drill "only ${avail_gb}GB of host memory is available (need ${min_avail}GB)"
+  node_free="$(node_free_mb "$node")"
+  [[ "${node_free:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the free memory of NUMA node $node"
+  node_need=$((mem + ${BK_DRILL_NODE_HEADROOM_MB:-16384}))
+  [ "$node_free" -ge "$node_need" ] || fail_drill "NUMA node $node has only ${node_free}MB free (need ${node_need}MB: the guest's ${mem}MB plus headroom)"
+  guard_on="${BK_DRILL_GUARD:-1}"
+  if [ "$guard_on" = "1" ]; then
+    gpre="$(bash "$here/backup-guard.sh" --once)" || fail_drill "not starting: the safety guard sees a problem right now: $gpre"
+  fi
 
   if [ "$dry" -eq 1 ]; then
     echo "DRY RUN OK: guest $guest image $image ($kind)."
-    echo "PLAN: transient bridge $DRILL_BRIDGE (no uplink); restore to scratch id $scratch with new MACs; cap to ${mem}MB/${cores} cores, drop NUMA pinning, autostart off; boot; run '$check_var'; destroy the scratch guest and the bridge."
+    echo "PREFLIGHT OK: not in blackout $blackout; no weekly/daily backup running; host memory available ${avail_gb}GB (min ${min_avail}GB); NUMA node $node free ${node_free}MB (need ${node_need}MB); safety guard $([ "$guard_on" = "1" ] && echo "pre-check OK, will watch the whole run" || echo "OFF (BK_DRILL_GUARD=0)")."
+    echo "PLAN: transient bridge $DRILL_BRIDGE (no uplink); restore to scratch id $scratch with new MACs, writes capped at ${bwlimit}KiB/s, at most ${BK_DRILL_RESTORE_TIMEOUT_MIN:-150} minutes; cap to ${mem}MB/${cores} cores, memory bound to host NUMA node $node, CPU affinity $aff, CPU weight $units, autostart off; boot; run '$check_var'; destroy the scratch guest and the bridge. Nothing is ever written to guest $guest or its disk."
     return 0
   fi
 
@@ -331,16 +395,30 @@ drill_vm() {
   ip link set "$DRILL_BRIDGE" up
   bridge_created=1
 
+  # The safety guard watches the game and the host for the WHOLE run (restore, boot, check) and
+  # interrupts this script (the same clean abort as Ctrl-C, which destroys the scratch guest) when
+  # the game is not READY, disk or memory pressure stays high, or the thin pool fills.
+  rm -f -- "$guard_reason"
+  if [ "$guard_on" = "1" ]; then
+    bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
+      --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >&2 &
+  fi
+
   STAGE="restore"
   scratch_kind="$kind"
   scratch_created=1
+  rtmo="${BK_DRILL_RESTORE_TIMEOUT_MIN:-150}"
+  [[ "$rtmo" =~ ^[0-9]+$ ]] && [ "$rtmo" -ge 1 ] || fail_drill "BK_DRILL_RESTORE_TIMEOUT_MIN must be a number of minutes"
+  # --bwlimit caps the restore's I/O: everything on this host (prod's disk, the thin pool, root, swap)
+  # lives on ONE disk, so an unthrottled restore competes with the game. (ionice is a no-op under the
+  # mq-deadline scheduler this host uses; the bandwidth cap is what actually protects prod.)
   if [ "$kind" = "vm" ]; then
     # background + wait so an abort during this (long) restore is immediate
-    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 ) &
-    wait "$!" || fail_drill "restore of $image failed"
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | timeout "${rtmo}m" ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
+    wait "$!" || fail_drill "restore of $image failed (or exceeded ${rtmo} minutes)"
   else
-    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 ) &
-    wait "$!" || fail_drill "restore of $image failed"
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | timeout "${rtmo}m" ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
+    wait "$!" || fail_drill "restore of $image failed (or exceeded ${rtmo} minutes)"
   fi
 
   STAGE="isolate"
@@ -356,7 +434,16 @@ drill_vm() {
     model="$(printf '%s\n' "$conf" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
     [ -n "$model" ] || model="virtio"
     extra_nets="$(printf '%s\n' "$conf" | awk -F: '/^net[1-9][0-9]*:/ { print $1 }' | paste -sd, -)"
-    qm set "$scratch" --onboot 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 0 --delete "affinity,numa0,numa1${extra_nets:+,$extra_nets}" --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
+    # Memory is bound to one host NUMA node (default 1, which has the most headroom; prod is bound to
+    # both and node 0 is its tight one), the vCPUs are confined to a few host threads (default: the
+    # ones dune-dev uses, the expendable guest) and given the lowest CPU weight, so prod always wins.
+    qm set "$scratch" --onboot 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 1 --numa0 "cpus=0-$((cores - 1)),hostnodes=$node,memory=$mem,policy=bind" --affinity "$aff" --cpuunits "$units" --delete "numa1${extra_nets:+,$extra_nets}" --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
+    # Verify what was applied, do not assume it: refuse to boot unless the pin and caps are really in the config.
+    conf="$(qm config "$scratch")" || fail_drill "could not re-read the scratch VM config"
+    printf '%s\n' "$conf" | grep -Eq "^numa0:.*hostnodes=$node([,;]|$).*policy=bind|^numa0:.*policy=bind.*hostnodes=$node([,;]|$)" || fail_drill "the NUMA binding to node $node is not in the scratch VM config; refusing to boot"
+    printf '%s\n' "$conf" | grep -q "^affinity: $aff\$" || fail_drill "the CPU affinity $aff is not in the scratch VM config; refusing to boot"
+    printf '%s\n' "$conf" | grep -q "^cpuunits: $units\$" || fail_drill "the CPU weight $units is not in the scratch VM config; refusing to boot"
+    printf '%s\n' "$conf" | grep -q "^memory: $mem\$" || fail_drill "the memory cap ${mem}MB is not in the scratch VM config; refusing to boot"
     stray="$(qm config "$scratch" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
     [ -z "$stray" ] || fail_drill "scratch VM still has network device(s) outside $DRILL_BRIDGE ($stray); refusing to boot"
   else

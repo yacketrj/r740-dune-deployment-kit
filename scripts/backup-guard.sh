@@ -12,6 +12,7 @@
 # Checks (any one failing counts as a bad sample):
 #   * the game does not answer `dune status` over ssh, or its Overall state is not READY
 #   * host I/O pressure (share of the last 10 s that tasks waited on the disk) above 30%
+#   * host memory pressure (share of the last 10 s that tasks stalled waiting for memory) above 10%
 #   * the disk is more than 95% busy
 #   * the thin pool is more than 85% full
 # Several consecutive bad samples are required (default 3 x 10 s) so one slow ssh or a short blip
@@ -19,7 +20,7 @@
 #
 # It only READS (ssh `dune status`, /proc/pressure, iostat, lvs) and signals the one PID it was
 # given; it never touches the game or the backup's files.
-# Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX; the game host:
+# Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_MEM_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX; the game host:
 # BK_GUARD_GAME_SSH (default BK_BACKUP_SSH).
 # =============================================================================
 set -u
@@ -54,13 +55,14 @@ disk="${BK_STATUS_DISK:-sda}"
 game_ssh="${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}"
 io_max="${BK_GUARD_IO_PRESSURE_MAX:-30}"
 busy_max="${BK_GUARD_DISK_BUSY_MAX:-95}"
+mem_max="${BK_GUARD_MEM_PRESSURE_MAX:-10}"
 pool_max="${BK_GUARD_POOL_MAX:-85}"
 
 gt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
 # Print the reason(s) the system looks unhealthy, or nothing when it looks fine.
 sample() {
-  local reasons="" st io util line pool
+  local reasons="" st io mem util line pool
   if [ -n "$game_ssh" ]; then
     st="$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=6 -- "$game_ssh" 'cd ~/dune-awakening-selfhost-docker && dune status 2>&1 | sed -n 1,8p' 2>/dev/null)" || st=""
     if [ -z "$st" ]; then
@@ -71,6 +73,8 @@ sample() {
   fi
   io="$(awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/io" 2>/dev/null | head -n 1)"
   if gt "${io:-0}" "$io_max"; then reasons="$reasons host I/O pressure ${io}% (limit ${io_max}%);"; fi
+  mem="$(awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/memory" 2>/dev/null | head -n 1)"
+  if gt "${mem:-0}" "$mem_max"; then reasons="$reasons host memory pressure ${mem}% (limit ${mem_max}%);"; fi
   if command -v iostat >/dev/null 2>&1; then
     line="$(iostat -dxm 1 2 2>/dev/null | awk -v d="$disk" '$1 == d { l = $0 } END { print l }')"
     if [ -n "$line" ]; then
@@ -91,7 +95,7 @@ if [ "$once" -eq 1 ]; then
 fi
 
 bad=0
-bk_log "guard: watching PID $target every ${interval}s; will stop it after $consecutive bad samples in a row (I/O pressure > ${io_max}%, disk > ${busy_max}% busy, pool > ${pool_max}% full, game not READY)"
+bk_log "guard: watching PID $target every ${interval}s; will stop it after $consecutive bad samples in a row (I/O pressure > ${io_max}%, memory pressure > ${mem_max}%, disk > ${busy_max}% busy, pool > ${pool_max}% full, game not READY)"
 while kill -0 "$target" 2>/dev/null; do
   r="$(sample)"
   if [ -z "$r" ]; then

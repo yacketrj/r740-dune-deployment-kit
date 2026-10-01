@@ -49,6 +49,18 @@ teardown() { pkill -KILL -fx "sleep 330" 2>/dev/null || true; }
   [[ "$output" == *"thin pool 91.0% full"* ]]
 }
 
+@test "--once: high host memory pressure is reported, a quiet host is not, and the limit is configurable" {
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 0 ]
+  printf 'some avg10=22.50 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"memory pressure 22.50% (limit 10%)"* ]]
+  BK_GUARD_MEM_PRESSURE_MAX=30 run bash "$SCRIPT" --once
+  [ "$status" -eq 0 ]
+}
+
 @test "--once: thresholds are configurable" {
   printf 'some avg10=45.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
   BK_GUARD_IO_PRESSURE_MAX=60 run bash "$SCRIPT" --once
