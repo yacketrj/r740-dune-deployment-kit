@@ -72,6 +72,8 @@ For an unattended image of a guest that hosts players (the prod game VM), run th
 
 **One-time setup.** In the console (Settings -> API Keys) create a key named `backup-announce` limited to the single action `admin:broadcast`. Save it in a root-only file (mode 600) and set `BK_ANNOUNCE_URL` and `BK_ANNOUNCE_KEY_FILE` in `backup.env`. The key can broadcast text and nothing else; revoke it in the same page at any time. Keep the key out of notes and chat.
 
+**The game restarts itself every day at 05:00 (warning 04:45).** On dune-prod the timer `dune-awakening-scheduled-restart.timer` stops and restarts the whole battlegroup (the game is back by about 05:05-05:10). A backup job that is running then would see the game not READY and the guard would stop it after 3 bad samples, and players would be told "no backup restart" while the game restarts anyway. So **imaging must start after about 05:15, with its countdown also after the restart** (the 2026-10-01 run started at 05:00 and imaged from 05:30, which worked, but its first two warnings went out during the restart). Check the real schedule before choosing a time: `ssh dune@192.168.20.10 systemctl list-timers dune-awakening-scheduled-restart.timer`.
+
 **Scheduling a one-off prod image.** Use a transient timer that runs a pinned copy of the scripts, so later edits cannot change what runs:
 
 ```

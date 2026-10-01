@@ -126,7 +126,7 @@ bk_announce_text() { # key [n]
   case "$key" in
     lead)
       BK_ANN_TITLE="The Mentats Prepare the Great Record"
-      BK_ANN_BODY="In $n $unit the Mentats will commit the memory of Arrakis to the archives. The sands may stir: brief pauses or delays may be felt. No restart is planned and nothing will be lost."
+      BK_ANN_BODY="In $n $unit the Mentats will commit the memory of Arrakis to the archives. The sands may stir: brief pauses or delays may be felt. The recording itself needs no restart, and nothing will be lost."
       ;;
     start)
       BK_ANN_TITLE="The Recording of Arrakis Begins"
