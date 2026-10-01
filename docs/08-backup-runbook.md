@@ -43,6 +43,10 @@ Where things live on the hypervisor:
 | `scripts/backup-install-timers.sh [--no-enable]` | Write and enable the timers. |
 | `scripts/run-backup-tests.sh` | Run the test suite in the read-only sandbox (never run tests any other way on the hypervisor). |
 
+### VM restore drill for guests without a guest agent (boot-only)
+
+The drill can run an in-guest command only when the guest runs the QEMU guest agent. None of these guests do, so set `BK_DRILL_VM_CHECK_<id>=boot-only` for each VM (101, 102, 103) in `backup.env`. The drill then restores the image into a scratch VM on an isolated bridge (no uplink), starts it, and requires **all three**: it is running, it sent at least 5 packets on its isolated network port, and it **read at least 64 MiB from its disk** (a failed disk boot can still send packets from a firmware network-boot fallback, but it cannot read the disk). No command is run inside the guest, so this proves the image **decrypts, restores and boots**, not that a service inside works; the result is recorded as `mode=boot-only`. Thresholds: `BK_DRILL_MIN_PACKETS`, `BK_DRILL_MIN_DISK_READ_BYTES`. First real result (2026-10-01, bot VM image): restored 20 GiB in 41 s, booted, 13 packets, 473 MiB read. The host-device safety check refuses passthrough only (PCI, host USB, a serial/parallel port on a `/dev` path); Proxmox's virtual `serial0: socket` is fine.
+
 ### Watching a job
 
 - **`scripts/backup-status.sh`** is a live, read-only dashboard (refreshes every 10 s; `--once`, `--interval N`): what the backup is doing, host disk and pressure numbers, the game's own status, and an OK/WATCH verdict. Safe to run during a backup and safe to stop at any time.

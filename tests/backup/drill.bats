@@ -101,7 +101,7 @@ make_proxmox_stubs() {
 echo "\$*" >>"$T/qm.calls"
 F="$T/vmstate"; mkdir -p "\$F"
 case "\$1" in
-  status) if [ -f "\$F/scratch-exists" ]; then if [ -f "\$F/started" ]; then echo "status: running"; else echo "status: stopped"; fi; exit 0; fi; exit 2 ;;
+  status) if [ -f "\$F/scratch-exists" ]; then if [ -f "\$F/started" ]; then echo "status: running"; [ "\$3" = "--verbose" ] && { if [ -f "$T/low-read" ]; then echo "diskread: 4096"; else echo "diskread: 524288000"; fi; }; else echo "status: stopped"; fi; exit 0; fi; exit 2 ;;
   config) if [ -f "\$F/set-done" ]; then echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbrdrill"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
           else echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
   set) [ -f "$T/set-fail" ] && exit 1; : >"\$F/set-done"; exit 0 ;;
@@ -852,4 +852,41 @@ boot_only_cfg() { echo 'BK_DRILL_VM_CHECK_102=boot-only' >>"$BK_CONFIG_DIR/backu
   drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   grep -q "boot-only" "$T/curl.args"
+}
+
+
+@test "vm: virtual devices (serial0: socket, usb0: spice) are fine, host passthrough (a /dev serial port, a host USB device) is refused" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  printf 'serial0: socket\nusb0: spice\nvga: serial0\n' >"$T/vm.extra"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  for bad in 'serial0: /dev/ttyS0' 'usb0: host=1234:5678' 'usb1: mapping=mydevice' 'parallel0: /dev/parport0' 'hostpci0: 0000:01:00.0'; do
+    rm -f "$T/curl.args" "$T/qm.calls" "$T/vmstate/set-done"
+    printf '%s\n' "$bad" >"$T/vm.extra"
+    drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+    [ "$status" -eq 1 ]
+    grep -q "host-bound devices" "$T/curl.args"
+    ! grep -q '^start 990' "$T/qm.calls"
+  done
+}
+
+
+@test "vm boot-only: packets without real disk reads (a failed disk boot falling back to network boot) is NOT a pass" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  touch "$T/low-read"
+  BK_DRILL_BOOT_TRIES=3 BK_DRILL_BOOT_SLEEP=0 drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "read 0 MiB from its disk" "$T/curl.args"
+  [ "$(ev 'drill-vm.FAIL')" = "1" ]
+  [ ! -e "$T/vmstate/scratch-exists" ]
+}
+
+@test "vm boot-only: a successful boot reports both the packets and the disk read in its log" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sent 40 packets"*"read 500 MiB from its disk"* ]]
 }

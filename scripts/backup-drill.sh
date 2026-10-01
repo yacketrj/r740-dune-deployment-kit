@@ -291,7 +291,7 @@ drill_db() {
 
 # ---- VM / CT drill ------------------------------------------------------------------------
 drill_vm() {
-  local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets base_rx sent
+  local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets min_read disk_read base_rx sent
   bk_valid_vmid "$guest" || fail_drill "--guest must be a VM/CT id"
   case " $BK_VMIDS " in *" $guest "*) ;; *) fail_drill "guest $guest is not in BK_VMIDS" ;; esac
   [ -n "$identity" ] && [ -r "$identity" ] || fail_drill "--identity FILE is required and must be readable"
@@ -346,9 +346,12 @@ drill_vm() {
   STAGE="isolate"
   if [ "$kind" = "vm" ]; then
     conf="$(qm config "$scratch")" || fail_drill "could not read the scratch VM config"
-    # A copy of a guest must not fight the live one for a host device.
-    if printf '%s\n' "$conf" | grep -Eq '^(hostpci|usb|serial|parallel)[0-9]+:'; then
-      fail_drill "the restored config has host-bound devices (hostpci/usb/serial/parallel); refusing to boot a copy that could contend with the live guest"
+    # A copy of a guest must not fight the live one for a host device. Real passthrough is: a PCI
+    # device (hostpciN), a host USB device (usbN with host= or mapping=), or a serial/parallel port
+    # pointing at a /dev path. `serial0: socket` and `usb0: spice` are VIRTUAL devices (Proxmox's
+    # web-console serial port is on every VM here) and are fine.
+    if printf '%s\n' "$conf" | grep -Eq '^(hostpci[0-9]+:|usb[0-9]+:.*(host=|mapping=)|(serial|parallel)[0-9]+: */dev/)'; then
+      fail_drill "the restored config has host-bound devices (PCI, host USB, or a serial/parallel port on a /dev path); refusing to boot a copy that could contend with the live guest"
     fi
     model="$(printf '%s\n' "$conf" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
     [ -n "$model" ] || model="virtio"
@@ -368,6 +371,10 @@ drill_vm() {
   # discovery); an image that cannot boot stays silent. The tap's rx_packets counts what the guest sent.
   tap_rx() { cat "${BK_DRILL_NET_SYSFS:-/sys/class/net}/tap${scratch}i0/statistics/rx_packets" 2>/dev/null || echo 0; }
   min_packets="${BK_DRILL_MIN_PACKETS:-5}"
+  # A guest whose disk will not boot can still send packets (firmware falls back to a network boot);
+  # a real OS boot also READS the disk (kernel, initrd, libraries): require at least this much.
+  min_read="${BK_DRILL_MIN_DISK_READ_BYTES:-67108864}"
+  disk_read=0
   base_rx=0
   if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then base_rx="$(tap_rx)"; fi
   if [ "$kind" = "vm" ]; then qm start "$scratch" || fail_drill "scratch VM did not start"; else pct start "$scratch" || fail_drill "scratch CT did not start"; fi
@@ -376,7 +383,9 @@ drill_vm() {
   for i in $(seq 1 "${BK_DRILL_BOOT_TRIES:-120}"); do
     if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then
       sent=$(($(tap_rx) - base_rx))
-      if qm status "$scratch" 2>/dev/null | grep -q running && [ "$sent" -ge "$min_packets" ]; then up=1; break; fi
+      disk_read="$(qm status "$scratch" --verbose 2>/dev/null | awk '/^diskread:/ { print $2 }')"
+      disk_read="${disk_read:-0}"
+      if qm status "$scratch" 2>/dev/null | grep -q running && [ "$sent" -ge "$min_packets" ] && [ "$disk_read" -ge "$min_read" ]; then up=1; break; fi
     elif [ "$kind" = "vm" ]; then
       qm agent "$scratch" ping >/dev/null 2>&1 && { up=1; break; }
     else
@@ -386,14 +395,14 @@ drill_vm() {
   done
   if [ "$up" -ne 1 ]; then
     if [ "$boot_only" -eq 1 ] && [ "$kind" = "vm" ]; then
-      fail_drill "the restored VM did not show signs of life: it sent $sent packet(s) on its isolated network (need $min_packets) or is not running; the image may not boot"
+      fail_drill "the restored VM did not show signs of life: it sent $sent packet(s) on its isolated network (need $min_packets) and read $((disk_read / 1048576)) MiB from its disk (need $((min_read / 1048576)) MiB), or is not running; the image may not boot"
     fi
     fail_drill "the restored guest did not come up (no guest-agent answer / not running)"
   fi
 
   STAGE="in-guest-check"
   if [ "$boot_only" -eq 1 ]; then
-    bk_log "boot-only check: the restored guest is running and sent ${sent:-0} packets on its isolated network (no in-guest command was run)"
+    bk_log "boot-only check: the restored guest is running, sent ${sent:-0} packets on its isolated network and read $((${disk_read:-0} / 1048576)) MiB from its disk (no in-guest command was run)"
     rc=0
   elif [ "$kind" = "vm" ]; then
     out="$(qm guest exec "$scratch" --timeout 120 -- /bin/sh -c "$check_cmd" 2>&1)" || fail_drill "in-guest check could not run: $(printf '%s' "$out" | cut -c1-200)"
