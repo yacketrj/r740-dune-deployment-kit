@@ -25,7 +25,14 @@
 # (the same abort as Ctrl-C) if the game or the host looks stressed for several samples in a row.
 # See scripts/backup-guard.sh.
 #
-# Options:  --guard            enable the safety guard (see above)
+# Announcements (--announce, or BK_WEEKLY_ANNOUNCE=1): for runs that include a guest listed in
+# BK_ANNOUNCE_GUESTS (default 101, the game VM). In-game Server Broadcast banners: a warning 30, 15, 5
+# and 1 minute before the start (the job waits that long first), a notice when it starts and every
+# 30 minutes while it runs, and a closing message (sealed / halted / postponed). Best-effort: never
+# fails the backup. Needs the console API key; see scripts/backup-announce.sh.
+#
+# Options:  --announce         in-game warnings and notices (see above)
+#           --guard            enable the safety guard (see above)
 #           --progress (-p)    print a status line every BK_WEEKLY_PROGRESS_S (default 10)
 #                              seconds: bytes written, rate, elapsed, vzdump's own percent
 #           --verbose (-v)     also show vzdump's log lines and each stage (read-back etc.)
@@ -44,10 +51,12 @@ only=""
 progress=0
 verbose=0
 guard=0
-usage() { echo "usage: $0 [--guard] [--progress] [--verbose] [--only \"ID ID\"]" >&2; exit 2; }
+announce=0
+usage() { echo "usage: $0 [--announce] [--guard] [--progress] [--verbose] [--only \"ID ID\"]" >&2; exit 2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --only) only="${2:-}"; [ -n "$only" ] || usage; shift 2 ;;
+    --announce) announce=1; shift ;;
     --guard) guard=1; shift ;;
     --progress | -p) progress=1; shift ;;
     --verbose | -v) verbose=1; shift ;;
@@ -61,6 +70,7 @@ bk_secure_umask
 bk_load_config
 
 [ "${BK_WEEKLY_GUARD:-0}" != "1" ] || guard=1
+[ "${BK_WEEKLY_ANNOUNCE:-0}" != "1" ] || announce=1
 subset_run=0
 if [ -n "$only" ]; then
   for want in $only; do
@@ -101,13 +111,39 @@ on_err() {
   exit 1
 }
 trap 'on_err $LINENO' ERR
-fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
+fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; announce_close halted; exit 1; }
 
 # Ctrl-C / Ctrl-Z / kill / hangup: stop the whole pipeline (releasing the guest backup), remove
 # the partial file, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or a
 # timeout from outside is.
+# --- in-game announcements: state and the closing message --------------------------------------------
+announce_on=0        # this run announces (flag set and a guest in BK_ANNOUNCE_GUESTS is being imaged)
+announce_open=0      # players have been told something that still needs a closing message
+announce_started=0   # the backup itself has begun
+ann_pid=""
+announce_close() { # done|halted
+  [ "$announce_on" -eq 1 ] && [ "$announce_open" -eq 1 ] || return 0
+  announce_open=0
+  [ -z "$ann_pid" ] || kill "$ann_pid" 2>/dev/null || true
+  if [ "$1" = "done" ]; then bk_announce "done"
+  elif [ "$announce_started" -eq 1 ]; then bk_announce halted
+  else bk_announce postponed
+  fi
+  plog "announce: closing message sent (${1}${announce_started:+, started=$announce_started})" >/dev/null
+}
+wait_until() { # epoch: sleep (interruptibly) until then
+  local target="$1" now left chunk
+  while now="$(date +%s)"; [ "$now" -lt "$target" ]; do
+    left=$((target - now))
+    chunk="${BK_ANNOUNCE_WAIT_CHUNK_S:-5}"
+    sleep "$((left > chunk ? chunk : left))" &
+    wait "$!"
+  done
+}
+
 guard_reason="$BK_STATE_DIR/weekly-guard.reason"
 abort_hook() {
+  announce_close halted
   printf '%s aborted by SIG%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$progress_log" 2>/dev/null || true
   if [ -s "$guard_reason" ]; then
     plog "STOPPED by the safety guard to protect the game: $(cat "$guard_reason")" >/dev/null
@@ -371,7 +407,33 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   return 0
 }
 
+read -r -a guest_list <<<"$BK_VMIDS"
+if [ "$announce" -eq 1 ]; then
+  for g in "${guest_list[@]}"; do
+    case " ${BK_ANNOUNCE_GUESTS:-101} " in *" $g "*) announce_on=1 ;; esac
+  done
+fi
+
 rm -f -- "$guard_reason" 2>/dev/null || true
+
+# Countdown: warnings 30/15/5/1 minute before the start. The job waits for the whole lead time first
+# (BK_ANNOUNCE_SECS_PER_MIN is a test hook), so it can be started at T-30 minutes by a timer.
+if [ "$announce_on" -eq 1 ]; then
+  STAGE="announce-countdown"
+  spm="${BK_ANNOUNCE_SECS_PER_MIN:-60}"
+  read -r -a lead <<<"${BK_ANNOUNCE_LEAD_MINUTES:-30 15 5 1}"
+  bk_announce_configured || plog "announce: not configured; the countdown still runs, silently"
+  t0=$(($(date +%s) + lead[0] * spm))
+  announce_open=1
+  for m in "${lead[@]}"; do
+    wait_until "$((t0 - m * spm))"
+    plog "announce: warning, $m minute(s) before the start"
+    bk_announce lead "$m"
+  done
+  wait_until "$t0"
+  hard_stop=$((hard_stop + lead[0] * spm))
+fi
+
 if [ "$guard" -eq 1 ]; then
   STAGE="guard-precheck"
   if ! pre="$(bash "$here/backup-guard.sh" --once)"; then
@@ -382,7 +444,22 @@ if [ "$guard" -eq 1 ]; then
     --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >>"$progress_log" 2>&1 &
 fi
 
-read -r -a guest_list <<<"$BK_VMIDS"
+if [ "$announce_on" -eq 1 ]; then
+  announce_started=1
+  announce_open=1
+  plog "announce: the backup starts now"
+  bk_announce start
+  (
+    n=0
+    while true; do
+      sleep "$(( ${BK_ANNOUNCE_EVERY_MIN:-30} * ${BK_ANNOUNCE_SECS_PER_MIN:-60} ))" &
+      wait "$!"
+      n=$((n + 1))
+      bk_announce ongoing "$((n * ${BK_ANNOUNCE_EVERY_MIN:-30}))"
+    done
+  ) &
+  ann_pid=$!
+fi
 for idx in "${!guest_list[@]}"; do
   backup_one "${guest_list[$idx]}" || true
   # a later guest must never start after the hard stop
@@ -396,6 +473,7 @@ STAGE="summary"
 if [ "${#failures[@]}" -gt 0 ]; then
   fail "guests failed: ${failures[*]}"
 fi
+announce_close "done"
 if [ "$subset_run" -eq 0 ]; then
   bk_state_touch weekly
   bk_dead_man_ping || true

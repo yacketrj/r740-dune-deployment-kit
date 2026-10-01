@@ -766,3 +766,152 @@ EOF
   [ "$status" -eq 0 ]
   grep -q "dune status" "$BATS_TEST_TMPDIR/ssh.calls"
 }
+
+# ---- in-game announcements (--announce) -----------------------------------------------------------
+
+ann_curl() {
+  stub curl 'in="$(cat)"; echo "$in" >>"$BATS_TEST_TMPDIR/curl.stdin"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"
+case "$in" in *admin/broadcast*) [ -f "$BATS_TEST_TMPDIR/ann-fail" ] && exit 22 ;; esac; exit 0'
+}
+ann_cfg() { # lead-minutes
+  printf 'dak_testkey123\n' >"$BATS_TEST_TMPDIR/annkey"; chmod 600 "$BATS_TEST_TMPDIR/annkey"
+  {
+    echo 'BK_ANNOUNCE_URL=http://console.test:8088'
+    echo "BK_ANNOUNCE_KEY_FILE=$BATS_TEST_TMPDIR/annkey"
+    echo 'BK_ANNOUNCE_SECS_PER_MIN=1'
+    echo "BK_ANNOUNCE_LEAD_MINUTES=\"${1:-4 3 2 1}\""
+    echo 'BK_ANNOUNCE_EVERY_MIN=2'
+    echo 'BK_ANNOUNCE_WAIT_CHUNK_S=11'
+    echo 'BK_VMIDS="101"'
+  } >>"$BK_CONFIG_DIR/backup.env"
+  ann_curl
+}
+ann_vzdump() { # seconds the "backup" runs
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+head -c 4000 /dev/zero | tr '\\0' x
+sleep $1
+head -c 4000 /dev/zero | tr '\\0' x
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/vzdump"
+}
+titles() { grep -o '"title":"[^"]*"' "$BATS_TEST_TMPDIR/curl.args" | sed 's/^"title":"//; s/"$//'; }
+teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "sleep 11" 2>/dev/null || true; }
+
+@test "announce: warnings in order, then start, then ongoing notices, then the closing message" {
+  ann_cfg "4 3 2 1"; ann_vzdump 5
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  mapfile -t seq < <(titles)
+  [ "${seq[0]}" = "The Mentats Prepare the Great Record" ]
+  [ "${seq[1]}" = "The Mentats Prepare the Great Record" ]
+  [ "${seq[2]}" = "The Mentats Prepare the Great Record" ]
+  [ "${seq[3]}" = "The Mentats Prepare the Great Record" ]
+  [ "${seq[4]}" = "The Recording of Arrakis Begins" ]
+  titles | grep -q "The Record Continues"
+  [ "${seq[$((${#seq[@]} - 1))]}" = "The Record Is Sealed" ]
+  grep -q 'In 4 minutes' "$BATS_TEST_TMPDIR/curl.args"
+  grep -q 'In 1 minute ' "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "announce: the job waits out the whole lead time (first warning to start >= 4 s) before it starts imaging" {
+  ann_cfg "4 3 2 1"; ann_vzdump 1
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  log="$BK_STATE_DIR/weekly-progress.log"
+  first="$(grep -m1 'announce: warning, 4 minute' "$log" | cut -d' ' -f1)"
+  begin="$(grep -m1 'announce: the backup starts now' "$log" | cut -d' ' -f1)"
+  [ -n "$first" ]
+  [ -n "$begin" ]
+  [ $(( $(date -d "$begin" +%s) - $(date -d "$first" +%s) )) -ge 4 ]
+}
+
+@test "announce: the API key goes to curl on stdin and never appears in its arguments or the output" {
+  ann_cfg "2 1"; ann_vzdump 1
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  grep -q 'Bearer dak_testkey123' "$BATS_TEST_TMPDIR/curl.stdin"
+  ! grep -q 'dak_testkey123' "$BATS_TEST_TMPDIR/curl.args"
+  [[ "$output" != *"dak_testkey123"* ]]
+}
+
+@test "announce: when the console cannot be reached the backup still succeeds" {
+  ann_cfg "2 1"; ann_vzdump 1
+  touch "$BATS_TEST_TMPDIR/ann-fail"
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+  [[ "$output" == *"announce FAILED"* ]]
+}
+
+@test "announce: not configured -> no broadcast is attempted, the countdown still runs, the backup succeeds" {
+  ann_cfg "2 1"; ann_vzdump 1
+  sed -i '/^BK_ANNOUNCE_KEY_FILE=/d' "$BK_CONFIG_DIR/backup.env"
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+  [[ "$output" == *"not configured; the countdown still runs"* ]]
+}
+
+@test "announce: off by default and for guests that are not announced (only the game VM is)" {
+  ann_cfg "2 1"; ann_vzdump 1
+  run_weekly
+  [ "$status" -eq 0 ]
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+  sed -i 's#^BK_VMIDS=.*#BK_VMIDS="101 102"#' "$BK_CONFIG_DIR/backup.env"
+  run_weekly --announce --only 102
+  [ "$status" -eq 0 ]
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+}
+
+@test "announce: the safety guard refusing to start sends a 'postponed' message after the warnings" {
+  guard_stubs
+  ann_cfg "2 1"; ann_vzdump 1
+  echo 0 >"$BATS_TEST_TMPDIR/degrade-after"
+  run_weekly --announce --guard
+  [ "$status" -eq 1 ]
+  mapfile -t seq < <(titles)
+  [ "${seq[0]}" = "The Mentats Prepare the Great Record" ]
+  [ "${seq[$((${#seq[@]} - 1))]}" = "The Recording Is Postponed" ]
+  ! titles | grep -q "The Recording of Arrakis Begins"
+}
+
+@test "announce: Ctrl-C during the countdown sends 'postponed', exits 130 and leaves nothing running" {
+  ann_cfg "40"; ann_vzdump 1
+  run run_with_signal INT 11 "$SCRIPT" --announce
+  [[ "$output" == *"rc=130 leftover=0"* ]]
+  titles | grep -q "The Mentats Prepare the Great Record"
+  [ "$(titles | tail -n 1)" = "The Recording Is Postponed" ]
+  [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ] || ! grep -q . "$BATS_TEST_TMPDIR/vzdump.calls"
+}
+
+@test "announce: Ctrl-C after the backup started sends 'halted' and the notices stop" {
+  ann_cfg "1"
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo first-bytes
+exec sleep 317
+EOF
+  run run_with_signal INT 317 "$SCRIPT" --announce
+  [[ "$output" == *"rc=130 leftover=0"* ]]
+  [ "$(titles | tail -n 1)" = "The Recording Was Halted" ]
+  titles | grep -q "The Recording of Arrakis Begins"
+  before="$(titles | wc -l)"
+  sleep 3
+  [ "$(titles | wc -l)" -eq "$before" ]
+}
+
+@test "announce: a failed backup ends with the 'halted' message, not a dangling notice" {
+  ann_cfg "1"; ann_vzdump 1
+  touch "$BATS_TEST_TMPDIR/fail-101"
+  rm -f "$BATS_TEST_TMPDIR/bin/vzdump"
+  cat >"$BATS_TEST_TMPDIR/bin/vzdump" <<EOF
+#!/usr/bin/env bash
+echo "boom" >&2
+exit 255
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/vzdump"
+  run_weekly --announce
+  [ "$status" -eq 1 ]
+  [ "$(titles | tail -n 1)" = "The Recording Was Halted" ]
+}

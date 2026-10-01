@@ -110,6 +110,87 @@ bk_pool_headroom() { # min_free_gb [max_pct]
   return 0
 }
 
+# --- in-game announcements (console Server Broadcast) ------------------------------------------
+# POST /api/admin/broadcast on the game console: {title, body, durationSec}, published to all players.
+# Needs a bearer API key scoped to the single action admin:broadcast, kept in a root-only file
+# (BK_ANNOUNCE_KEY_FILE) and sent on curl's stdin, never in argv. Best-effort: an announcement that
+# cannot be sent is logged and NEVER fails the caller. Limits: title <= 80 chars, body <= 500.
+# Every text can be replaced with BK_ANNOUNCE_TEXT_<KEY>_TITLE / _BODY (KEY in upper case).
+
+# Set BK_ANN_TITLE and BK_ANN_BODY for KEY (lead|start|ongoing|done|halted|postponed) and N
+# (minutes: until the start for "lead", elapsed so far for "ongoing").
+bk_announce_text() { # key [n]
+  local key="${1:?key}" n="${2:-0}" up unit
+  up="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+  unit="minutes"; [ "$n" = "1" ] && unit="minute"
+  case "$key" in
+    lead)
+      BK_ANN_TITLE="The Mentats Prepare the Great Record"
+      BK_ANN_BODY="In $n $unit the Mentats will commit the memory of Arrakis to the archives. The sands may stir: brief pauses or delays may be felt. No restart is planned and nothing will be lost."
+      ;;
+    start)
+      BK_ANN_TITLE="The Recording of Arrakis Begins"
+      BK_ANN_BODY="The Mentats are now recording the memory of Arrakis. The sands may pause or stutter for a time. This is expected and nothing is lost. Patience, as the Fremen teach."
+      ;;
+    ongoing)
+      BK_ANN_TITLE="The Record Continues"
+      BK_ANN_BODY="The Mentats are still recording the memory of Arrakis, about $n minutes so far. Pauses or delays may be felt; they will pass like a sandstorm."
+      ;;
+    done)
+      BK_ANN_TITLE="The Record Is Sealed"
+      BK_ANN_BODY="The Mentats have sealed the record of Arrakis. The sands run true once more. Thank you for your patience."
+      ;;
+    halted)
+      BK_ANN_TITLE="The Recording Was Halted"
+      BK_ANN_BODY="The Mentats halted the recording early to keep the sands steady. Nothing is lost and nothing is needed from you."
+      ;;
+    postponed)
+      BK_ANN_TITLE="The Recording Is Postponed"
+      BK_ANN_BODY="The Mentats have postponed the recording of Arrakis. Nothing is needed from you."
+      ;;
+    test)
+      BK_ANN_TITLE="Test of the Speaking-Stone"
+      BK_ANN_BODY="This is a test of the server's announcement system. Please ignore it."
+      ;;
+    *) return 1 ;;
+  esac
+  local tv="BK_ANNOUNCE_TEXT_${up}_TITLE" bv="BK_ANNOUNCE_TEXT_${up}_BODY"
+  [ -z "${!tv:-}" ] || BK_ANN_TITLE="${!tv}"
+  [ -z "${!bv:-}" ] || BK_ANN_BODY="${!bv}"
+  BK_ANN_TITLE="${BK_ANN_TITLE:0:80}"
+  BK_ANN_BODY="${BK_ANN_BODY:0:500}"
+  return 0
+}
+
+# Is the announcement channel configured (URL and a readable key file)?
+bk_announce_configured() {
+  [ -n "${BK_ANNOUNCE_URL:-}" ] && [ -n "${BK_ANNOUNCE_KEY_FILE:-}" ] && [ -r "$BK_ANNOUNCE_KEY_FILE" ]
+}
+
+# Send the announcement for KEY. Sets BK_ANNOUNCE_LAST_RC: 0 sent, 1 failed, 2 not configured.
+# Never returns non-zero.
+export BK_ANNOUNCE_LAST_RC=2
+bk_announce() { # key [n]
+  local key="${1:?key}" n="${2:-0}" k payload
+  BK_ANNOUNCE_LAST_RC=2
+  bk_announce_text "$key" "$n" || { bk_log "announce: unknown message '$key' (ignored)"; return 0; }
+  if ! bk_announce_configured; then
+    bk_log "announce skipped: $key (not configured)"
+    return 0
+  fi
+  k="$(tr -d '[:space:]' <"$BK_ANNOUNCE_KEY_FILE")"
+  payload="$(jq -nc --arg t "$BK_ANN_TITLE" --arg b "$BK_ANN_BODY" --argjson d "${BK_ANNOUNCE_DURATION_S:-40}" '{title:$t, body:$b, durationSec:$d}')" || return 0
+  BK_ANNOUNCE_LAST_RC=1
+  if printf 'url = "%s/api/admin/broadcast"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${BK_ANNOUNCE_URL%/}" "$k" \
+    | curl -fsS -m 15 -X POST -d "$payload" -K - >/dev/null 2>&1; then
+    BK_ANNOUNCE_LAST_RC=0
+    bk_log "announced in game: $key ($BK_ANN_TITLE)"
+  else
+    bk_log "announce FAILED: $key (ignored; the backup is not affected)"
+  fi
+  return 0
+}
+
 # --- abort handling: nothing a job started may outlive it ---------------------------------
 # Kill PID and everything below it (children first), whatever process group they are in.
 bk_kill_tree() { # signal pid
