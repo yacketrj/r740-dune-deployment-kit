@@ -38,6 +38,8 @@ BK_DISCORD_WEBHOOK_FILE=$T/hook
 BK_DEADMAN_URL_FILE=$T/deadman
 BK_DRILL_GUARD=0
 BK_BACKUP_SSH=dune@prod.test
+BK_DRILL_DESTROY_RETRY_S=0
+BK_KILL_GRACE_S=2
 BK_DRILL_MEMINFO=$T/meminfo
 BK_DRILL_NODE_SYSFS=$T/node
 EOF
@@ -217,7 +219,7 @@ EOF
 T="$BATS_TEST_TMPDIR"
 echo "$*" >>"$T/sysctl.calls"
 case "$1" in
-  -n) [ -f "$T/dirty-unreadable" ] && exit 1; printf '%s\n' 20 10 ;;
+  -n) [ -f "$T/dirty-unreadable" ] && exit 1; if [ -f "$T/dirty-zero" ]; then printf '%s\n' 0 0; else printf '%s\n' 20 10; fi ;;
   -q) [ -f "$T/sysctl-fail" ] && exit 1 ;;
 esac
 exit 0
@@ -1149,7 +1151,8 @@ EOS
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"PREFLIGHT OK"* ]]
-  [[ "$output" == *"writes capped at 40960KiB/s"* ]]
+  [[ "$output" == *"disk /dev/sda write cap 40960KiB/s"* ]]
+  [[ "$output" == *"also capped by qmrestore at 40960KiB/s"* ]]
   [[ "$output" == *"MemoryHigh=2G"* ]]
   [[ "$output" == *"NUMA node 1"* ]]
   [[ "$output" == *"CPU affinity 1,3,5,7"* ]]
@@ -1183,6 +1186,7 @@ EOS
   grep -q -- "--bwlimit 40960" "$T/qmrestore.calls"
   grep -q "MemoryHigh=2G" "$T/systemd-run.calls"
   grep -q "MemorySwapMax=0" "$T/systemd-run.calls"
+  grep -q "IOWriteBandwidthMax=/dev/sda 40960K" "$T/systemd-run.calls"
   grep -q "timeout -k 30 150m" "$T/systemd-run.calls"
   setlines="$(grep '^set 990' "$T/qm.calls")"
   [[ "$setlines" == *"--numa0 cpus=0-3,hostnodes=1,memory=4096,policy=bind"* ]]
@@ -1283,7 +1287,7 @@ EOS
   vm_ok_image
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 0 ]
-  grep -q '^set 990 --protection 0 --onboot 0' "$T/qm.calls"
+  grep -q '^set 990 --skiplock 1 --protection 0 --onboot 0' "$T/qm.calls"
   grep -q '^destroy 990 --skiplock 1 --purge 1 --destroy-unreferenced-disks 1' "$T/qm.calls"
   never "still exists" "$T/curl.args"
 }
@@ -1519,4 +1523,44 @@ EOS
   [ "$status" -eq 1 ]
   grep -q "SIGINT is ignored" "$T/curl.args"
   [ ! -e "$T/qmrestore.calls" ]
+}
+
+@test "vm guardrail: a host that already runs its dirty-page limits in bytes mode (ratio 0) is refused, never left lowered" {
+  vm_ok_image
+  : >"$T/dirty-zero"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "bytes mode" "$T/curl.args"
+  [ ! -e "$T/qmrestore.calls" ]
+  never "dirty_bytes" "$T/sysctl.calls"
+}
+
+@test "vm guardrail: a UEFI/vTPM guest works: efidisk and tpmstate are checked to be scratch volumes but get no speed limit (they cannot take one)" {
+  vm_ok_image
+  printf 'efidisk0: local-lvm:vm-990-disk-1,efitype=4m,size=4M\ntpmstate0: local-lvm:vm-990-disk-2,size=4M,version=v2.0\n' >"$T/vm.extra"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  never '^set 990 --(efidisk0|tpmstate0)' "$T/qm.calls"
+  grep -q '^set 990 --scsi0 .*mbps_rd=60,mbps_wr=30' "$T/qm.calls"
+  # but a raw device on those types is still refused
+  clean vmstate qm.calls curl.args
+  printf 'efidisk0: /dev/sdb\n' >"$T/vm.extra"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "not on the scratch volumes" "$T/curl.args"
+}
+
+@test "vm guardrail: every extra NUMA node and a vcpus setting from the prod config are removed and verified gone" {
+  vm_ok_image
+  printf 'numa2: cpus=60-79,hostnodes=1,memory=1024,policy=bind\nvcpus: 60\n' >"$T/vm.extra"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  setlines="$(grep '^set 990' "$T/qm.calls")"
+  [[ "$setlines" == *"--delete numa1,numa2,vcpus,"* || "$setlines" == *"--delete numa1,numa2,vcpus "* ]] || [[ "$setlines" == *"--delete numa1,numa2,vcpus"* ]]
+  clean vmstate qm.calls curl.args destroyed
+  printf 'numa3: cpus=1,hostnodes=1,memory=1,policy=bind\n' >"$T/post-override"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "still configured" "$T/curl.args"
+  never '^start 990' "$T/qm.calls"
 }
