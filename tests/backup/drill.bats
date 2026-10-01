@@ -1468,3 +1468,55 @@ EOS
   [ ! -e "$BK_STATE_DIR/drill-guard.reason" ]
   ram_empty
 }
+
+@test "vm guard: a guard that dies AFTER the restore stops the drill before the copy of prod is booted" {
+  vm_ok_image
+  guard_on_stubs
+  cat >"$T/bin/qmrestore" <<EOS
+#!/usr/bin/env bash
+echo "\$*" >>"$T/qmrestore.calls"
+cat >"$T/restored.bin"
+mkdir -p "$T/vmstate"; : >"$T/vmstate/scratch-exists"
+pkill -KILL -f 'backup-guard.sh --target' || true
+sleep 1
+EOS
+  chmod +x "$T/bin/qmrestore"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "no longer running" "$T/curl.args"
+  never '^start 990' "$T/qm.calls"
+  [ -e "$T/destroyed" ]
+}
+
+@test "vm guard: a kill (not a guard stop) is never reported as a guard stop, even if an old reason file existed" {
+  vm_ok_image
+  mkdir -p "$BK_STATE_DIR"
+  echo "old stale reason: game was DEGRADED" >"$BK_STATE_DIR/drill-guard.reason"
+  cat >"$T/bin/qmrestore" <<EOS
+#!/usr/bin/env bash
+echo "\$*" >>"$T/qmrestore.calls"
+cat >"$T/restored.bin"
+mkdir -p "$T/vmstate"; : >"$T/vmstate/scratch-exists"
+exec sleep 331
+EOS
+  chmod +x "$T/bin/qmrestore"
+  bash "$SCRIPT" vm --guest 101 --identity "$BK_AGE_IDENTITY" >"$T/out.txt" 2>&1 &
+  drill_pid=$!
+  for _ in $(seq 1 100); do [ -e "$T/qmrestore.calls" ] && break; sleep 0.1; done
+  [ -e "$T/qmrestore.calls" ]
+  sleep 1
+  kill -TERM "$drill_pid"
+  wait "$drill_pid" || true
+  never "safety guard" "$T/curl.args"
+  [ -e "$T/destroyed" ]
+  [ ! -e "$BK_STATE_DIR/drill-guard.reason" ]
+}
+
+@test "vm guard: if SIGINT is ignored in the shell that started the drill (so the guard could not stop it), the drill refuses" {
+  vm_ok_image
+  guard_on_stubs
+  run bash -c 'trap "" INT; exec bash "$0" vm --guest 101 --identity "$1"' "$SCRIPT" "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "SIGINT is ignored" "$T/curl.args"
+  [ ! -e "$T/qmrestore.calls" ]
+}
