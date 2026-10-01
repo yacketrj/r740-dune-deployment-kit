@@ -58,6 +58,31 @@ The drill can run an in-guest command only when the guest runs the QEMU guest ag
 
 Ctrl-C, Ctrl-Z, a `kill`, or closing the terminal **stops the whole job and everything it started** (the ssh pull, the `vzdump` image pipeline, a scratch VM or container in a drill), removes its partial file and exits. Ctrl-Z does not suspend a job: a suspended image would keep holding its snapshot. A deliberate Ctrl-C or Ctrl-Z raises no alert; a `kill` or timeout from outside does. Never stop a run with `kill -9` on a single process: use Ctrl-C, or `kill <PID of the backup-*.sh script>`.
 
+### Protecting live players: the safety guard and in-game announcements
+
+For an unattended image of a guest that hosts players (the prod game VM), run the weekly job with `--guard --announce` (or set `BK_WEEKLY_GUARD=1` / `BK_WEEKLY_ANNOUNCE=1`).
+
+**Guard (`scripts/backup-guard.sh`).** Before the job starts it checks that the game reports READY (`dune status` over ssh), that disk pressure (PSI `io` avg10 <= `BK_GUARD_IO_PRESSURE_MAX`, default 30), disk busy (<= `BK_GUARD_DISK_BUSY_MAX`, default 95 %) and the thin pool (<= `BK_GUARD_POOL_MAX`, default 85 %) are healthy. If not, nothing starts and a "postponed" notice is sent. While the job runs a background sample every 10 seconds repeats the checks; **3 bad samples in a row (about 30 seconds)** stop the whole job cleanly, send a "halted" notice and alert Discord. `backup-guard.sh --once` runs the checks once and prints `OK` or the reason.
+
+**Announcements (`scripts/backup-announce.sh`).** The job warns players in-game through the console's broadcast API: **30, 15, 5 and 1 minute before the start** (`BK_ANNOUNCE_LEAD_MINUTES`), a notice when it starts, **a notice every 30 minutes** while it runs (`BK_ANNOUNCE_EVERY_MIN`), and a closing notice. Only guests listed in `BK_ANNOUNCE_GUESTS` (default `101`) are announced. The countdown happens inside the job, so a run for 05:30 must be started at 05:00. Announcements are best-effort: a failed broadcast is logged and never stops a backup.
+
+- `backup-announce.sh print` shows every message exactly as players will see it (sends nothing).
+- `backup-announce.sh status` says whether announcements are configured.
+- `backup-announce.sh send KEY [N] --yes` sends one real banner to all online players; it refuses without `--yes`.
+
+**One-time setup.** In the console (Settings -> API Keys) create a key named `backup-announce` limited to the single action `admin:broadcast`. Save it in a root-only file (mode 600) and set `BK_ANNOUNCE_URL` and `BK_ANNOUNCE_KEY_FILE` in `backup.env`. The key can broadcast text and nothing else; revoke it in the same page at any time. Keep the key out of notes and chat.
+
+**Scheduling a one-off prod image.** Use a transient timer that runs a pinned copy of the scripts, so later edits cannot change what runs:
+
+```
+git archive <commit> scripts | tar -x -C /root/.local/share/r740-backup-pinned/<commit>
+systemd-run --unit=r740-prod-image-YYYYMMDD --on-calendar='YYYY-MM-DD 05:00:00' \
+  --setenv=HOME=/root --setenv=BK_WEEKLY_FORCE=1 --property=Nice=10 --property=IOSchedulingClass=idle \
+  /usr/bin/bash /root/.local/share/r740-backup-pinned/<commit>/scripts/backup-weekly.sh --only 101 --progress --guard --announce
+```
+
+Cancel before it starts with `systemctl stop <unit>.timer`; stop it mid-run with `systemctl stop <unit>.service`. A transient timer does not survive a host reboot.
+
 ## 3. Definition of P1
 
 A **P1** is: a backup tier is stale or failing, a restore drill failed, an image or database set is DEGRADED (one target missing), or the alarm could not deliver its alert (exit code 5). It is delivered by a Discord message that pings `BK_ALERT_MENTION` **and** by the external dead-man's-switch going silent-or-failed. Every failure alert from these scripts is a P1: treat it as "there is currently less backup than there should be" and fix it the same day. An overdue drill (35 days for the database, 100 for VM/CT and escrow) is also raised by the alarm.

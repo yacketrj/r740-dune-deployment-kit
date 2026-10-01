@@ -9,6 +9,9 @@ introduced them, in Keep a Changelog style, newest first.
 ## Unreleased
 
 ### Added
+- **Safety guard and in-game announcements for unattended weekly images** (`backup-guard.sh`, `backup-announce.sh`, `backup-weekly.sh --guard --announce`): pre-check and live sampling (game READY, disk pressure, thin pool; 3 bad samples stop the job), warnings 30/15/5/1 minutes before the start, a notice at the start and every 30 minutes, and a closing notice, sent through a console API key limited to `admin:broadcast`. Runbook section "Protecting live players" and `backup.env.example` settings documented.
+
+### Added
 
 - **Tiered, encrypted backup system** (design v2, issue #119): DB tier
   every 6h, daily set, weekly VM/CT images; age-encrypted (host holds
