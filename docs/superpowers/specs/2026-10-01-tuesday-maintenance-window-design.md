@@ -1,6 +1,6 @@
-# Tuesday maintenance window: backup, update, verify (design v1)
+# Tuesday maintenance window: backup, update, verify (design v2)
 
-Status: DESIGN, not built. As of 2026-10-01. Operator decisions are in section 2; open decisions in section 9.
+Status: DESIGN v2, not built. As of 2026-10-01. v2 resolves the Layer 1 audit (docs/superpowers/audits/2026-10-01-maintenance-window-layer1-audit.md, 41 items, 1 CRITICAL). Operator decisions: section 2a. Open decisions: section 9 (two).
 Related: `2026-09-29-backup-strategy-design.md`, `docs/08-backup-runbook.md`, README Requirements 7, 20, 32.
 
 ## 1. Goal
@@ -53,86 +53,153 @@ may be broken on purpose.
 | The game restarts itself daily at 05:00 (warning 04:45); the in-guest DB dump runs 04:30 | guest timers, journal |
 | A prod image takes about 47 minutes end to end (36 min copy, 11 min read-back) | 2026-10-01 run |
 | `dune stop` runs `stop-all.sh` with `DUNE_MANUAL_STOP=1` (stops autoscaler, game servers, postgres) and **checks nothing about players**; `dune shutdown-protection` is only a host-shutdown hook (graceful stop when the VM shuts down), not an interlock | Core source `runtime/scripts/dune`, `stop-all.sh`, `shutdown-protection.sh` |
+| `dune start` clears the manual-stop marker (`rm -f manual-stop.env`); `dune stop` is the only thing that sets it | Core `runtime/scripts/dune:249,255` (architect review) |
+| `dune stop` stops game servers, then RabbitMQ, then postgres with `docker stop --time 120` (clean); a failure leaves postgres running | Core `stop-all.sh:57-69`, `stop-postgres-container.sh` (DBA review) |
+| Game servers are removed with `docker rm -f` (no grace); the console applies queued base/vehicle writes before postgres goes down | Core `recycle-world-game-servers.sh:90`, `stop-game-servers-for-db-writes.sh` |
+| `update auto enable` writes defaults (notify `15,10,5,1`) unless given values; `disable` stops the service and removes the unit files | Core `update.sh:435-440,493,504-509` |
+| The stack updater has no checksum or signature check; the env vars for API base, web base, token and repo are honoured; tar extraction has no member-path guard | Core `self-update.sh:110-112,531-536,1605-1629` |
+| Only the `INFO: N%` vzdump line means the backup job has started (earlier INFO lines exist) | `backup-weekly.sh:320,340,351` |
+| The existing guard counts "not READY" as a bad sample and interrupts its target after 3 | `backup-guard.sh:68-69,102-105` |
 
-## 4. Sequence
+## 4. Sequence (v2)
 
-All times are targets; the job is driven by a hard clock, not by durations.
+Constants: window 00:30-04:15 local (America/Los_Angeles, pinned; the job refuses on a DST-change night),
+countdown 00:30-01:00, **latest start** of P4 01:05, the update phase never starts after 03:45, **post-update READY deadline 04:25**,
+everything else finished by 04:15. Marker file `/var/lib/r740-backup/maintenance.active` (PID, start time, phase).
 
-| Phase | When | What | Abort rule |
+| Phase | When | What | On failure |
 |---|---|---|---|
-| P0 preflight | 00:30 | Refuse unless: Tuesday window, share mounted+writable, free space >= 3x last prod image, thin pool headroom, game READY, `backup-doctor` has 0 FAIL, the previous run is not still holding the lock, `dune db backup` works. | Do **nothing**: do not disable auto-update, do not stop the game. Alert. |
-| P1 notices | 00:30-01:00 | 30/15/5/1-minute maintenance warnings (in-game + a Discord note). | none |
-| P2 pause patching | 01:00 | `dune update auto disable`; record that **this job** disabled it (so it re-enables only what it disabled). | If it cannot disable, stop here (before touching the game). |
-| P3 daily set | 01:00 | `backup-daily.sh --tier daily` (dumps, secrets, host config). | Failure: stop the window and alert (the daily set is the baseline restore point). |
-| P4 prod image | 01:05 | In-game "going down" notice. `dune stop` (clean). Start the vzdump of VM 101. **When the first vzdump progress line appears (snapshot captured, timeout 120 s)**, run `dune start`, wait for READY (timeout 15 min), in-game "back online" notice. | If the snapshot is not captured in 120 s: kill vzdump, `dune start` immediately, alert, skip the update phase. If READY is not reached: retry `dune start` once, then PAGE the operator (Discord ping); the backup continues. |
-| P5 other guests | after P4 | Images of 102, 103, CT 104 (no game impact). | per-guest failure alerts; continue. |
-| P6 verify backup | after P4 copy + read-back | Prod image read-back SHA matches, header decrypts, file listed in the share, audit-log entry. **Gate: updates only proceed if the prod image is verified OK.** | If not verified: skip updates (no restore point), alert. |
-| P7 update | not before P6, **start by 03:30, never after 03:45** | `dune update check`; if a build is available: `dune update --yes`. `dune self-update check`; if exit 100: `dune db backup && DUNE_SELF_UPDATE_REPO=Red-Blink/dune-awakening-selfhost-docker dune self-update install latest` (README Req 32 form). One at a time, READY verified between. | First failure stops the phase; no retry loop; alert with the exact step and output tail. |
-| P8 verify | after P7, by 04:10 | Section 6 pass criteria. | Any FAIL pages the operator. |
-| P9 always | every exit path | `dune update auto enable` **if this job disabled it**; remove the maintenance marker; final report. | Re-enable failure is a page, not a warning. |
-
-The weekly images for 102/103/CT104 may overlap the update phase only if P5 is finished first; the default is
-sequential so the update never competes with a running image for disk or CPU.
+| P0 preflight | 00:30 | Refuse unless **all** hold: Tuesday and inside the window; `backup-doctor` 0 FAIL; share mounted and a **write+fsync probe** succeeds; free space >= 3x the last prod image; thin pool headroom; game READY; **no `update.sh auto run` active and no staged pending update**; maintenance gate reachable; egress/DNS to Steam and GitHub resolve; previous run not holding the lock; no stale marker. | Do **nothing** (no patching change, no stop). Send "maintenance postponed" and page. |
+| P1 notices | 00:30-01:00 | Window set of messages (section 10): 30/15/5/1-minute warnings in game; one Discord post "window started". Read the population (via `dune status`). | none |
+| P2 pause patching | 01:00 | Gate verb `auto-disable`: **waits for the auto-update service to be inactive**, stores the live policy file (`update-auto.env`: notify minutes, wait-until-empty, apply) on prod, then `dune update auto disable`. Records "disabled by this job" and the stored policy hash. | Cannot disable: stop here, before touching the game. |
+| P3 daily set | 01:00 | `backup-daily.sh --tier daily` under its own lock. | Failure: stop the window, alert (the daily set is the baseline restore point). |
+| P4 prod image | 01:05 | (a) `dune db backup` (the **pairing dump**, timestamp recorded with the image). (b) Share liveness probe again. (c) "going down" notice (population policy 9.1). (d) `dune stop`; **require rc 0 and the `dune-postgres` container exited**, else `dune start` and abort. (e) Start vzdump of VM 101. (f) A background watcher waits for the first **`INFO: N%`** vzdump line (snapshot captured, timeout 120 s). (g) `dune start`, wait for READY (15 min), "back online" notice with the measured downtime. | Snapshot not captured in 120 s: kill vzdump, `dune start`, alert, skip the update phase. READY not reached: one more `dune start`, then PAGE; imaging continues. Postgres still running after stop: do not snapshot, `dune start`, page. |
+| P5 other guests | after P4 | Images of VM 102 and CT 104. **VM 103 (the bot, production) is imaged only**, no other action. | Per-guest failure alerts; continue. |
+| P6 verify backup | after the prod copy + read-back | Read-back SHA matches, header decrypts, file present with the right size, audit entry, pairing dump present with size and sha. **Gate: the update phase only proceeds if all of these hold.** | Skip the update phase, alert (no restore point). |
+| P7 update | not before P6; start by 03:30, never after 03:45 | (a) `dune db backup` again (pre-update dump; gate on size and sha). (b) `dune update check`: if a build is available, `dune update --yes`, wait READY. (c) The stack check (exit **100** = update available, 0 = current, any other exit = "check failed" alert and no install); apply only if the release passes the trust policy (9.5) and can finish before 04:15: gate verb `selfupdate-apply` (fixed environment, repo pinned), wait READY. Per-step timeout 20 min, no retries. | First failure stops the phase; alert with the step and the redacted output tail. |
+| P8 verify | by 04:10 (READY deadline 04:25) | Section 6 pass criteria; the public probe retries for 5 min after READY (the tunnel may flap). | Any FAIL pages the operator. |
+| P9 always | every exit path | **Game-up guarantee** (if this job stopped the game and it is down: `dune start`, wait, page if it fails); `auto-enable` **restores the stored policy values** and verifies equality; remove the marker; final Discord report (PASS/FAIL lines first). | Re-enable or start failure is a page, never a warning. |
 
 ## 5. Guards and failure handling
 
-- **Always re-enable patching.** A trap on every exit path (normal, error, signal) re-enables auto-update when this job
-  disabled it. A second line of defence: the hourly `backup-check` alarm pages when auto-update is disabled
-  **outside** an active maintenance marker for more than 2 hours, so a dead job or a reboot mid-window cannot leave
-  the server silently unpatched.
-- **Maintenance marker.** A file the job holds for the window (`/var/lib/r740-backup/maintenance.active`, with the
-  job's PID and start time). `backup-status.sh` shows it, other sessions must not touch the server while it exists
-  (README Requirement 16), and the hard stop at 04:15 removes a stale one.
-- **Hard clock.** Nothing starts after its latest-start time; P7 never starts after 03:45 and everything ends by 04:15,
-  ahead of the 04:30 DB dump, 04:45 restart warning and 05:00 restart.
-- **Catch-up protection.** The timer is persistent, so after a host outage it could fire late: the job refuses to run
-  outside 00:30-04:15 on Tuesday (as the weekly already does).
-- **Players online.** Default (pending decision 9.1): proceed after the 30/15/5/1 warnings. `dune stop` is clean.
-- **Never loops.** One retry of `dune start`, no retry of updates.
-- **Guard** (existing `backup-guard.sh`) stays active, but is suspended during P4's deliberate stop and
-  P7 (the game is intentionally not READY then); the job resumes it only after READY.
+- **Game-up guarantee.** The EXIT trap (normal, error, TERM, INT, HUP, TSTP, timeout) brings the game back if this job stopped it
+  and then re-enables patching if this job disabled it, in that order. SIGKILL and a host reboot cannot run a trap, so:
+  (1) the hourly `backup-check` alarm pages when the game is down or auto-update is disabled **while no live marker exists**,
+  or while a marker is older than the window, and (2) the maintenance gate arms a **transient systemd timer on prod at the
+  hard stop (04:15)** that re-enables auto-update and starts the game if it is down, independent of the orchestrator.
+- **Cancel semantics.** `systemctl stop <maintenance unit>` is the cancel: the trap runs, the game is brought up, patching
+  is re-enabled, then a page says what was interrupted. Documented per phase in the runbook (cancelling in P7 reports a possibly
+  half-applied update and tells the operator to run `dune doctor`).
+- **Guard integration.** `backup-guard.sh` gains `--pause-file`: the orchestrator holds the file during P4 (stop to READY) and P7;
+  the guard resumes only after READY and a fresh clean sample. The guard is not started before P0 passes.
+- **Share loss mid-image.** The existing stall watchdog (300 s) kills vzdump (which releases the snapshot) and pages; the window
+  documentation requires the desktop's sleep and updates to be inhibited 00:30-04:15 (an operator setting, listed in the runbook).
+- **Concurrency (Req 16).** The maintenance gate refuses **any** mutating verb that does not carry the job's current token while
+  the marker exists; `backup-status.sh` shows the window; sessions must not touch the server. A stale marker (dead PID,
+  /proc start-time mismatch, older than 4 h) is removed at the next P0 or at the hard stop.
+- **Never loops.** One retry of `dune start`, no retry of updates. No phase starts after its latest-start time.
+- **Catch-up protection.** Timers are persistent but the job refuses outside Tuesday 00:30-04:15 (as the weekly does).
 
 ## 6. Verification (step 4) pass criteria
 
 | Area | Pass when |
 |---|---|
-| Backup | Read-back SHA matches; header decrypts with the public-key check; image listed on the share with the right size; daily set present; audit log has `image_ok` for 101 (and 102/103/104 if run). |
-| Update | Versions before and after recorded (`dune version`, build ID); if nothing was available that is reported as "no update needed", not as success; console answers (HTTP 200 on 8088); `dune doctor` has no new FAIL. |
-| Server | `dune status` READY; all three Sietch partitions and the Overmap READY; public probe healthy; population readable. |
-| Housekeeping | auto-update is enabled again; maintenance marker removed; no stray vzdump or staging files. |
+| Backup | Read-back SHA matches; header decrypts (public-key check); image listed on the share with the expected size; daily set present; pairing dump present (size, sha); audit log has `image_ok` for 101 (and 102, 104 if run). |
+| Update | Versions before and after recorded (`dune version`, build ID); "no update needed" is reported as that, not as success; console answers HTTP 200 on 8088; `dune doctor` has no new FAIL; patching policy equals the stored policy. |
+| Server | `dune status` READY; all three Sietch partitions and the Overmap READY; public probe healthy (5-minute retry); population readable. |
+| Housekeeping | Auto-update enabled again with the original values; marker removed; no stray vzdump or staging files; transient safety timer cancelled. |
 
-The Discord report is one message: per-area PASS/FAIL, versions, image size and time, game downtime in minutes, and a
-@mention only on failure.
+The Discord report is one message, PASS/FAIL lines first (1900-character cap), then versions, image size and time, measured game
+downtime, and a @mention only on failure. Output tails are redacted (`bk_redact` gains a `dak_` rule).
 
-## 7. Privilege and security
+## 7. Privilege, security and the README changes
 
-The backup pull key is restricted to read-only commands on prod. This job needs more: `dune stop`, `dune start`,
-`dune update auto enable|disable`, `dune update check|--yes`, `dune self-update check|install latest` (with the
-environment in the Req 32 form), `dune status`, `dune ready`, `dune doctor`, `dune db backup`. The gate script gains an
-**allow-list of exactly these commands** with fixed arguments (no free-form arguments, no shell), every call is written
-to the hash-chained audit log, and the key's `from=` restriction stays. This is a deliberate privilege increase and is
-a design-audit item. README Requirement 32 forbids a **session** from self-updating prod; this job is operator-approved
-automation, so Requirement 32 needs a written exception covering only this job and only upstream releases.
+**Separate maintenance key.** The read-only pull key and its gate are unchanged. A new key `maint_ed25519` and a new gate
+script on prod, with `command=`, `restrict`, `no-pty`, `from=192.168.68.127` and a rotation date.
+The gate is fixed-word and zero-argument; every verb runs under `env -i` with a fixed PATH:
 
-## 8. Rollout
+| Verb | Runs |
+|---|---|
+| `status`, `ready`, `doctor`, `version`, `auto-status`, `update-check`, `selfupdate-check` | read-only |
+| `db-backup` | the database backup command |
+| `auto-disable` / `auto-enable` | store/restore `update-auto.env`, then disable/enable auto-update (waits for the service to be inactive) |
+| `stop` / `start` | the game stop / start commands |
+| `update-apply` | the game build update, non-interactive |
+| `selfupdate-apply` | the stack update to the latest release with the repo variable set to `Red-Blink/dune-awakening-selfhost-docker` and the API and web bases hard-coded to GitHub, preceded in the same verb by a database backup chained with `&&` (README Requirement 32 form) |
 
-1. Prod restore drill (boot-only) of the 2026-10-01 image. **Prerequisite:** the window's update step relies on it.
-2. Build the orchestrator and gate commands with tests (sandbox runner only), including mutation checks for: the
-   re-enable trap, the "do nothing on preflight failure" rule, the verified-image gate before updates, the hard clock.
-3. Rehearse on dune-dev (stop, snapshot, start, update check; dune-dev has no players). Fix findings.
-4. File and complete the Layer 2/3 audits; operator merges.
-5. **First prod run attended** by the operator, with the timer enabled for one Tuesday only; then enable it permanently.
-6. Retire the Sunday weekly timer; the daily keeps running on the other six days.
+Mutating verbs (`db-backup` excepted) work **only while** the marker exists, is younger than 4 h, the time is inside Tuesday
+00:30-04:15, and the previous phase's verb succeeded (a small state machine: the two apply verbs require
+the verified-image flag from P6). **Write-before-act:** the gate (and the orchestrator) writes the audit record first and
+refuses the verb if that write fails; records are mirrored to the share (`BK_AUDIT_SHIP_DIR`) and the gate logs verb and
+source to syslog on prod. The broadcast key (`admin:broadcast`) is never widened; population is read via `dune status`.
+The runbook credential table gains the announce key and the maintenance key with rotation dates (Requirement 27). No
+provider configuration (Cloudflare, GitHub) is changed.
 
-## 9. Open decisions
+**README amendments, landed with this work (meta repo PR, operator merges):**
+- Requirement 32 gets a written exception: this job, and only this job, may run the stack and game updates on dune-prod,
+  unattended, in the Tuesday window, upstream releases only, subject to section 9.5 and the controls above. Sessions remain
+  forbidden.
+- Requirement 7 records a standing authorization for the scheduled stop of the live server (section 2a), scoped to this window.
+- Requirement 16 states that the gate enforces the maintenance marker against sessions.
 
-1. Players online at 01:00: proceed after the warnings (default assumed above) or wait for the server to empty (up to a limit)?
-2. RESOLVED (2026-10-01): `dune shutdown-protection` does not gate `dune stop`; the job itself must read the population
-   (`dune status`) and apply decision 1, because `dune stop` will stop the game regardless of players. `DUNE_MANUAL_STOP=1`
-   leaves a manual-stop marker, so P4 must confirm `dune start` clears it (to be tested on dune-dev).
-3. RESOLVED (2026-10-01): dune-dev is the rehearsal test bed and is not part of the window; the bot VM is production and gets images only.
-4. Tuesday 05:00 game restart: leave as is (it just restarts a patched game) or skip that one day?
+**Compensating controls for unattended change (SOC 2 CC8.1):** a verified pre-update image and pairing dumps, the audit
+chain, a per-window evidence bundle (the hash-chained record plus the archived Discord report, **retained 7 years** per the
+GRC program decision), a post-hoc operator review of each window within 24 h, and a first run that is attended.
+A failed window is an incident logged in `INCIDENT-INDEX.md`.
 
-## 10. Not in scope
+## 8. Rollout and tests
 
-Updating dune-dev or the bot VM (the bot VM is production: images only); changing the game's 05:00 daily restart; off-site copy automation; the OneDrive tier.
+1. **Prod restore drill** (boot-only plus a postgres query check) of the 2026-10-01 image with a **measured RTO**: a gate for the first run.
+2. Capture **contract fixtures** read-only from dune-dev and prod (`dune status`, the update checks incl. the exit 100 case,
+   `update auto status`, real vzdump logs), and test the parsers against them.
+3. Build with tests under `scripts/run-backup-tests.sh` only. Required tests, in priority order: re-enable/game-up on every
+   exit path (TERM, INT, HUP, TSTP, error, timeout) with positive and negative cases; the SIGKILL/reboot path via the alarm and
+   the 04:15 safety timer; preflight-does-nothing (one test per refusal reason, each with an inverted twin); the verified-image
+   gate (one test per way verification fails); the hard clock with an advancing time stub (03:29/03:30, 03:44/03:45, 04:15,
+   Monday 23:59, Wednesday 00:30, a DST-change night); snapshot detection (first line, no line, warning-only line, crash before
+   any line); start retry (fail once, fail twice, never READY); first-failure-stops-the-phase; the marker (PID reuse, stale,
+   hard stop); gate near-misses (extra args, `;`, `$()`, missing env, a version other than `latest`) and audit-before-act; policy
+   restore equals the stored policy. **Mutation procedure:** each guard is deliberately broken on a scratch copy and the matching
+   test must fail.
+4. **Rehearse on dune-dev** (the test bed; no players): real stop/start timing and READY, whether the first `INFO: N%`
+   really coincides with the snapshot, game consistency after restart, auto-update disable/enable persistence, an hourly
+   auto-update firing mid-window, real exit codes, the updater replacing running scripts, in-game notices, the manual-stop marker,
+   persistent-timer catch-up, a host reboot mid-window. Players-online behavior cannot be rehearsed there.
+5. Layer 2 and Layer 3 audits; operator merges.
+6. **First prod run attended** (runbook section "first attended window": pre-flight, the watch command, the abort command),
+   timer enabled for one Tuesday only; then permanent. The maintenance key and gate are installed by a script the **operator
+   runs with the `!` prefix**. Retire the Sunday weekly timer; the daily keeps the other six days.
+
+## 9. Decisions
+
+1. **OPEN, players online at 01:00.** Default assumed until decided: after the warnings, if the population is above zero, wait up
+   to 15 minutes for it to drop (checked each minute), then proceed regardless. The stop command itself does not check players.
+2. RESOLVED: `dune shutdown-protection` does not gate `dune stop`; `dune start` clears the manual-stop marker.
+3. RESOLVED: dune-dev is the rehearsal test bed and not in the window; the bot VM (103) is production and is imaged only.
+4. Tuesday 05:00 game restart: leave as is (it restarts a freshly patched game); the Tuesday notice says so.
+5. **OPEN, release trust for "always latest".** The operator chose the latest upstream release. The reviewers found that
+   the stack updater performs no verification (no checksum or signature; a hostile or hijacked release would run as root-equivalent
+   code on prod, unattended). Option A (recommended): keep "always latest" with controls: only a published, non-draft,
+   non-pre-release GitHub release from `Red-Blink/dune-awakening-selfhost-docker` whose tag matches `^v[0-9]+\.[0-9]+\.[0-9]+$`,
+   **at least 24 hours old**, same major version as the installed one, with the verified pre-update image and dump as rollback.
+   These reduce but do not remove supply-chain risk. Option B: the job only reports "update available" and the operator
+   applies it attended. The operator must accept the residual risk of A in writing, or choose B.
+
+## 10. Messages (draft wording for review; plain facts, lore tone kept; title <= 80, body <= 500)
+
+Window set (new keys; the existing set stays for images that do not stop the game):
+- `maint-lead N`: "The Mentats Seal the Great Record" / "In N minutes the server goes down for the weekly recording and patching, about 5 minutes for the recording; patching may add more. Your progress is saved. This happens every Tuesday, 00:30-04:15 Pacific."
+- `maint-down`: "The Sands Fall Quiet" / "The server is going down now for the weekly recording. Expected return in about 5 minutes."
+- `maint-up`: "The Sands Stir Again" / "The server is back online. Downtime: M minutes. Patching, if any, follows later in the window."
+- `maint-update-start`: "The Mentats Mend the Machinery" / "A patch is being applied. The server will restart; expect about X minutes of downtime."
+- `maint-update-done`: "The Machinery Is Mended" / "Patching is finished and the server is online. Thank you for your patience."
+- `maint-update-failed`: "The Mending Was Interrupted" / "Patching did not finish. The server is being checked; the operator has been notified."
+- `maint-none`: "No Patch Today" / "The weekly recording is complete. No update was needed."
+- `maint-postponed`: "The Recording Is Postponed" / "This week's maintenance did not run. The server stays up and nothing is needed from you."
+- Each also goes to the community Discord (a pinned "every Tuesday 00:30-04:15 Pacific" notice plus a weekly post). The game's own auto-update warnings (30/15/10/5/1) do not fire while patching is paused; these replace them. The "about 5 minutes" figures are placeholders until measured on dune-dev.
+
+## 11. Not in scope
+
+Updating dune-dev or the bot VM (the bot VM is production: images only); changing the game's 05:00 daily restart; off-site copy
+automation; the OneDrive tier; a cryptographic verification layer for upstream releases (an upstream change; a Core issue is to be
+filed for the missing checksum/signature and the unguarded tar extraction).
