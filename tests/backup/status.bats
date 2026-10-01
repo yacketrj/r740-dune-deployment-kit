@@ -108,3 +108,34 @@ status() { run env BK_STATE_DIR="$BK_STATE_DIR" bash "$SCRIPT" --once; }
   run bash "$SCRIPT" --interval 0
   [ "$status" -eq 2 ]
 }
+
+# ---- Ctrl-C must leave at once, even while waiting on the game host ---------------------------------
+
+hang_game() {
+  stub ssh 'exec sleep 320'
+  teardown() { pkill -KILL -fx "sleep 320" 2>/dev/null || true; }
+}
+teardown() { pkill -KILL -fx "sleep 320" 2>/dev/null || true; }
+
+@test "Ctrl-C leaves the dashboard within seconds even while the game host call is hanging, and stops the call" {
+  hang_game
+  start=$SECONDS
+  run run_with_signal INT 320 "$SCRIPT"
+  [[ "$output" == *"rc=130 leftover=0"* ]]
+  [ $((SECONDS - start)) -lt 8 ]
+}
+
+@test "kill (SIGTERM) and Ctrl-Z also leave at once" {
+  hang_game
+  run run_with_signal TERM 320 "$SCRIPT"
+  [[ "$output" == *"rc=143 leftover=0"* ]]
+  run run_with_signal TSTP 320 "$SCRIPT"
+  [[ "$output" == *"rc=148 leftover=0"* ]]
+}
+
+@test "leaving cleans up its temporary screen buffer" {
+  hang_game
+  export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run"; mkdir -p "$XDG_RUNTIME_DIR"
+  run run_with_signal INT 320 "$SCRIPT"
+  [ -z "$(ls -A "$XDG_RUNTIME_DIR")" ]
+}

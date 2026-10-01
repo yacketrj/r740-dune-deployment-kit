@@ -154,7 +154,7 @@ bk_abort() { # signal-name number
   local sig="$1" n="$2" me="$BASHPID" kids k alive
   trap '' INT TERM HUP QUIT TSTP
   kids="$(bk_tree_pids "$me")"
-  bk_log "aborted by SIG$sig: stopping everything this job started"
+  [ "${BK_ABORT_QUIET:-0}" = "1" ] || bk_log "aborted by SIG$sig: stopping everything this job started"
   if [ -n "${BK_ABORT_HOOK:-}" ]; then "$BK_ABORT_HOOK" "$sig" || true; fi
   for k in $kids; do kill -CONT "$k" 2>/dev/null || true; done
   for k in $kids; do kill -TERM "$k" 2>/dev/null || true; done

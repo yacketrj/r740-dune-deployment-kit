@@ -145,13 +145,28 @@ render() {
   fi
 }
 
+# Ctrl-C (or Ctrl-Z, kill, hangup) must leave at once, even in the middle of the call to the game
+# host: the screen is rendered by a background job that the abort handler can kill, and the main
+# shell only ever `wait`s (bash would otherwise hold the signal until the foreground ssh returns).
+export BK_ABORT_QUIET=1 BK_KILL_GRACE_S=2   # read by bk_abort in backup-common.sh
+buf="$(mktemp "${XDG_RUNTIME_DIR:-/dev/shm}/backup-status.XXXXXX")"
+cleanup() { rm -f -- "$buf"; }
+trap cleanup EXIT
+bk_install_abort_traps
+
+draw() { # clear: 1 = clear the screen first
+  render >"$buf" 2>&1 &
+  wait "$!"
+  if [ "$1" -eq 1 ]; then printf '\033[H\033[2J'; fi
+  cat -- "$buf"
+}
+
 if [ "$once" -eq 1 ]; then
-  render
+  draw 0
   exit 0
 fi
-trap 'echo; exit 0' INT TERM
 while true; do
-  out="$(render)"
-  printf '\033[H\033[2J%s\n' "$out"
-  sleep "$interval"
+  draw 1
+  sleep "$interval" &
+  wait "$!"
 done
