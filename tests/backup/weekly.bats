@@ -650,3 +650,36 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"vzdump 5% (1.0 GiB of 20.0 GiB)"* ]]
 }
+
+# ---- progress log file (tail -f friendly; shown by backup-status.sh) -------------------------------
+
+@test "every progress line is also written to the progress log, which is restarted for each run" {
+  slow_vzdump
+  run_weekly --progress
+  [ "$status" -eq 0 ]
+  log="$BK_STATE_DIR/weekly-progress.log"
+  [ -s "$log" ]
+  head -1 "$log" | grep -q '^# weekly image run started .*arguments: --progress'
+  grep -q 'guest 101 (vm): starting' "$log"
+  grep -q 'elapsed, .* written' "$log"
+  grep -q 'guest 101: OK' "$log"
+  grep -q 'weekly images OK: 101' "$log"
+  first_run_lines="$(wc -l <"$log")"
+  run_weekly --progress
+  [ "$(grep -c '^# weekly image run started' "$log")" -eq 1 ]
+  [ "$(wc -l <"$log")" -le "$((first_run_lines + 2))" ]
+}
+
+@test "the progress log records a failure and an abort" {
+  touch "$BATS_TEST_TMPDIR/fail-101"
+  echo 'BK_VMIDS="101"' >>"$BK_CONFIG_DIR/backup.env"
+  run_weekly
+  [ "$status" -eq 1 ]
+  grep -q 'FAILED at' "$BK_STATE_DIR/weekly-progress.log"
+}
+
+@test "progress lines still reach the terminal exactly once (the log is an addition, not a redirect)" {
+  slow_vzdump
+  run_weekly --progress
+  [ "$(printf '%s\n' "$output" | grep -c 'guest 101: OK')" -eq 1 ]
+}

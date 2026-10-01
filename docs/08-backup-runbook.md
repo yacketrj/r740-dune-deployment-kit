@@ -43,6 +43,13 @@ Where things live on the hypervisor:
 | `scripts/backup-install-timers.sh [--no-enable]` | Write and enable the timers. |
 | `scripts/run-backup-tests.sh` | Run the test suite in the read-only sandbox (never run tests any other way on the hypervisor). |
 
+### Watching a job
+
+- **`scripts/backup-status.sh`** is a live, read-only dashboard (refreshes every 10 s; `--once`, `--interval N`): what the backup is doing, host disk and pressure numbers, the game's own status, and an OK/WATCH verdict. Safe to run during a backup and safe to stop at any time.
+- **`tail -f /var/lib/r740-backup/weekly-progress.log`** follows the weekly job's progress lines (restarted for each run).
+- Run the weekly job by hand with `--progress` so its own terminal shows a line every 10 seconds.
+- **Measured on 2026-09-30 (dune-dev, 300 GB disk, 140 GB used): 47 minutes end to end** (19 min of data at about 70 MB/s, 16.5 min sweeping empty disk with no output, 10.5 min verified read-back), 76 GB compressed. Long stretches with no output are normal; the hang watchdog treats vzdump's progress log as a sign of life.
+
 ### Stopping a job safely
 
 Ctrl-C, Ctrl-Z, a `kill`, or closing the terminal **stops the whole job and everything it started** (the ssh pull, the `vzdump` image pipeline, a scratch VM or container in a drill), removes its partial file and exits. Ctrl-Z does not suspend a job: a suspended image would keep holding its snapshot. A deliberate Ctrl-C or Ctrl-Z raises no alert; a `kill` or timeout from outside does. Never stop a run with `kill -9` on a single process: use Ctrl-C, or `kill <PID of the backup-*.sh script>`.

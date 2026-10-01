@@ -33,6 +33,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=backup-common.sh
 . "$here/backup-common.sh"
 
+orig_args="$*"
 only=""
 progress=0
 verbose=0
@@ -91,12 +92,13 @@ on_err() {
   exit 1
 }
 trap 'on_err $LINENO' ERR
-fail() { bk_log "FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
+fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
 
 # Ctrl-C / Ctrl-Z / kill / hangup: stop the whole pipeline (releasing the guest backup), remove
 # the partial file, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or a
 # timeout from outside is.
 abort_hook() {
+  printf '%s aborted by SIG%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$progress_log" 2>/dev/null || true
   case "$1" in INT | TSTP) ;; *) report_failure "aborted by SIG$1 (timeout, shutdown or kill) while imaging $STAGE" ;; esac
 }
 # shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
@@ -104,6 +106,19 @@ BK_ABORT_HOOK=abort_hook
 bk_install_abort_traps
 
 bk_lock backup-weekly || exit 1
+
+# Every progress line is also appended to a log file that anyone can follow with
+#   tail -f /var/lib/r740-backup/weekly-progress.log
+# (and that backup-status.sh shows). Truncated at the start of each run, by the lock holder only.
+progress_log="$BK_STATE_DIR/weekly-progress.log"
+mkdir -p "$BK_STATE_DIR" 2>/dev/null || true
+printf '# weekly image run started %s, arguments: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$orig_args" >"$progress_log" 2>/dev/null || true
+plog() { # message: print like bk_log AND append to the progress log
+  local l
+  l="$(bk_log "$*")"
+  printf '%s\n' "$l"
+  printf '%s\n' "$l" >>"$progress_log" 2>/dev/null || true
+}
 
 : "${BK_SMB_MOUNT:?}" "${BK_VMIDS:?}"
 case "${BK_AGE_RECIPIENT:-}" in age1*) ;; *) fail "no age recipient configured (run backup-key.sh generate)" ;; esac
@@ -181,7 +196,7 @@ readback_sha() { # file total_bytes
     ddp="$(pgrep -P "$me" -x dd 2>/dev/null | head -n 1 || true)"
     r="$(awk '/^rchar:/ { print $2 }' "/proc/${ddp:-0}/io" 2>/dev/null || true)"
     n=$(($(date +%s) - t0))
-    bk_log "guest $id: read-back $(hms "$n") elapsed, $(hsize "${r:-0}") of $(hsize "$total") ($((${r:-0} * 100 / (total > 0 ? total : 1)))%)" >&2
+    plog "guest $id: read-back $(hms "$n") elapsed, $(hsize "${r:-0}") of $(hsize "$total") ($((${r:-0} * 100 / (total > 0 ? total : 1)))%)" >&2
   done
   wait "$pid" || true
   cut -d' ' -f1 <"$tmpdir/post.sha"
@@ -223,9 +238,9 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   out="$BK_SMB_MOUNT/vm/${kind}${id}-${stamp}.${ext}.age"
   partial="$out.partial"
   g_start="$(date +%s)"
-  bk_log "guest $id ($kind): starting -> $(basename "$out")"
-  [ "$progress" -eq 0 ] || bk_log "guest $id: progress lines every ${progress_s}s (the first appears after that long)"
-  [ "$verbose" -eq 0 ] || bk_log "guest $id: keeping $keep images; window ends in $(hms "$remaining"); a snapshot backup runs while the guest stays up"
+  plog "guest $id ($kind): starting -> $(basename "$out")"
+  [ "$progress" -eq 0 ] || plog "guest $id: progress lines every ${progress_s}s (the first appears after that long)"
+  [ "$verbose" -eq 0 ] || plog "guest $id: keeping $keep images; window ends in $(hms "$remaining"); a snapshot backup runs while the guest stays up"
   rm -f -- "$partial" "$tmpdir/sha.pre"
   bk_require_mounted "$BK_SMB_MOUNT" || { failures+=("$id: SMB share dropped"); partial=""; return 1; }
 
@@ -272,7 +287,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
         sz="$(stat -c %s -- "$partial" 2>/dev/null || echo 0)"
         rate=$(((sz - prev_size) / progress_s)); prev_size="$sz"
         pct="$(grep -oE 'INFO: +[0-9]+% \([^)]*\)' "$tmpdir/vzdump.err" 2>/dev/null | tail -n 1 | sed -E 's/^INFO: +//' || true)"
-        bk_log "guest $id: $(hms $((now_s - g_start))) elapsed, $(hsize "$sz") written, $(hsize "$rate")/s${pct:+, vzdump $pct}"
+        plog "guest $id: $(hms $((now_s - g_start))) elapsed, $(hsize "$sz") written, $(hsize "$rate")/s${pct:+, vzdump $pct}"
       fi
       if [ "$verbose" -eq 1 ] && [ $((tick % progress_s)) -eq 0 ] && [ -s "$tmpdir/vzdump.err" ]; then
         tail -c +$((log_off + 1)) "$tmpdir/vzdump.err" 2>/dev/null | sed 's/^/    vzdump: /' | bk_redact || true
@@ -322,7 +337,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
     return 1
   fi
   if [ "${BK_WEEKLY_READBACK:-1}" = "1" ]; then
-    [ "$verbose" -eq 0 ] && [ "$progress" -eq 0 ] || bk_log "guest $id: verifying the written file by reading it back ($(hsize "$bytes")); this takes about as long as the write"
+    [ "$verbose" -eq 0 ] && [ "$progress" -eq 0 ] || plog "guest $id: verifying the written file by reading it back ($(hsize "$bytes")); this takes about as long as the write"
     post_sha="$(readback_sha "$partial" "$bytes")"
     if [ "$post_sha" != "$pre_sha" ]; then
       rm -f -- "$partial"; partial=""
@@ -337,7 +352,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   bk_audit_log image_ok "guest=$id" "file=$(basename "$final")" "sha256=$pre_sha" "size=$bytes" "kind=$kind"
   successes+=("$id")
   g_secs=$(($(date +%s) - g_start))
-  bk_log "guest $id: OK, $(hsize "$bytes") in $(hms "$g_secs") ($(hsize $((bytes / (g_secs > 0 ? g_secs : 1))))/s average)"
+  plog "guest $id: OK, $(hsize "$bytes") in $(hms "$g_secs") ($(hsize $((bytes / (g_secs > 0 ? g_secs : 1))))/s average)"
   return 0
 }
 
@@ -359,5 +374,5 @@ if [ "$subset_run" -eq 0 ]; then
   bk_state_touch weekly
   bk_dead_man_ping || true
 fi
-bk_log "weekly images OK: ${successes[*]}"
+plog "weekly images OK: ${successes[*]}"
 bk_notify "r740 weekly backup OK: images for ${successes[*]}"
