@@ -33,11 +33,13 @@ only (README Requirements 7 and 32 exceptions are drafted from them):
 
 > "1) always latest 2) can this be done vi a ! command? 3) lets use dune-dev as a test bed 4) agreed 5) agree, real gaps - design/arch them, stef 4 agree/ the bot vm is a production env, dune dev is as the name suggest a dev env, its purpose is to test and be broken."
 
-Later the same day the operator answered the release-trust question (decision 9.5):
+Later the same day the operator answered the release-trust question (decision 9.5) and the players-online question (9.1):
 
 > "A) Correct, I was vague. latest trusted upstream release"
 
-This fixes "always latest" to mean the latest release that passes the trust policy in 9.5 (Option A).
+> "B) if after 30, 15, 10, 1 minute warning and players are online, proceed. They were given ample warning."
+
+The first fixes "always latest" to mean the latest release that passes the trust policy in 9.5 (Option A).
 
 Interpretation recorded with them (the operator did not restate these): (1) the update policy is **always the latest
 upstream release, no pinning**; the compensating control is the verified pre-update image. (2) the privileged gate
@@ -76,10 +78,10 @@ everything else finished by 04:15. Marker file `/var/lib/r740-backup/maintenance
 | Phase | When | What | On failure |
 |---|---|---|---|
 | P0 preflight | 00:30 | Refuse unless **all** hold: Tuesday and inside the window; `backup-doctor` 0 FAIL; share mounted and a **write+fsync probe** succeeds; free space >= 3x the last prod image; thin pool headroom; game READY; **no `update.sh auto run` active and no staged pending update**; maintenance gate reachable; egress/DNS to Steam and GitHub resolve; previous run not holding the lock; no stale marker. | Do **nothing** (no patching change, no stop). Send "maintenance postponed" and page. |
-| P1 notices | 00:30-01:00 | Window set of messages (section 10): 30/15/5/1-minute warnings in game; one Discord post "window started". Read the population (via `dune status`). | none |
+| P1 notices | 00:30-01:00 | Window set of messages (section 10): 30/15/10/1-minute warnings in game (T-30 00:30, T-15 00:45, T-10 00:50, T-1 00:59; stop at 01:00); one Discord post "window started". Read the population (via `dune status`). | none |
 | P2 pause patching | 01:00 | Gate verb `auto-disable`: **waits for the auto-update service to be inactive**, stores the live policy file (`update-auto.env`: notify minutes, wait-until-empty, apply) on prod, then `dune update auto disable`. Records "disabled by this job" and the stored policy hash. | Cannot disable: stop here, before touching the game. |
 | P3 daily set | 01:00 | `backup-daily.sh --tier daily` under its own lock. | Failure: stop the window, alert (the daily set is the baseline restore point). |
-| P4 prod image | 01:05 | (a) `dune db backup` (the **pairing dump**, timestamp recorded with the image). (b) Share liveness probe again. (c) "going down" notice (population policy 9.1). (d) `dune stop`; **require rc 0 and the `dune-postgres` container exited**, else `dune start` and abort. (e) Start vzdump of VM 101. (f) A background watcher waits for the first **`INFO: N%`** vzdump line (snapshot captured, timeout 120 s). (g) `dune start`, wait for READY (15 min), "back online" notice with the measured downtime. | Snapshot not captured in 120 s: kill vzdump, `dune start`, alert, skip the update phase. READY not reached: one more `dune start`, then PAGE; imaging continues. Postgres still running after stop: do not snapshot, `dune start`, page. |
+| P4 prod image | 01:05 | (a) `dune db backup` (the **pairing dump**, timestamp recorded with the image). (b) Share liveness probe again. (c) "going down" notice (policy 9.1: proceed regardless of population). (d) `dune stop`; **require rc 0 and the `dune-postgres` container exited**, else `dune start` and abort. (e) Start vzdump of VM 101. (f) A background watcher waits for the first **`INFO: N%`** vzdump line (snapshot captured, timeout 120 s). (g) `dune start`, wait for READY (15 min), "back online" notice with the measured downtime. | Snapshot not captured in 120 s: kill vzdump, `dune start`, alert, skip the update phase. READY not reached: one more `dune start`, then PAGE; imaging continues. Postgres still running after stop: do not snapshot, `dune start`, page. |
 | P5 other guests | after P4 | Images of VM 102 and CT 104. **VM 103 (the bot, production) is imaged only**, no other action. | Per-guest failure alerts; continue. |
 | P6 verify backup | after the prod copy + read-back | Read-back SHA matches, header decrypts, file present with the right size, audit entry, pairing dump present with size and sha. **Gate: the update phase only proceeds if all of these hold.** | Skip the update phase, alert (no restore point). |
 | P7 update | not before P6; start by 03:30, never after 03:45 | (a) `dune db backup` again (pre-update dump; gate on size and sha). (b) `dune update check`: if a build is available, `dune update --yes`, wait READY. (c) The stack check (exit **100** = update available, 0 = current, any other exit = "check failed" alert and no install); apply only if the release passes the trust policy (9.5) and can finish before 04:15: gate verb `selfupdate-apply` (fixed environment, repo pinned), wait READY. Per-step timeout 20 min, no retries. | First failure stops the phase; alert with the step and the redacted output tail. |
@@ -178,8 +180,7 @@ A failed window is an incident logged in `INCIDENT-INDEX.md`.
 
 ## 9. Decisions
 
-1. **OPEN, players online at 01:00.** Default assumed until decided: after the warnings, if the population is above zero, wait up
-   to 15 minutes for it to drop (checked each minute), then proceed regardless. The stop command itself does not check players.
+1. **RESOLVED (operator, 2026-10-01), players online at 01:00:** after the 30, 15, 10 and 1 minute warnings, proceed with the stop even if players are online; no waiting for the server to empty. Quote: "B) if after 30, 15, 10, 1 minute warning and players are online, proceed. They were given ample warning." The population is still read and logged for the evidence bundle.
 2. RESOLVED: `dune shutdown-protection` does not gate `dune stop`; `dune start` clears the manual-stop marker.
 3. RESOLVED: dune-dev is the rehearsal test bed and not in the window; the bot VM (103) is production and is imaged only.
 4. Tuesday 05:00 game restart: leave as is (it restarts a freshly patched game); the Tuesday notice says so.
