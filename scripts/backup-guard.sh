@@ -14,13 +14,15 @@
 #   * host I/O pressure (share of the last 10 s that tasks waited on the disk) above 30%
 #   * host memory pressure (share of the last 10 s that tasks stalled waiting for memory) above 10%
 #   * the disk is more than 95% busy
-#   * the thin pool is more than 85% full
+#   * the thin pool is more than 85% full, or its metadata more than 70%
+#   * any of these cannot be read at all (a guard that cannot see protects nothing)
 # Several consecutive bad samples are required (default 3 x 10 s) so one slow ssh or a short blip
 # never aborts a run, but a sustained problem does within about 30 seconds.
 #
 # It only READS (ssh `dune status`, /proc/pressure, iostat, lvs) and signals the one PID it was
 # given; it never touches the game or the backup's files.
-# Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_MEM_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX; the game host:
+# Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_MEM_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX, BK_GUARD_META_MAX;
+# BK_GUARD_IO_METRIC (some|full) picks which PSI line the I/O limit applies to; the game host:
 # BK_GUARD_GAME_SSH (default BK_BACKUP_SSH).
 # =============================================================================
 set -u
@@ -50,12 +52,18 @@ if [ "$once" -eq 0 ]; then
   [[ "$target" =~ ^[0-9]+$ ]] || { echo "--target PID is required" >&2; exit 2; }
 fi
 
-psi_dir="${BK_PSI_DIR:-/proc/pressure}"
+# BK_PSI_DIR is a test hook: honoured under bats only, so a stray variable cannot blind the guard.
+psi_dir="/proc/pressure"
+[ -z "${BATS_TEST_TMPDIR:-}" ] || psi_dir="${BK_PSI_DIR:-/proc/pressure}"
 disk="${BK_STATUS_DISK:-sda}"
 game_ssh="${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}"
 io_max="${BK_GUARD_IO_PRESSURE_MAX:-30}"
 busy_max="${BK_GUARD_DISK_BUSY_MAX:-95}"
 mem_max="${BK_GUARD_MEM_PRESSURE_MAX:-10}"
+meta_max="${BK_GUARD_META_MAX:-70}"
+thin_pool="${BK_THIN_POOL:-pve/data}"
+io_metric="${BK_GUARD_IO_METRIC:-some}"   # some: any task stalled; full: every task stalled (the system-wide stall that hurts the game)
+[[ "$io_metric" =~ ^(some|full)$ ]] || { echo "BK_GUARD_IO_METRIC must be some or full" >&2; exit 2; }
 pool_max="${BK_GUARD_POOL_MAX:-85}"
 
 gt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
@@ -71,10 +79,12 @@ sample() {
       reasons="$reasons the game is not READY ($(printf '%s\n' "$st" | sed -n 's/^Overall: *//p' | head -n 1));"
     fi
   fi
-  io="$(awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/io" 2>/dev/null | head -n 1)"
-  if gt "${io:-0}" "$io_max"; then reasons="$reasons host I/O pressure ${io}% (limit ${io_max}%);"; fi
+  io="$(awk -v m="$io_metric" '$1 == m { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/io" 2>/dev/null | head -n 1)"
+  if [ -z "$io" ]; then reasons="$reasons cannot read host I/O pressure (a blind guard protects nothing);"
+  elif gt "$io" "$io_max"; then reasons="$reasons host I/O pressure ($io_metric) ${io}% (limit ${io_max}%);"; fi
   mem="$(awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/memory" 2>/dev/null | head -n 1)"
-  if gt "${mem:-0}" "$mem_max"; then reasons="$reasons host memory pressure ${mem}% (limit ${mem_max}%);"; fi
+  if [ -z "$mem" ]; then reasons="$reasons cannot read host memory pressure (a blind guard protects nothing);"
+  elif gt "$mem" "$mem_max"; then reasons="$reasons host memory pressure ${mem}% (limit ${mem_max}%);"; fi
   if command -v iostat >/dev/null 2>&1; then
     line="$(iostat -dxm 1 2 2>/dev/null | awk -v d="$disk" '$1 == d { l = $0 } END { print l }')"
     if [ -n "$line" ]; then
@@ -82,8 +92,11 @@ sample() {
       if gt "${util:-0}" "$busy_max"; then reasons="$reasons disk ${disk} ${util}% busy (limit ${busy_max}%);"; fi
     fi
   fi
-  pool="$(lvs --noheadings --units g --nosuffix -o data_percent pve/data 2>/dev/null | awk '{ printf "%.1f", $1 }')"
-  if [ -n "$pool" ] && gt "$pool" "$pool_max"; then reasons="$reasons thin pool ${pool}% full (limit ${pool_max}%);"; fi
+  line="$(lvs --noheadings --units g --nosuffix -o data_percent,metadata_percent "$thin_pool" 2>/dev/null | awk 'NR == 1 { printf "%s %s", ($1 == "" ? "" : sprintf("%.1f", $1)), $2 }')"
+  read -r pool meta <<<"$line"
+  if [ -z "$pool" ]; then reasons="$reasons cannot read the thin pool usage (a blind guard protects nothing);"
+  elif gt "$pool" "$pool_max"; then reasons="$reasons thin pool ${pool}% full (limit ${pool_max}%);"; fi
+  if [ -n "${meta:-}" ] && gt "$meta" "$meta_max"; then reasons="$reasons thin pool metadata ${meta}% full (limit ${meta_max}%);"; fi
   printf '%s' "${reasons# }"
 }
 

@@ -690,7 +690,8 @@ guard_stubs() {
   stub iostat 'echo "Device r/s rMB/s rrqm/s %rrqm r_await rareq-sz w/s wMB/s wrqm/s %wrqm w_await wareq-sz d/s dMB/s drqm/s %drqm d_await dareq-sz f/s f_await aqu-sz %util"
 for i in 1 2; do echo "sda 100.0 50.0 0 0 3.0 128 20.0 2.0 0 0 0.5 100 0 0 0 0 0 0 0 0 0 12.0"; done'
   export BK_PSI_DIR="$BATS_TEST_TMPDIR/psi"; mkdir -p "$BK_PSI_DIR"
-  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
   # lvs: two columns (size, used%) for the job's own pool check, one number (used%) for the guard
   stub lvs 'case "$*" in *lv_size*) echo "  1634.87 20.00" ;; *) echo "  17.7" ;; esac'
   # game status: READY until the file "$T/degrade-after" says how many status calls to allow

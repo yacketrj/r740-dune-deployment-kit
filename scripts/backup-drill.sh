@@ -67,15 +67,14 @@ scratch_created=0
 bridge_created=0
 DRILL_BRIDGE="vmbrdrill"
 guard_reason="$BK_STATE_DIR/drill-guard.reason"
+guard_pid=""
+thin_vg="${BK_THIN_POOL:-pve/data}"
+thin_vg="${thin_vg%%/*}"
+dirty_saved=""
 
-# A guard stop arrives as SIGINT; say why, once, before the generic abort cleanup runs.
-drill_abort_hook() {
-  if [ -s "$guard_reason" ]; then
-    report_failure "stopped by the safety guard to protect the game and the host: $(cat "$guard_reason")"
-  fi
-}
-# shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
-BK_ABORT_HOOK=drill_abort_hook
+# Test-only overrides (a fake clock, fake /proc and /sys files, a fake PVE tree) are honoured under
+# bats and NOWHERE ELSE: a stray exported variable in a root shell must never weaken a protection.
+tvar() { if [ -n "${BATS_TEST_TMPDIR:-}" ]; then printf '%s' "${!1:-}"; fi; }
 
 # Pinned host key and no user ssh config: this leg carries the decrypted production dump.
 remote() {
@@ -86,27 +85,73 @@ remote() {
   bk_run_bg ssh "${o[@]}" -- "${BK_DRILL_SSH:?}" "$@"   # background + wait: an abort is immediate
 }
 
+# The kernel's dirty-page limits are lowered for the length of a VM restore (see drill_vm) and put
+# back here. If this script is killed with SIGKILL they stay low: harmless, restore them with
+# `sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10` (runbook, "drill cleanup").
+restore_dirty() {
+  local r b
+  [ -n "$dirty_saved" ] || return 0
+  read -r r b <<<"$dirty_saved"
+  sysctl -q -w "vm.dirty_ratio=$r" "vm.dirty_background_ratio=$b" >/dev/null 2>&1 \
+    || bk_alert "cleanup" "P1: could not restore vm.dirty_ratio=$r / vm.dirty_background_ratio=$b" "sysctl -w vm.dirty_ratio=$r vm.dirty_background_ratio=$b"
+  dirty_saved=""
+}
+
+# Remove the scratch guest completely, then PROVE it is gone. Every step is best effort; the proof is not.
+destroy_scratch() {
+  local lv left=""
+  if [ "$scratch_kind" = "ct" ]; then
+    pct stop "$scratch" >/dev/null 2>&1 || true
+    pct set "$scratch" --protection 0 >/dev/null 2>&1 || true
+    pct destroy "$scratch" --purge 1 --force 1 >/dev/null 2>&1 || true
+  else
+    # a restored copy of prod may carry protection=1 (destroy refuses) and onboot=1 (a host reboot would start it)
+    qm set "$scratch" --protection 0 --onboot 0 >/dev/null 2>&1 || true
+    qm stop "$scratch" --skiplock 1 >/dev/null 2>&1 || true
+    qm destroy "$scratch" --skiplock 1 --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
+  fi
+  if qm status "$scratch" >/dev/null 2>&1 || pct status "$scratch" >/dev/null 2>&1; then
+    left="the scratch guest $scratch still exists"
+  else
+    # a restore killed before its config existed leaves orphan volumes that destroy cannot see
+    for lv in $(lvs --noheadings -o lv_name "$thin_vg" 2>/dev/null | tr -d ' ' | grep -E "^vm-${scratch}-disk-[0-9]+$" || true); do
+      lvremove -f "$thin_vg/$lv" >/dev/null 2>&1 || true
+    done
+    if lvs --noheadings -o lv_name "$thin_vg" 2>/dev/null | tr -d ' ' | grep -qE "^vm-${scratch}-disk-[0-9]+$"; then
+      left="volumes vm-${scratch}-disk-* of the scratch guest still exist"
+    fi
+  fi
+  if [ -n "$left" ]; then
+    bk_alert "cleanup" "P1: $left after the drill; it is a copy of production, do not start it. Remove it: qm set $scratch --protection 0 --onboot 0; qm destroy $scratch --skiplock 1 --purge 1" "$RERUN"
+    bk_audit_log drill_leftover "scratch=$scratch" "detail=$left"
+    return 1
+  fi
+}
+
 cleanup() {
   local rc=$?
+  # Nothing may interrupt the teardown: a second Ctrl-C or a late guard SIGINT would skip it.
+  trap '' INT TERM HUP QUIT TSTP
   trap - ERR   # returning rc (e.g. 130 after an abort) must not fire the error handler
-  # nothing this script started (ssh, pg_restore, qmrestore, a booting scratch VM) may outlive it
+  # nothing this script started (ssh, pg_restore, qmrestore, the guard, a booting scratch VM) may outlive it
   bk_kill_children TERM
+  restore_dirty
   if [ -n "$container" ] && [[ "$container" =~ ^bk-drill-[0-9]+-[0-9]+$ ]]; then
     remote "docker rm -f $container" >/dev/null 2>&1 || true
   fi
   if [ "$scratch_created" -eq 1 ] && [[ "$scratch" =~ ^9[0-9]{2}$ ]]; then
-    if [ "$scratch_kind" = "ct" ]; then
-      pct stop "$scratch" >/dev/null 2>&1 || true
-      pct destroy "$scratch" --purge 1 >/dev/null 2>&1 || true
-    else
-      qm stop "$scratch" --skiplock 1 >/dev/null 2>&1 || true
-      qm destroy "$scratch" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
-    fi
+    # a guest that could not be removed makes the run FAIL even if everything else passed
+    destroy_scratch || { [ "$rc" -ne 0 ] || rc=1; }
   fi
   if [ "$bridge_created" -eq 1 ]; then
     ip link del "$DRILL_BRIDGE" >/dev/null 2>&1 || true
   fi
   [ -z "$ram" ] || bk_wipe_dir "$ram" || true
+  # Report a guard stop only now, AFTER everything is killed (alerting can take many seconds).
+  if [ -s "$guard_reason" ] && [ "$alerted" -eq 0 ]; then
+    report_failure "stopped by the safety guard to protect the game and the host: $(cat "$guard_reason")"
+  fi
+  rm -f -- "$guard_reason"
   return "$rc"
 }
 trap cleanup EXIT
@@ -133,6 +178,7 @@ trap 'on_err $LINENO' ERR
 fail_drill() { bk_log "DRILL FAILED at $STAGE: $*"; report_failure "$*"; exit 1; }
 
 bk_lock "drill-$sub" || exit 1
+rm -f -- "$guard_reason"   # a stale reason must never be blamed on this run
 ram="$(bk_make_ram_dir)" || fail_drill "no RAM-backed working directory"
 
 # ---- shared: decrypt + verify a daily set into $ram/set --------------------------------
@@ -300,15 +346,28 @@ drill_db() {
 }
 
 # ---- guardrail helpers for the VM drill (all read-only) ------------------------------------
-# True when local time is inside "HH:MM-HH:MM" (may wrap midnight). A malformed spec is an error
-# (the caller's `if` treats it as "not in blackout", so validate it first).
+# True when minute-of-day $2 (default: now) is inside the "HH:MM-HH:MM" window $1 (may wrap midnight).
 in_blackout() {
-  local spec="$1" now s e
+  local spec="$1" now="${2:-}" s e
   [[ "$spec" =~ ^([0-2][0-9]):([0-5][0-9])-([0-2][0-9]):([0-5][0-9])$ ]] || fail_drill "BK_DRILL_BLACKOUT must look like 04:20-05:20"
   s=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
   e=$((10#${BASH_REMATCH[3]} * 60 + 10#${BASH_REMATCH[4]}))
-  now="${BK_DRILL_NOW_MIN:-$((10#$(date +%H) * 60 + 10#$(date +%M)))}"
+  [ -n "$now" ] || now="$(now_min)"
   if [ "$s" -le "$e" ]; then [ "$now" -ge "$s" ] && [ "$now" -lt "$e" ]; else [ "$now" -ge "$s" ] || [ "$now" -lt "$e" ]; fi
+}
+now_min() {
+  local t
+  t="$(tvar BK_DRILL_NOW_MIN)"
+  if [[ "$t" =~ ^[0-9]+$ ]]; then printf '%s' "$t"; else printf '%s' "$((10#$(date +%H) * 60 + 10#$(date +%M)))"; fi
+}
+# True if the window overlaps any minute from now through now + $2 (sampled every 5 minutes).
+blackout_overlaps() {
+  local spec="$1" span="$2" now t
+  now="$(now_min)"
+  for ((t = 0; t <= span; t += 5)); do
+    if in_blackout "$spec" "$(((now + t) % 1440))"; then return 0; fi
+  done
+  in_blackout "$spec" "$(((now + span) % 1440))"
 }
 # Prints the lock name and succeeds if any backup job (backup-weekly, backup-daily, ...) holds its lock.
 other_backup_running() {
@@ -320,19 +379,46 @@ other_backup_running() {
   return 1
 }
 node_free_mb() { # NUMA node number -> free MB on that node
-  awk '/MemFree:/ { printf "%d", $4 / 1024 }' "${BK_DRILL_NODE_SYSFS:-/sys/devices/system/node}/node$1/meminfo" 2>/dev/null
+  local d
+  d="$(tvar BK_DRILL_NODE_SYSFS)"
+  awk '/MemFree:/ { printf "%d", $4 / 1024 }' "${d:-/sys/devices/system/node}/node$1/meminfo" 2>/dev/null
 }
+# Host memory preflight, run before the restore AND again right before the scratch VM starts
+# (hours can pass in between and prod keeps growing).
+memory_preflight() { # mem_mb node
+  local mem="$1" node="$2" avail min_avail node_free node_need mi
+  mi="$(tvar BK_DRILL_MEMINFO)"
+  avail="$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576 }' "${mi:-/proc/meminfo}" 2>/dev/null)"
+  [[ "${avail:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the host's available memory"
+  min_avail="${BK_DRILL_MIN_AVAIL_GB:-40}"
+  [ "$avail" -ge "$min_avail" ] || fail_drill "only ${avail}GB of host memory is available (need ${min_avail}GB)"
+  node_free="$(node_free_mb "$node")"
+  [[ "${node_free:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the free memory of NUMA node $node"
+  node_need=$((mem + ${BK_DRILL_NODE_HEADROOM_MB:-16384}))
+  [ "$node_free" -ge "$node_need" ] || fail_drill "NUMA node $node has only ${node_free}MB free (need ${node_need}MB: the guest's ${mem}MB plus headroom)"
+  MEM_SUMMARY="host memory available ${avail}GB (min ${min_avail}GB); NUMA node $node free ${node_free}MB (need ${node_need}MB)"
+}
+guard_alive() { [ -z "$guard_pid" ] || kill -0 "$guard_pid" 2>/dev/null; }
+
+# Disk and config lines of a restored guest config, one "key<TAB>value" per real disk (CD-ROMs skipped).
+disk_lines() { awk -F': ' '/^(scsi|virtio|sata|ide|efidisk|tpmstate)[0-9]+:/ && $2 !~ /media=cdrom/ { printf "%s\t%s\n", $1, $2 }'; }
 
 # ---- VM / CT drill ------------------------------------------------------------------------
 drill_vm() {
   local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets min_read disk_read base_rx sent
-  local node aff units bwlimit blackout other avail_gb min_avail node_free node_need guard_on gpre conf extra_nets stray rtmo
+  local node aff units bwlimit blackout other guard_on gpre conf extra_nets stray rtmo f st pve del k v disk_rd disk_wr memhigh
+  local dirty_mb dirty_bg_mb guard_io_max guard_io_metric span pidf pid
   bk_valid_vmid "$guest" || fail_drill "--guest must be a VM/CT id"
   case " $BK_VMIDS " in *" $guest "*) ;; *) fail_drill "guest $guest is not in BK_VMIDS" ;; esac
   [ -n "$identity" ] && [ -r "$identity" ] || fail_drill "--identity FILE is required and must be readable"
 
   STAGE="select"
-  image="$(find "$BK_SMB_MOUNT/vm" -maxdepth 1 -type f -name "[vc][mt]${guest}-*.age" -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+  # newest image whose timestamp is plausible (a planted file named for the year 9999 must not outrank real ones)
+  image=""
+  while IFS= read -r f; do
+    st="${f#*-}"; st="${st%%.*}"
+    if bk_stamp_plausible "$st"; then image="$f"; fi
+  done < <(find "$BK_SMB_MOUNT/vm" -maxdepth 1 -type f -name "[vc][mt]${guest}-*.age" -printf '%f\n' 2>/dev/null | sort)
   [ -n "$image" ] || fail_drill "no image for guest $guest on the share"
   base="${image%%-*}"
   case "$base" in vm*) kind="vm" ;; ct*) kind="ct" ;; *) fail_drill "unrecognised image name $image" ;; esac
@@ -340,7 +426,10 @@ drill_vm() {
   scratch="${BK_SCRATCH_VMID:-990}"
   [[ "$scratch" =~ ^9[0-9]{2}$ ]] || fail_drill "BK_SCRATCH_VMID must be 900-999"
   case " $BK_VMIDS " in *" $scratch "*) fail_drill "scratch id $scratch is a production id" ;; esac
-  if qm status "$scratch" >/dev/null 2>&1 || pct status "$scratch" >/dev/null 2>&1; then
+  pve="$(tvar BK_DRILL_PVE_DIR)"; pve="${pve:-/etc/pve}"
+  # BK_VMIDS need not list every guest, and `qm status` failing proves nothing: also look for the config files
+  if qm status "$scratch" >/dev/null 2>&1 || pct status "$scratch" >/dev/null 2>&1 \
+    || [ -e "$pve/qemu-server/$scratch.conf" ] || [ -e "$pve/lxc/$scratch.conf" ]; then
     fail_drill "scratch id $scratch already exists; refusing to touch it"
   fi
   check_var="BK_DRILL_VM_CHECK_$guest"
@@ -348,6 +437,8 @@ drill_vm() {
   [ -n "$check_cmd" ] || fail_drill "no in-guest check configured ($check_var); set a command, or the literal word boot-only for a guest without a guest agent"
   boot_only=0
   [ "$check_cmd" = "boot-only" ] && boot_only=1
+
+  # ---- every setting is validated up front, before anything is created ----
   mem="${BK_DRILL_VM_MEMORY_MB:-8192}"
   cores="${BK_DRILL_VM_CORES:-4}"
   [[ "$mem" =~ ^[0-9]+$ && "$cores" =~ ^[0-9]+$ && "$cores" -ge 1 ]] || fail_drill "invalid drill memory/cores"
@@ -355,36 +446,56 @@ drill_vm() {
   aff="${BK_DRILL_AFFINITY:-1,3,5,7}"
   units="${BK_DRILL_CPUUNITS:-10}"
   bwlimit="${BK_DRILL_BWLIMIT_KIB:-40960}"
+  rtmo="${BK_DRILL_RESTORE_TIMEOUT_MIN:-150}"
+  disk_rd="${BK_DRILL_DISK_MBPS_RD:-60}"
+  disk_wr="${BK_DRILL_DISK_MBPS_WR:-30}"
+  memhigh="${BK_DRILL_RESTORE_MEMHIGH:-2G}"
+  dirty_mb="${BK_DRILL_DIRTY_MB:-256}"
+  dirty_bg_mb="${BK_DRILL_DIRTY_BG_MB:-64}"
+  guard_on="${BK_DRILL_GUARD:-1}"
+  guard_io_metric="${BK_DRILL_GUARD_IO_METRIC:-full}"
+  guard_io_max="${BK_DRILL_GUARD_IO_MAX:-20}"
+  blackout="${BK_DRILL_BLACKOUT:-04:20-05:20}"
   [[ "$node" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_NUMA_NODE must be a node number"
   [[ "$aff" =~ ^[0-9]+([-,][0-9]+)*$ ]] || fail_drill "BK_DRILL_AFFINITY must look like 1,3,5,7 or 1-7"
   [[ "$units" =~ ^[0-9]+$ ]] && [ "$units" -ge 1 ] && [ "$units" -le 10000 ] || fail_drill "BK_DRILL_CPUUNITS must be 1-10000"
-  [[ "$bwlimit" =~ ^[0-9]+$ ]] && [ "$bwlimit" -ge 1024 ] || fail_drill "BK_DRILL_BWLIMIT_KIB must be a number of KiB/s, at least 1024 (an unlimited restore is not allowed)"
+  [[ "$bwlimit" =~ ^[0-9]+$ ]] && [ "$bwlimit" -ge 1024 ] && [ "$bwlimit" -le 102400 ] || fail_drill "BK_DRILL_BWLIMIT_KIB must be 1024-102400 KiB/s (an unlimited restore is not allowed)"
+  [[ "$rtmo" =~ ^[0-9]+$ ]] && [ "$rtmo" -ge 1 ] && [ "$rtmo" -le 600 ] || fail_drill "BK_DRILL_RESTORE_TIMEOUT_MIN must be 1-600 minutes"
+  [[ "$disk_rd" =~ ^[0-9]+$ && "$disk_wr" =~ ^[0-9]+$ ]] && [ "$disk_rd" -ge 1 ] && [ "$disk_wr" -ge 1 ] || fail_drill "BK_DRILL_DISK_MBPS_RD/_WR must be numbers >= 1"
+  [[ "$memhigh" =~ ^[0-9]+[MG]$ ]] || fail_drill "BK_DRILL_RESTORE_MEMHIGH must look like 2G"
+  [[ "$dirty_mb" =~ ^[0-9]+$ && "$dirty_bg_mb" =~ ^[0-9]+$ ]] && [ "$dirty_mb" -ge 16 ] && [ "$dirty_bg_mb" -ge 8 ] && [ "$dirty_bg_mb" -lt "$dirty_mb" ] || fail_drill "BK_DRILL_DIRTY_MB/_DIRTY_BG_MB must be numbers (>= 16 / >= 8, background below the limit)"
+  [[ "${BK_DRILL_MIN_AVAIL_GB:-40}" =~ ^[0-9]+$ && "${BK_DRILL_NODE_HEADROOM_MB:-16384}" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_MIN_AVAIL_GB and BK_DRILL_NODE_HEADROOM_MB must be numbers"
+  [[ "$guard_on" =~ ^[01]$ ]] || fail_drill "BK_DRILL_GUARD must be exactly 1 (on) or 0 (off), not '$guard_on'"
+  [[ "$guard_io_metric" =~ ^(some|full)$ ]] || fail_drill "BK_DRILL_GUARD_IO_METRIC must be some or full"
+  [[ "$guard_io_max" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_GUARD_IO_MAX must be a number"
+  if [ "$guard_on" = "1" ]; then
+    [ -n "${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}" ] || fail_drill "the guard has no game host (set BK_GUARD_GAME_SSH or BK_BACKUP_SSH): it could not see the game, so it would protect nothing"
+  fi
 
   # ---- preflight: read-only guardrails, run for --dry-run too so the plan is a real forecast ----
   STAGE="preflight"
-  blackout="${BK_DRILL_BLACKOUT:-04:20-05:20}"
-  if in_blackout "$blackout"; then
-    fail_drill "refusing to run inside the blackout $blackout (the 04:30 database dump and the 05:00 game restart)"
+  [[ "$blackout" =~ ^[0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]$ ]] || fail_drill "BK_DRILL_BLACKOUT must look like 04:20-05:20"
+  span=$((rtmo + 20))
+  if blackout_overlaps "$blackout" "$span"; then
+    fail_drill "refusing to start: the drill can run up to $((rtmo + 20)) minutes and would overlap the blackout $blackout (the 04:30 database dump and the 05:00 game restart); start it earlier or set BK_DRILL_RESTORE_TIMEOUT_MIN lower"
   fi
   other="$(other_backup_running)" && fail_drill "a $other backup is running right now; refusing to compete with it for the disk"
-  avail_gb="$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576 }' "${BK_DRILL_MEMINFO:-/proc/meminfo}" 2>/dev/null)"
-  [[ "${avail_gb:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the host's available memory"
-  min_avail="${BK_DRILL_MIN_AVAIL_GB:-40}"
-  [ "$avail_gb" -ge "$min_avail" ] || fail_drill "only ${avail_gb}GB of host memory is available (need ${min_avail}GB)"
-  node_free="$(node_free_mb "$node")"
-  [[ "${node_free:-}" =~ ^[0-9]+$ ]] || fail_drill "cannot read the free memory of NUMA node $node"
-  node_need=$((mem + ${BK_DRILL_NODE_HEADROOM_MB:-16384}))
-  [ "$node_free" -ge "$node_need" ] || fail_drill "NUMA node $node has only ${node_free}MB free (need ${node_need}MB: the guest's ${mem}MB plus headroom)"
-  guard_on="${BK_DRILL_GUARD:-1}"
+  memory_preflight "$mem" "$node"
   if [ "$guard_on" = "1" ]; then
-    gpre="$(bash "$here/backup-guard.sh" --once)" || fail_drill "not starting: the safety guard sees a problem right now: $gpre"
+    gpre="$(BK_GUARD_IO_METRIC="$guard_io_metric" BK_GUARD_IO_PRESSURE_MAX="$guard_io_max" bash "$here/backup-guard.sh" --once)" || fail_drill "not starting: the safety guard sees a problem right now: $gpre"
   fi
 
   if [ "$dry" -eq 1 ]; then
     echo "DRY RUN OK: guest $guest image $image ($kind)."
-    echo "PREFLIGHT OK: not in blackout $blackout; no weekly/daily backup running; host memory available ${avail_gb}GB (min ${min_avail}GB); NUMA node $node free ${node_free}MB (need ${node_need}MB); safety guard $([ "$guard_on" = "1" ] && echo "pre-check OK, will watch the whole run" || echo "OFF (BK_DRILL_GUARD=0)")."
-    echo "PLAN: transient bridge $DRILL_BRIDGE (no uplink); restore to scratch id $scratch with new MACs, writes capped at ${bwlimit}KiB/s, at most ${BK_DRILL_RESTORE_TIMEOUT_MIN:-150} minutes; cap to ${mem}MB/${cores} cores, memory bound to host NUMA node $node, CPU affinity $aff, CPU weight $units, autostart off; boot; run '$check_var'; destroy the scratch guest and the bridge. Nothing is ever written to guest $guest or its disk."
+    echo "PREFLIGHT OK: no overlap with the blackout $blackout for the next ${span} minutes; no backup running; $MEM_SUMMARY; safety guard $([ "$guard_on" = "1" ] && echo "pre-check OK, will watch the whole run (I/O pressure '$guard_io_metric' limit ${guard_io_max}%)" || echo "OFF (BK_DRILL_GUARD=0, recorded in the audit log)")."
+    echo "PLAN: transient bridge $DRILL_BRIDGE (no uplink, IPv6 off); kernel dirty-page limits lowered to ${dirty_mb}MB/${dirty_bg_mb}MB for the run and restored after; restore to scratch id $scratch with new MACs inside a cgroup scope (MemoryHigh=$memhigh), writes capped at ${bwlimit}KiB/s, at most ${rtmo} minutes; restored config stripped of hookscript/args/hugepages/virtiofs/cicustom/protection and every disk checked to be on ${BK_DRILL_STORAGE:-local-lvm}; cap to ${mem}MB/${cores} cores, memory bound to host NUMA node $node, CPU affinity $aff, CPU weight $units, disk limits ${disk_rd}/${disk_wr} MB/s, autostart off; boot; run '$check_var'; destroy the scratch guest, prove it is gone, delete the bridge. Nothing is ever written to guest $guest or its disk."
     return 0
+  fi
+
+  bk_audit_log drill_start "kind=$kind" "guest=$guest" "scratch=$scratch" "guard=$guard_on" "guard_io=$guard_io_metric:$guard_io_max" "bwlimit_kib=$bwlimit" "timeout_min=$rtmo" "node=$node" "affinity=$aff" "cpuunits=$units" "blackout=$blackout" "dirty_mb=$dirty_mb/$dirty_bg_mb" "memhigh=$memhigh"
+  if [ "$guard_on" != "1" ]; then
+    bk_log "WARNING: the safety guard is OFF for this run (BK_DRILL_GUARD=0)"
+    bk_audit_log drill_guard_off "guest=$guest"
   fi
 
   STAGE="capacity"
@@ -392,71 +503,113 @@ drill_vm() {
   STAGE="network"
   if ip link show "$DRILL_BRIDGE" >/dev/null 2>&1; then fail_drill "bridge $DRILL_BRIDGE already exists; refusing to reuse it"; fi
   ip link add name "$DRILL_BRIDGE" type bridge
-  ip link set "$DRILL_BRIDGE" up
   bridge_created=1
+  ip link set "$DRILL_BRIDGE" up
+  # the host itself sits on this bridge: no IPv6 link-local path from the prod copy to host services
+  sysctl -q -w "net.ipv6.conf.$DRILL_BRIDGE.disable_ipv6=1" >/dev/null 2>&1 || bk_log "note: could not disable IPv6 on $DRILL_BRIDGE"
 
-  # The safety guard watches the game and the host for the WHOLE run (restore, boot, check) and
-  # interrupts this script (the same clean abort as Ctrl-C, which destroys the scratch guest) when
-  # the game is not READY, disk or memory pressure stays high, or the thin pool fills.
-  rm -f -- "$guard_reason"
+  # The guard watches the game and the host for the WHOLE run (restore, boot, check) and interrupts
+  # this script (a clean abort, like Ctrl-C) when the game is not READY, I/O or memory pressure stays
+  # high, or the thin pool fills. A refused SIGINT (script started with it ignored) would make that a no-op.
   if [ "$guard_on" = "1" ]; then
-    bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
+    trap -p INT | grep -q bk_abort || fail_drill "SIGINT is ignored in this shell (started in the background?), so the guard could not stop the drill; run it in the foreground"
+    BK_GUARD_IO_METRIC="$guard_io_metric" BK_GUARD_IO_PRESSURE_MAX="$guard_io_max" bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
       --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >&2 &
+    guard_pid=$!
+    sleep "${BK_DRILL_GUARD_START_WAIT_S:-1}"
+    guard_alive || fail_drill "the safety guard did not start (or died at once); refusing to run unguarded"
+  fi
+
+  # Smaller, more frequent kernel flushes for the length of the restore: with the default limits
+  # (20% of RAM) the restore queues tens of GB of dirty pages and flushes them to the one shared disk
+  # at full speed, which the --bwlimit average does not prevent.
+  if [ "${BK_DRILL_DIRTY_TUNE:-1}" = "1" ]; then
+    dirty_saved="$(sysctl -n vm.dirty_ratio vm.dirty_background_ratio 2>/dev/null | paste -sd' ')"
+    [[ "$dirty_saved" =~ ^[0-9]+\ [0-9]+$ ]] || { dirty_saved=""; fail_drill "cannot read the kernel's dirty-page settings"; }
+    sysctl -q -w "vm.dirty_background_bytes=$((dirty_bg_mb * 1048576))" "vm.dirty_bytes=$((dirty_mb * 1048576))" >/dev/null || fail_drill "could not lower the kernel's dirty-page limits"
   fi
 
   STAGE="restore"
   scratch_kind="$kind"
   scratch_created=1
-  rtmo="${BK_DRILL_RESTORE_TIMEOUT_MIN:-150}"
-  [[ "$rtmo" =~ ^[0-9]+$ ]] && [ "$rtmo" -ge 1 ] || fail_drill "BK_DRILL_RESTORE_TIMEOUT_MIN must be a number of minutes"
-  # --bwlimit caps the restore's I/O: everything on this host (prod's disk, the thin pool, root, swap)
-  # lives on ONE disk, so an unthrottled restore competes with the game. (ionice is a no-op under the
-  # mq-deadline scheduler this host uses; the bandwidth cap is what actually protects prod.)
+  # --bwlimit caps the restore's average I/O; MemoryHigh bounds the page cache this one process may hold
+  # (so it cannot push prod's idle pages to swap on the shared disk). Everything here lives on ONE disk.
+  # ionice is a no-op under the mq-deadline scheduler this host uses; these are what protects prod.
   if [ "$kind" = "vm" ]; then
     # background + wait so an abort during this (long) restore is immediate
-    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | timeout "${rtmo}m" ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | systemd-run --scope --quiet -p "MemoryHigh=$memhigh" -p MemorySwapMax=0 -- timeout -k 30 "${rtmo}m" ionice -c3 nice -n 19 qmrestore - "$scratch" --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
     wait "$!" || fail_drill "restore of $image failed (or exceeded ${rtmo} minutes)"
   else
-    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | timeout "${rtmo}m" ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
+    ( set -o pipefail; age -d -i "$identity" <"$BK_SMB_MOUNT/vm/$image" | zstd -dc | systemd-run --scope --quiet -p "MemoryHigh=$memhigh" -p MemorySwapMax=0 -- timeout -k 30 "${rtmo}m" ionice -c3 nice -n 19 pct restore "$scratch" - --storage "${BK_DRILL_STORAGE:-local-lvm}" --unique 1 --bwlimit "$bwlimit" ) &
     wait "$!" || fail_drill "restore of $image failed (or exceeded ${rtmo} minutes)"
   fi
+  restore_dirty
 
   STAGE="isolate"
   if [ "$kind" = "vm" ]; then
     conf="$(qm config "$scratch")" || fail_drill "could not read the scratch VM config"
-    # A copy of a guest must not fight the live one for a host device. Real passthrough is: a PCI
-    # device (hostpciN), a host USB device (usbN with host= or mapping=), or a serial/parallel port
-    # pointing at a /dev path. `serial0: socket` and `usb0: spice` are VIRTUAL devices (Proxmox's
-    # web-console serial port is on every VM here) and are fine.
+    # A planted or odd image runs as root on this host when it boots: allow only what is known safe.
+    # (1) devices bound to the host:
     if printf '%s\n' "$conf" | grep -Eq '^(hostpci[0-9]+:|usb[0-9]+:.*(host=|mapping=)|(serial|parallel)[0-9]+: */dev/)'; then
       fail_drill "the restored config has host-bound devices (PCI, host USB, or a serial/parallel port on a /dev path); refusing to boot a copy that could contend with the live guest"
     fi
+    # (2) every disk must be a volume that THIS restore just created on the scratch storage (never a raw /dev path or another guest's disk):
+    stray="$(printf '%s\n' "$conf" | awk -F': ' -v st="${BK_DRILL_STORAGE:-local-lvm}" -v id="$scratch" '/^(scsi|virtio|sata|ide|efidisk|tpmstate)[0-9]+:/ && $2 !~ /media=cdrom/ { if ($2 !~ ("^" st ":vm-" id "-disk-[0-9]+")) printf "%s ", $1 }')"
+    [ -z "$stray" ] || fail_drill "the restored config has disk(s) not on the scratch volumes ($stray); refusing to boot (a raw host device or another guest's disk)"
+    # (3) host-executed or host-sharing keys are removed (only those present, so qm never sees a missing key):
+    del=""
+    for k in numa1 hookscript args hugepages cicustom; do
+      if printf '%s\n' "$conf" | grep -q "^$k:"; then del="$del,$k"; fi
+    done
+    for k in $(printf '%s\n' "$conf" | awk -F: '/^virtiofs[0-9]+:/ { print $1 }'); do del="$del,$k"; done
+    extra_nets="$(printf '%s\n' "$conf" | awk -F: '/^net[1-9][0-9]*:/ { print $1 }' | paste -sd, -)"
+    [ -z "$extra_nets" ] || del="$del,$extra_nets"
     model="$(printf '%s\n' "$conf" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
     [ -n "$model" ] || model="virtio"
-    extra_nets="$(printf '%s\n' "$conf" | awk -F: '/^net[1-9][0-9]*:/ { print $1 }' | paste -sd, -)"
-    # Memory is bound to one host NUMA node (default 1, which has the most headroom; prod is bound to
-    # both and node 0 is its tight one), the vCPUs are confined to a few host threads (default: the
-    # ones dune-dev uses, the expendable guest) and given the lowest CPU weight, so prod always wins.
-    qm set "$scratch" --onboot 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 1 --numa0 "cpus=0-$((cores - 1)),hostnodes=$node,memory=$mem,policy=bind" --affinity "$aff" --cpuunits "$units" --delete "numa1${extra_nets:+,$extra_nets}" --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
-    # Verify what was applied, do not assume it: refuse to boot unless the pin and caps are really in the config.
+    # Memory bound to one host NUMA node, vCPUs confined to a few host threads (default: dune-dev's, the
+    # expendable guest) at the lowest CPU weight: prod always wins. protection off so destroy cannot refuse.
+    # shellcheck disable=SC2046  # $del is a comma list built above from validated key names
+    qm set "$scratch" --onboot 0 --protection 0 --memory "$mem" --balloon 0 --cores "$cores" --sockets 1 --numa 1 --numa0 "cpus=0-$((cores - 1)),hostnodes=$node,memory=$mem,policy=bind" --affinity "$aff" --cpuunits "$units" ${del:+--delete "${del#,}"} --net0 "$model,bridge=$DRILL_BRIDGE" >/dev/null || fail_drill "could not isolate and cap the scratch VM"
+    # limit the scratch guest's own disk I/O (a booted copy of prod replays its database and would hammer the shared disk)
+    while IFS=$'\t' read -r k v; do
+      [ -n "$k" ] || continue
+      v="$(printf '%s' "$v" | sed -E 's/,(mbps|iops)_(rd|wr)(_max)?=[0-9.]+//g')"
+      qm set "$scratch" "--$k" "$v,mbps_rd=$disk_rd,mbps_wr=$disk_wr" >/dev/null || fail_drill "could not limit the scratch disk $k"
+    done < <(printf '%s\n' "$conf" | disk_lines)
+    # Verify what was applied, do not assume it: refuse to boot unless every protection is really in the config.
     conf="$(qm config "$scratch")" || fail_drill "could not re-read the scratch VM config"
-    printf '%s\n' "$conf" | grep -Eq "^numa0:.*hostnodes=$node([,;]|$).*policy=bind|^numa0:.*policy=bind.*hostnodes=$node([,;]|$)" || fail_drill "the NUMA binding to node $node is not in the scratch VM config; refusing to boot"
+    printf '%s\n' "$conf" | grep -Eq "^numa0:.*[:, ]hostnodes=$node([,;]|$).*policy=bind|^numa0:.*policy=bind.*[:, ]hostnodes=$node([,;]|$)" || fail_drill "the NUMA binding to node $node is not in the scratch VM config; refusing to boot"
+    ! printf '%s\n' "$conf" | grep -q '^numa1:' || fail_drill "a second NUMA node is still configured on the scratch VM; refusing to boot"
     printf '%s\n' "$conf" | grep -q "^affinity: $aff\$" || fail_drill "the CPU affinity $aff is not in the scratch VM config; refusing to boot"
     printf '%s\n' "$conf" | grep -q "^cpuunits: $units\$" || fail_drill "the CPU weight $units is not in the scratch VM config; refusing to boot"
     printf '%s\n' "$conf" | grep -q "^memory: $mem\$" || fail_drill "the memory cap ${mem}MB is not in the scratch VM config; refusing to boot"
-    stray="$(qm config "$scratch" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
+    ! printf '%s\n' "$conf" | grep -Eq '^(hookscript|args|hugepages|cicustom|virtiofs[0-9]+):|^protection: 1' || fail_drill "a host-executed or protective key survived in the scratch VM config; refusing to boot"
+    while IFS=$'\t' read -r k v; do
+      [ -n "$k" ] || continue
+      case "$v" in *"mbps_rd=$disk_rd"*"mbps_wr=$disk_wr"* | *"mbps_wr=$disk_wr"*"mbps_rd=$disk_rd"*) ;; *) fail_drill "the I/O limit is not on the scratch disk $k; refusing to boot" ;; esac
+    done < <(printf '%s\n' "$conf" | disk_lines)
+    stray="$(printf '%s\n' "$conf" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
     [ -z "$stray" ] || fail_drill "scratch VM still has network device(s) outside $DRILL_BRIDGE ($stray); refusing to boot"
   else
-    pct set "$scratch" --onboot 0 --memory "$mem" --cores "$cores" --net0 "name=eth0,bridge=$DRILL_BRIDGE,ip=manual" >/dev/null || fail_drill "could not isolate and cap the scratch CT"
+    conf="$(pct config "$scratch")" || fail_drill "could not read the scratch CT config"
+    # a container must not carry host bind mounts, device passthrough or raw LXC settings
+    if printf '%s\n' "$conf" | grep -Eq '^(lxc\.|dev[0-9]+:)'; then fail_drill "the restored CT config has raw LXC settings or device passthrough; refusing to start"; fi
+    stray="$(printf '%s\n' "$conf" | awk -F': ' -v st="${BK_DRILL_STORAGE:-local-lvm}" '/^(rootfs|mp[0-9]+):/ { if ($2 !~ ("^" st ":")) printf "%s ", $1 }')"
+    [ -z "$stray" ] || fail_drill "the restored CT has mount(s) that are not on the scratch storage ($stray); refusing to start"
+    pct set "$scratch" --onboot 0 --protection 0 --memory "$mem" --cores "$cores" --net0 "name=eth0,bridge=$DRILL_BRIDGE,ip=manual" >/dev/null || fail_drill "could not isolate and cap the scratch CT"
     stray="$(pct config "$scratch" | awk -F: -v b="bridge=$DRILL_BRIDGE" '/^net[0-9]+:/ && index($0, b) == 0 { print $1 }' | paste -sd, -)"
     [ -z "$stray" ] || fail_drill "scratch CT still has network device(s) outside $DRILL_BRIDGE ($stray); refusing to boot"
   fi
 
   STAGE="boot"
+  # The restore may have taken an hour or more: re-check everything the preflight checked.
+  guard_alive || fail_drill "the safety guard is no longer running; refusing to boot unguarded"
+  other="$(other_backup_running)" && fail_drill "a $other backup started during the restore; not booting the copy now"
+  memory_preflight "$mem" "$node"
   # boot-only (a guest with no guest agent): the proof of life is the restored VM's own network port on the
   # isolated bridge. A guest that reached its OS and brought up networking sends packets (ARP, IPv6
   # discovery); an image that cannot boot stays silent. The tap's rx_packets counts what the guest sent.
-  tap_rx() { cat "${BK_DRILL_NET_SYSFS:-/sys/class/net}/tap${scratch}i0/statistics/rx_packets" 2>/dev/null || echo 0; }
+  tap_rx() { local d; d="$(tvar BK_DRILL_NET_SYSFS)"; cat "${d:-/sys/class/net}/tap${scratch}i0/statistics/rx_packets" 2>/dev/null || echo 0; }
   min_packets="${BK_DRILL_MIN_PACKETS:-5}"
   # A guest whose disk will not boot can still send packets (firmware falls back to a network boot);
   # a real OS boot also READS the disk (kernel, initrd, libraries): require at least this much.
@@ -464,10 +617,18 @@ drill_vm() {
   disk_read=0
   base_rx=0
   if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then base_rx="$(tap_rx)"; fi
-  if [ "$kind" = "vm" ]; then qm start "$scratch" || fail_drill "scratch VM did not start"; else pct start "$scratch" || fail_drill "scratch CT did not start"; fi
+  # run through bk_run_bg so a guard stop during a (slow) start is acted on at once
+  if [ "$kind" = "vm" ]; then bk_run_bg qm start "$scratch" || fail_drill "scratch VM did not start"; else bk_run_bg pct start "$scratch" || fail_drill "scratch CT did not start"; fi
+  # if the host runs short of memory, the kernel should pick this scratch guest, never prod
+  pidf="$(tvar BK_DRILL_QEMU_RUN_DIR)"; pidf="${pidf:-/run/qemu-server}/$scratch.pid"
+  if [ "$kind" = "vm" ] && [ -r "$pidf" ]; then
+    pid="$(cat "$pidf" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then printf '1000' >"/proc/$pid/oom_score_adj" 2>/dev/null || bk_log "note: could not raise the scratch guest's oom_score_adj"; fi
+  fi
   up=0
   sent=0
   for i in $(seq 1 "${BK_DRILL_BOOT_TRIES:-120}"); do
+    guard_alive || fail_drill "the safety guard is no longer running; stopping the drill"
     if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then
       sent=$(($(tap_rx) - base_rx))
       disk_read="$(qm status "$scratch" --verbose 2>/dev/null | awk '/^diskread:/ { print $2 }')"
@@ -500,7 +661,7 @@ drill_vm() {
   [ "$rc" = "0" ] || fail_drill "in-guest check FAILED (exit $rc): $check_var"
 
   STAGE="record"
-  bk_evidence drill-vm PASS "guest=$guest image=$image scratch=$scratch check=$check_var mode=$([ "$boot_only" -eq 1 ] && echo boot-only || echo in-guest)"
+  bk_evidence drill-vm PASS "guest=$guest image=$image scratch=$scratch check=$check_var mode=$([ "$boot_only" -eq 1 ] && echo boot-only || echo in-guest) guard=$guard_on bwlimit_kib=$bwlimit node=$node affinity=$aff cpuunits=$units timeout_min=$rtmo"
   bk_audit_log drill_ok "kind=vm" "guest=$guest" "image=$image"
   bk_dead_man_ping || true
   bk_log "VM drill PASSED: $image restored to scratch $scratch, booted isolated ($([ "$boot_only" -eq 1 ] && echo "boot-only: sent packets, no in-guest command" || echo "in-guest check passed")); destroying the scratch guest"

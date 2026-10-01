@@ -37,6 +37,7 @@ BK_DRILL_VM_MEMORY_MB=4096
 BK_DISCORD_WEBHOOK_FILE=$T/hook
 BK_DEADMAN_URL_FILE=$T/deadman
 BK_DRILL_GUARD=0
+BK_BACKUP_SSH=dune@prod.test
 BK_DRILL_MEMINFO=$T/meminfo
 BK_DRILL_NODE_SYSFS=$T/node
 EOF
@@ -102,26 +103,59 @@ EOF
 }
 
 make_proxmox_stubs() {
-  cat >"$T/bin/qm" <<EOF
+  cat >"$T/bin/qm" <<'EOF'
 #!/usr/bin/env bash
-echo "\$*" >>"$T/qm.calls"
-F="$T/vmstate"; mkdir -p "\$F"
-case "\$1" in
-  status) if [ -f "\$F/scratch-exists" ]; then if [ -f "\$F/started" ]; then echo "status: running"; [ "\$3" = "--verbose" ] && { if [ -f "$T/low-read" ]; then echo "diskread: 4096"; else echo "diskread: 524288000"; fi; }; else echo "status: stopped"; fi; exit 0; fi; exit 2 ;;
-  config) if [ -f "\$F/set-done" ]; then echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbrdrill"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
-            [ -f "$T/nopin" ] || echo "numa0: cpus=0-3,hostnodes=1,memory=4096,policy=bind"
-            [ -f "$T/noaff" ] || echo "affinity: 1,3,5,7"
-            [ -f "$T/nounits" ] || echo "cpuunits: 10"
-            [ -f "$T/nomem" ] || echo "memory: 4096"
-          else echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20"; echo "numa0: cpus=0-39,hostnodes=0,memory=114688,policy=bind"; echo "affinity: 0-78"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
-  set) [ -f "$T/set-fail" ] && exit 1; : >"\$F/set-done"; exit 0 ;;
-  start) [ -f "$T/start-fail" ] && exit 1; : >"\$F/started"
+T="$BATS_TEST_TMPDIR"
+echo "$*" >>"$T/qm.calls"
+F="$T/vmstate"; mkdir -p "$F"
+src_config() {
+  echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20"
+  echo "numa: 1"
+  echo "numa0: cpus=0-39,hostnodes=0,memory=114688,policy=bind"
+  echo "numa1: cpus=40-59,hostnodes=1,memory=81920,policy=bind"
+  echo "affinity: 0-78"
+  echo "scsi0: local-lvm:vm-990-disk-0,size=300G,discard=on"
+  echo "onboot: 1"
+  [ -f "$T/vm.extra" ] && cat "$T/vm.extra"
+  return 0
+}
+drop() { grep -v "^$1: " "$F/out" >"$F/o2" || true; mv "$F/o2" "$F/out"; }
+case "$1" in
+  status) if [ -f "$F/scratch-exists" ]; then if [ -f "$F/started" ]; then echo "status: running"; [ "$3" = "--verbose" ] && { if [ -f "$T/low-read" ]; then echo "diskread: 4096"; else echo "diskread: 524288000"; fi; }; else echo "status: stopped"; fi; exit 0; fi; exit 2 ;;
+  config) if [ -f "$F/set-done" ]; then
+            cp "$F/cfg" "$F/out"
+            [ -f "$T/nopin" ] && drop numa0
+            [ -f "$T/noaff" ] && drop affinity
+            [ -f "$T/nounits" ] && drop cpuunits
+            [ -f "$T/nomem" ] && drop memory
+            if [ -f "$T/post-override" ]; then
+              while IFS= read -r l; do drop "${l%%:*}"; echo "$l" >>"$F/out"; done <"$T/post-override"
+            fi
+            cat "$F/out"
+          else src_config; fi; exit 0 ;;
+  set) [ -f "$T/set-fail" ] && exit 1
+       if [ ! -f "$F/set-done" ]; then src_config >"$F/cfg"; : >"$F/set-done"; fi
+       shift 2
+       while [ $# -gt 0 ]; do
+         case "$1" in
+           --delete) IFS=, read -ra ks <<<"$2"
+                     for k in "${ks[@]}"; do
+                       if [ -f "$T/keep-extra" ]; then case "$k" in net*) continue ;; esac; fi
+                       grep -v "^$k: " "$F/cfg" >"$F/cfg.n" || true; mv "$F/cfg.n" "$F/cfg"
+                     done; shift 2 ;;
+           --*) k="${1#--}"; grep -v "^$k: " "$F/cfg" >"$F/cfg.n" || true; mv "$F/cfg.n" "$F/cfg"; echo "$k: $2" >>"$F/cfg"; shift 2 ;;
+           *) shift ;;
+         esac
+       done
+       exit 0 ;;
+  start) [ -f "$T/start-fail" ] && exit 1; : >"$F/started"
          if [ ! -f "$T/tap-silent" ]; then mkdir -p "$T/sysfs/tap990i0/statistics"; echo 40 >"$T/sysfs/tap990i0/statistics/rx_packets"; fi
-         if [ -f "$T/stops-after-start" ]; then rm -f "\$F/started"; fi ;;
-  agent) [ -f "\$F/started" ] && [ ! -f "$T/noagent" ] ;;
+         if [ -f "$T/stops-after-start" ]; then rm -f "$F/started"; fi ;;
+  agent) [ -f "$F/started" ] && [ ! -f "$T/noagent" ] ;;
   guest) if [ -f "$T/check-fail" ]; then echo '{"exitcode":1}'; else echo '{"exitcode":0,"out-data":"ok"}'; fi ;;
-  stop) rm -f "\$F/started" ;;
-  destroy) rm -f "\$F/scratch-exists" "\$F/started"; echo destroyed >>"$T/destroyed" ;;
+  stop) rm -f "$F/started" ;;
+  destroy) [ -f "$T/destroy-fails" ] && exit 1
+           rm -f "$F/scratch-exists" "$F/started"; echo destroyed >>"$T/destroyed" ;;
 esac
 EOF
   cat >"$T/bin/qmrestore" <<EOF
@@ -138,7 +172,7 @@ case "\$1" in
   status) if [ -f "\$F/ct-exists" ]; then echo "status: running"; exit 0; fi; exit 1 ;;
   restore) cat >"$T/restored.bin"; : >"\$F/ct-exists" ;;
   config) if [ -f "\$F/set-done" ]; then echo "net0: name=eth0,bridge=vmbrdrill,ip=manual"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
-          else echo "net0: name=eth0,bridge=vmbr0"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
+          else echo "net0: name=eth0,bridge=vmbr0"; echo "rootfs: local-lvm:vm-990-disk-0,size=12G"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; [ -f "$T/ct.extra" ] && cat "$T/ct.extra"; fi; exit 0 ;;
   set) : >"\$F/set-done"; exit 0 ;;
   start|stop) exit 0 ;;
   exec) [ -f "$T/check-fail" ] && exit 1; exit 0 ;;
@@ -156,11 +190,39 @@ case "\$1 \$2" in
   "link del") rm -f "\$B" ;;
 esac
 EOF
-  cat >"$T/bin/lvs" <<EOF
+  cat >"$T/bin/lvs" <<'EOF'
 #!/usr/bin/env bash
-if [ -f "$T/poolvals" ]; then cat "$T/poolvals"; else echo "  1634.87 20.00"; fi
+T="$BATS_TEST_TMPDIR"
+case "$*" in
+  *lv_name*) cat "$T/lvnames" 2>/dev/null || true ;;
+  *) if [ -f "$T/poolvals" ]; then cat "$T/poolvals"; else echo "  1634.87 20.00"; fi ;;
+esac
 EOF
-  chmod +x "$T/bin/qm" "$T/bin/qmrestore" "$T/bin/pct" "$T/bin/ip" "$T/bin/lvs"
+  cat >"$T/bin/lvremove" <<'EOF'
+#!/usr/bin/env bash
+T="$BATS_TEST_TMPDIR"
+echo "$*" >>"$T/lvremove.calls"
+name="${@: -1}"; name="${name#*/}"
+grep -v "^ *$name\$" "$T/lvnames" >"$T/lvnames.n" 2>/dev/null || true; mv "$T/lvnames.n" "$T/lvnames" 2>/dev/null || true
+EOF
+  cat >"$T/bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$BATS_TEST_TMPDIR/systemd-run.calls"
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+EOF
+  cat >"$T/bin/sysctl" <<'EOF'
+#!/usr/bin/env bash
+T="$BATS_TEST_TMPDIR"
+echo "$*" >>"$T/sysctl.calls"
+case "$1" in
+  -n) [ -f "$T/dirty-unreadable" ] && exit 1; printf '%s\n' 20 10 ;;
+  -q) [ -f "$T/sysctl-fail" ] && exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$T/bin/qm" "$T/bin/qmrestore" "$T/bin/pct" "$T/bin/ip" "$T/bin/lvs" "$T/bin/lvremove" "$T/bin/systemd-run" "$T/bin/sysctl"
 }
 
 # ---------- fixtures -----------------------------------------------------------------
@@ -705,7 +767,7 @@ EOF
   drill vm --guest 104 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 0 ]
   grep -q "^restore 990 - --storage local-lvm --unique 1" "$T/pct.calls"
-  grep -q "^set 990 --onboot 0 --memory 4096 --cores 4 --net0 name=eth0,bridge=vmbrdrill,ip=manual" "$T/pct.calls"
+  grep -q "^set 990 --onboot 0 --protection 0 --memory 4096 --cores 4 --net0 name=eth0,bridge=vmbrdrill,ip=manual" "$T/pct.calls"
   [ ! -e "$T/vmstate/ct-exists" ]
   [ ! -e "$T/vmstate/bridge" ]
 }
@@ -789,7 +851,6 @@ exec bash -c "\${@: -1}"
 EOF
   chmod +x "$T/bin/ssh"
 }
-teardown() { pkill -KILL -fx "sleep 319" 2>/dev/null || true; }
 
 @test "abort while the throwaway container is starting: children stopped, container removed, RAM wiped" {
   make_set
@@ -905,17 +966,49 @@ boot_only_cfg() { echo 'BK_DRILL_VM_CHECK_102=boot-only' >>"$BK_CONFIG_DIR/backu
 # =====================================================================================
 # VM drill guardrails: the drill must not hurt the live host or dune-prod
 # =====================================================================================
+# NOTE on negative assertions: bats (errexit) does NOT fail a test on a mid-test `! cmd`, so every
+# "this never happened" check uses never()/nothing_created(), which return non-zero explicitly.
+
+teardown() { pkill -KILL -fx 'sleep 319' 2>/dev/null || true; pkill -KILL -fx 'sleep 331' 2>/dev/null || true; pkill -KILL -fx 'sleep 57' 2>/dev/null || true; }
 
 vm_ok_image() { make_image vm101-20261001-120000.vma.zst.age FAKEDISKDATA; echo 'BK_DRILL_VM_CHECK_101=boot-only' >>"$BK_CONFIG_DIR/backup.env"; }
-no_scratch_made() { [ ! -e "$T/qmrestore.calls" ] && [ ! -e "$T/vmstate/bridge" ] && [ ! -e "$T/vmstate/scratch-exists" ]; }
+# remove named files or directories inside the test's own temp dir
+clean() { local n; for n in "$@"; do rm -rf -- "${T:?}/${n:?}"; done; }
+never() { if grep -Eq -- "$1" "$2" 2>/dev/null; then echo "UNEXPECTED match of '$1' in $2:" >&3; grep -E -- "$1" "$2" >&3; return 1; fi; return 0; }
+# nothing was created: no restore, no bridge, no scratch guest, no kernel-setting change, no cgroup scope
+nothing_created() {
+  [ ! -e "$T/qmrestore.calls" ] || { echo "qmrestore ran" >&3; return 1; }
+  never 'link add' "$T/ip.calls" || return 1
+  [ ! -e "$T/systemd-run.calls" ] || { echo "a scope was created" >&3; return 1; }
+  never 'dirty' "$T/sysctl.calls" || return 1
+  never '^set 990|^start 990' "$T/qm.calls" || return 1
+}
+# every qm/pct/qmrestore call names the scratch id, never anything else
+only_scratch_id() {
+  local bad
+  bad="$(awk '$2 ~ /^[0-9]+$/ && $2 != "990" { print }' "$T/qm.calls" "$T/pct.calls" 2>/dev/null)"
+  [ -z "$bad" ] || { echo "touched another id: $bad" >&3; return 1; }
+  bad="$(grep -v '^- 990 ' "$T/qmrestore.calls" 2>/dev/null || true)"
+  [ -z "$bad" ] || { echo "restored to another id: $bad" >&3; return 1; }
+}
 
 guard_on_stubs() {
   export BK_PSI_DIR="$T/psi"; mkdir -p "$BK_PSI_DIR"
-  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
-  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
   stub iostat 'echo "Device r/s rMB/s rrqm/s %rrqm r_await rareq-sz w/s wMB/s wrqm/s %wrqm w_await wareq-sz d/s dMB/s drqm/s %drqm d_await dareq-sz f/s f_await aqu-sz %util"
 for i in 1 2; do echo "sda 100.0 50.0 0 0 3.0 128 20.0 2.0 0 0 0.5 100 0 0 0 0 0 0 0 0 0 12.0"; done'
-  stub lvs 'case "$*" in *lv_size*) echo "  1634.87 20.00" ;; *) echo "  17.7" ;; esac'
+  # lvs: guard (data%, metadata%), pool headroom (size, used%), orphan volume listing
+  cat >"$T/bin/lvs" <<'EOS'
+#!/usr/bin/env bash
+T="$BATS_TEST_TMPDIR"
+case "$*" in
+  *lv_name*) cat "$T/lvnames" 2>/dev/null || true ;;
+  *lv_size*) echo "  1634.87 20.00" ;;
+  *) echo "  17.7  0.69" ;;
+esac
+EOS
+  chmod +x "$T/bin/lvs"
   cat >"$T/bin/ssh" <<EOS
 #!/usr/bin/env bash
 echo "\$*" >>"$T/ssh.calls"
@@ -929,43 +1022,65 @@ esac
 EOS
   chmod +x "$T/bin/ssh"
   sed -i 's/^BK_DRILL_GUARD=0/BK_DRILL_GUARD=1/' "$BK_CONFIG_DIR/backup.env"
-  { echo 'BK_BACKUP_SSH=dune@prod.test'; echo 'BK_GUARD_INTERVAL_S=1'; echo 'BK_GUARD_CONSECUTIVE=2'; echo 'BK_KILL_GRACE_S=2'; } >>"$BK_CONFIG_DIR/backup.env"
+  { echo 'BK_GUARD_INTERVAL_S=1'; echo 'BK_GUARD_CONSECUTIVE=2'; echo 'BK_KILL_GRACE_S=2'; } >>"$BK_CONFIG_DIR/backup.env"
 }
 
-@test "vm guardrail: inside the blackout (the 04:30 dump and 05:00 restart) the drill refuses and creates nothing" {
+# ---- preflight refusals: each creates nothing ------------------------------------------------
+
+@test "vm guardrail: inside the blackout the drill refuses and creates nothing" {
   vm_ok_image
   BK_DRILL_NOW_MIN=290 drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
-  grep -q "blackout 04:20-05:20" "$T/curl.args"
-  no_scratch_made
+  grep -q "overlap the blackout 04:20-05:20" "$T/curl.args"
+  nothing_created
 }
 
-@test "vm guardrail: the blackout edges, and a custom blackout that wraps midnight" {
+@test "vm guardrail: a start that would RUN INTO the blackout is refused too (the whole run is checked, not just the start)" {
   vm_ok_image
-  BK_DRILL_NOW_MIN=259 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
-  [ "$status" -eq 0 ]
-  BK_DRILL_NOW_MIN=260 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  BK_DRILL_NOW_MIN=120 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run   # 02:00 + 170 min = 04:50
   [ "$status" -eq 1 ]
-  BK_DRILL_NOW_MIN=320 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  BK_DRILL_NOW_MIN=60 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run    # 01:00 + 170 min = 03:50
+  [ "$status" -eq 0 ]
+  BK_DRILL_NOW_MIN=120 BK_DRILL_RESTORE_TIMEOUT_MIN=60 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 0 ]
+}
+
+@test "vm guardrail: the blackout edges (20 minute margin), a window that wraps midnight, and a malformed spec" {
+  vm_ok_image
+  export BK_DRILL_RESTORE_TIMEOUT_MIN=1
+  BK_DRILL_NOW_MIN=238 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run   # 238 + 21 = 259 < 260
+  [ "$status" -eq 0 ]
+  BK_DRILL_NOW_MIN=239 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run   # 239 + 21 = 260 = the start
+  [ "$status" -eq 1 ]
+  BK_DRILL_NOW_MIN=319 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run   # still inside
+  [ "$status" -eq 1 ]
+  BK_DRILL_NOW_MIN=320 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run   # 05:20 is the first free minute
   [ "$status" -eq 0 ]
   BK_DRILL_BLACKOUT=23:00-02:00 BK_DRILL_NOW_MIN=60 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
   [ "$status" -eq 1 ]
+  BK_DRILL_BLACKOUT=23:00-02:00 BK_DRILL_NOW_MIN=720 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 0 ]
   BK_DRILL_BLACKOUT=nonsense drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
   [ "$status" -eq 1 ]
   grep -q "BK_DRILL_BLACKOUT must look like" "$T/curl.args"
 }
 
-@test "vm guardrail: a running weekly or daily backup stops the drill from competing with it" {
+@test "vm guardrail: a running weekly or daily backup stops the drill; a STALE lock file does not" {
   vm_ok_image
   mkdir -p "$BK_STATE_DIR"
-  ( exec 7>"$BK_STATE_DIR/backup-weekly.lock"; flock -n 7; sleep 30 ) &
+  : >"$BK_STATE_DIR/backup-weekly.lock"          # exists but nobody holds it
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 0 ]
+  mkfifo "$T/release"
+  ( exec 7>"$BK_STATE_DIR/backup-daily.lock"; flock -n 7 || exit 1; : >"$T/held"; read -r _ <"$T/release" ) 3>&- &
   holder=$!
-  sleep 1
+  for _ in $(seq 1 50); do [ -e "$T/held" ] && break; sleep 0.1; done
+  [ -e "$T/held" ]
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
-  kill "$holder" 2>/dev/null || true
+  kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
   [ "$status" -eq 1 ]
-  grep -q "backup-weekly backup is running" "$T/curl.args"
-  no_scratch_made
+  grep -q "backup-daily backup is running" "$T/curl.args"
+  nothing_created
 }
 
 @test "vm guardrail: too little host memory, or too little on the pinned NUMA node, refuses before anything is created" {
@@ -974,59 +1089,59 @@ EOS
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   grep -q "of host memory is available" "$T/curl.args"
-  no_scratch_made
+  nothing_created
   printf 'MemAvailable: 141000000 kB\n' >"$T/meminfo"
   printf 'Node 1 MemFree: 9000000 kB\n' >"$T/node/node1/meminfo"
-  rm -f "$T/curl.args"
+  clean curl.args
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   grep -q "NUMA node 1 has only" "$T/curl.args"
-  no_scratch_made
+  nothing_created
 }
 
-@test "vm guardrail: an unlimited or absurd restore rate, a bad affinity or weight, a bad timeout are refused" {
+@test "vm guardrail: every bad or unbounded setting is refused up front and creates nothing (no bridge, no scope, no kernel change)" {
   vm_ok_image
-  for v in "BK_DRILL_BWLIMIT_KIB=0" "BK_DRILL_BWLIMIT_KIB=fast" "BK_DRILL_AFFINITY=1;reboot" "BK_DRILL_CPUUNITS=0" "BK_DRILL_NUMA_NODE=x" "BK_DRILL_RESTORE_TIMEOUT_MIN=abc"; do
-    rm -f "$T/curl.args"
-    env "$v" bash "$SCRIPT" vm --guest 101 --identity "$BK_AGE_IDENTITY" >/dev/null 2>&1 && return 1
-    grep -q "P1" "$T/curl.args"
-    no_scratch_made || { echo "created something for $v" >&3; return 1; }
+  for v in "BK_DRILL_BWLIMIT_KIB=0" "BK_DRILL_BWLIMIT_KIB=1023" "BK_DRILL_BWLIMIT_KIB=102401" "BK_DRILL_BWLIMIT_KIB=fast" \
+    "BK_DRILL_AFFINITY=1;reboot" "BK_DRILL_CPUUNITS=0" "BK_DRILL_CPUUNITS=10001" "BK_DRILL_NUMA_NODE=x" \
+    "BK_DRILL_RESTORE_TIMEOUT_MIN=abc" "BK_DRILL_RESTORE_TIMEOUT_MIN=0" "BK_DRILL_RESTORE_TIMEOUT_MIN=601" \
+    "BK_DRILL_GUARD=true" "BK_DRILL_GUARD=yes" "BK_DRILL_GUARD=2" "BK_DRILL_RESTORE_MEMHIGH=2X" "BK_DRILL_DIRTY_MB=8" \
+    "BK_DRILL_DIRTY_BG_MB=999" "BK_DRILL_DISK_MBPS_WR=0" "BK_DRILL_NODE_HEADROOM_MB=\$(id)" "BK_DRILL_MIN_AVAIL_GB=lots" "BK_DRILL_GUARD_IO_METRIC=most"; do
+    clean curl.args
+    # the config file wins over the environment, so a setting that backup.env already carries is changed there
+    case "$v" in BK_DRILL_GUARD=*) sed -i "s/^BK_DRILL_GUARD=.*/$v/" "$BK_CONFIG_DIR/backup.env" ;; esac
+    if env "$v" bash "$SCRIPT" vm --guest 101 --identity "$BK_AGE_IDENTITY" >/dev/null 2>&1; then echo "accepted: $v" >&3; return 1; fi
+    grep -q "P1" "$T/curl.args" || { echo "no alert for: $v" >&3; return 1; }
+    nothing_created || { echo "created something for: $v" >&3; return 1; }
   done
 }
 
-@test "vm guardrail: the pin, affinity, weight and memory cap must really be in the config or the guest is never started" {
+@test "vm guardrail: an existing scratch id is detected from its config file even if qm and pct say nothing" {
   vm_ok_image
-  for f in nopin noaff nounits nomem; do
-    rm -f "$T/qm.calls" "$T/curl.args" "$T/vmstate/set-done" "$T/nopin" "$T/noaff" "$T/nounits" "$T/nomem"
-    : >"$T/$f"
-    drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
-    [ "$status" -eq 1 ] || { echo "$f: status $status" >&3; return 1; }
-    grep -q "refusing to boot" "$T/curl.args" || { echo "$f: no refusal" >&3; return 1; }
-    ! grep -q '^start 990' "$T/qm.calls"
-    [ ! -e "$T/vmstate/scratch-exists" ]
-    [ ! -e "$T/vmstate/bridge" ]
-  done
+  mkdir -p "$T/pve/qemu-server"; : >"$T/pve/qemu-server/990.conf"
+  BK_DRILL_PVE_DIR="$T/pve" drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "already exists" "$T/curl.args"
+  nothing_created
 }
 
-@test "vm guardrail: the restore is rate-limited, time-limited, and the guest is pinned (memory to one node, CPUs to few threads, lowest weight)" {
-  vm_ok_image
-  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+@test "vm guardrail: a planted image named for the far future never outranks the real newest image" {
+  make_image vm101-20261001-120000.vma.zst.age REALIMAGE
+  make_image vm101-99991231-235959.vma.zst.age PLANTED
+  echo 'BK_DRILL_VM_CHECK_101=boot-only' >>"$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
   [ "$status" -eq 0 ]
-  grep -q -- "--bwlimit 40960" "$T/qmrestore.calls"
-  setline="$(grep '^set 990' "$T/qm.calls")"
-  [[ "$setline" == *"--numa0 cpus=0-3,hostnodes=1,memory=4096,policy=bind"* ]]
-  [[ "$setline" == *"--affinity 1,3,5,7"* ]]
-  [[ "$setline" == *"--cpuunits 10"* ]]
+  [[ "$output" == *"vm101-20261001-120000"* ]]
+  [[ "$output" != *"99991231"* ]]
 }
 
-@test "vm guardrail: the drill only ever touches its scratch id, never the guest it copies or any other production guest" {
-  vm_ok_image
-  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
-  [ "$status" -eq 0 ]
-  ! grep -Eq '^(set|start|stop|shutdown|reset|destroy|migrate|snapshot|rollback|resize|move|clone|template|suspend|resume) +(10[0-9]|1[0-9]{2}) ' "$T/qm.calls"
-  ! grep -Eq '^(set|start|stop|destroy) +(10[0-9]) ' "$T/pct.calls" 2>/dev/null
-  ! grep -Eq '^(101|102|103|104) ' "$T/qmrestore.calls"
-  grep -Eq '^- 990 ' "$T/qmrestore.calls"
+@test "vm guardrail: the test-only overrides are read through tvar (bats only), never directly from the environment" {
+  # BK_DRILL_NOW_MIN, _MEMINFO, _NODE_SYSFS, _PVE_DIR, _QEMU_RUN_DIR, _NET_SYSFS can each weaken a protection
+  run grep -nE '\$\{?BK_DRILL_(NOW_MIN|MEMINFO|NODE_SYSFS|PVE_DIR|QEMU_RUN_DIR|NET_SYSFS)' "$SCRIPT"
+  [ "$status" -eq 1 ]
+  run grep -c 'tvar BK_DRILL_' "$SCRIPT"
+  [ "$output" -ge 6 ]
+  run grep -nE 'BK_PSI_DIR' "$REPO_ROOT/scripts/backup-guard.sh"
+  [[ "$output" == *"BATS_TEST_TMPDIR"* ]]
 }
 
 @test "vm guardrail: --dry-run runs the preflight, prints a forecast, and creates nothing" {
@@ -1035,34 +1150,288 @@ EOS
   [ "$status" -eq 0 ]
   [[ "$output" == *"PREFLIGHT OK"* ]]
   [[ "$output" == *"writes capped at 40960KiB/s"* ]]
+  [[ "$output" == *"MemoryHigh=2G"* ]]
   [[ "$output" == *"NUMA node 1"* ]]
   [[ "$output" == *"CPU affinity 1,3,5,7"* ]]
+  [[ "$output" == *"dirty-page limits lowered to 256MB/64MB"* ]]
   [[ "$output" == *"Nothing is ever written to guest 101"* ]]
-  no_scratch_made
+  nothing_created
 }
 
-@test "vm guard: a game that is not READY stops the drill at the pre-check, before anything is created" {
+@test "vm guardrail: --dry-run fails each preflight problem too (blackout, memory, guard)" {
+  vm_ok_image
+  BK_DRILL_NOW_MIN=290 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  printf 'MemAvailable: 1000000 kB\n' >"$T/meminfo"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  printf 'MemAvailable: 141000000 kB\n' >"$T/meminfo"
+  guard_on_stubs
+  echo 0 >"$T/degrade-after"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not READY"* ]]
+  nothing_created
+}
+
+# ---- what the run does: caps, pins, limits, cleanup ---------------------------------------
+
+@test "vm guardrail: the restore is rate-limited, memory-capped in a cgroup scope, time-limited; the guest is pinned and its disk limited" {
+  vm_ok_image
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  grep -q -- "--bwlimit 40960" "$T/qmrestore.calls"
+  grep -q "MemoryHigh=2G" "$T/systemd-run.calls"
+  grep -q "MemorySwapMax=0" "$T/systemd-run.calls"
+  grep -q "timeout -k 30 150m" "$T/systemd-run.calls"
+  setlines="$(grep '^set 990' "$T/qm.calls")"
+  [[ "$setlines" == *"--numa0 cpus=0-3,hostnodes=1,memory=4096,policy=bind"* ]]
+  [[ "$setlines" == *"--affinity 1,3,5,7"* ]]
+  [[ "$setlines" == *"--cpuunits 10"* ]]
+  [[ "$setlines" == *"--protection 0"* ]]
+  [[ "$setlines" == *"--scsi0 local-lvm:vm-990-disk-0,size=300G,discard=on,mbps_rd=60,mbps_wr=30"* ]]
+  grep -q "net.ipv6.conf.vmbrdrill.disable_ipv6=1" "$T/sysctl.calls"
+  only_scratch_id
+}
+
+@test "vm guardrail: configured pin, weight, restore rate and disk limits really reach qm and qmrestore" {
+  vm_ok_image
+  mkdir -p "$T/node/node0"; printf 'Node 0 MemFree: 66000000 kB\n' >"$T/node/node0/meminfo"
+  BK_DRILL_NUMA_NODE=0 BK_DRILL_AFFINITY=2-5 BK_DRILL_CPUUNITS=25 BK_DRILL_BWLIMIT_KIB=20480 BK_DRILL_DISK_MBPS_RD=70 BK_DRILL_DISK_MBPS_WR=35 BK_DRILL_RESTORE_MEMHIGH=1G \
+    drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  setlines="$(grep '^set 990' "$T/qm.calls")"
+  [[ "$setlines" == *"hostnodes=0,memory=4096,policy=bind"* ]]
+  [[ "$setlines" == *"--affinity 2-5 --cpuunits 25"* ]]
+  [[ "$setlines" == *"mbps_rd=70,mbps_wr=35"* ]]
+  grep -q -- "--bwlimit 20480" "$T/qmrestore.calls"
+  grep -q "MemoryHigh=1G" "$T/systemd-run.calls"
+}
+
+@test "vm guardrail: any applied value that is missing or WRONG in the final config means the guest is never started (and is destroyed)" {
+  vm_ok_image
+  i=0
+  for ov in "numa0: cpus=0-3,hostnodes=0,memory=4096,policy=bind" "numa0: cpus=0-3,hostnodes=10,memory=4096,policy=bind" \
+    "numa0: cpus=0-3,hostnodes=1,memory=4096,policy=preferred" "numa1: cpus=4-7,hostnodes=0,memory=4096,policy=bind" \
+    "affinity: 0-78" "cpuunits: 1000" "memory: 114688" "protection: 1" "hookscript: local:snippets/evil.sh" "args: -chardev x" \
+    "hugepages: 1024" "cicustom: user=local:snippets/u.yml" "virtiofs0: /host/dir" "scsi0: local-lvm:vm-990-disk-0,size=300G,discard=on" \
+    "net1: virtio=AA:BB:CC:DD:EE:01,bridge=vmbr0"; do
+    i=$((i + 1))
+    clean vmstate qm.calls curl.args destroyed post-override nopin noaff nounits nomem
+    printf '%s\n' "$ov" >"$T/post-override"
+    drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+    [ "$status" -eq 1 ] || { echo "case $i [$ov]: status $status (expected a refusal)" >&3; return 1; }
+    grep -q "refusing to boot" "$T/curl.args" || { echo "case $i [$ov]: no refusal message" >&3; return 1; }
+    never '^start 990' "$T/qm.calls" || return 1
+    [ -e "$T/destroyed" ] || { echo "case $i [$ov]: scratch guest not destroyed" >&3; return 1; }
+  done
+  for f in nopin noaff nounits nomem; do
+    clean vmstate qm.calls curl.args destroyed post-override nopin noaff nounits nomem
+    : >"$T/$f"
+    drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+    [ "$status" -eq 1 ] || { echo "$f: status $status" >&3; return 1; }
+    never '^start 990' "$T/qm.calls" || return 1
+  done
+}
+
+@test "vm guardrail: host-executing and host-sharing keys are stripped (only those present), protection is switched off, CD-ROMs are left alone" {
+  vm_ok_image
+  printf 'hookscript: local:snippets/evil.sh\nargs: -chardev x\nhugepages: 1024\ncicustom: user=local:snippets/u.yml\nvirtiofs0: /host/dir\nprotection: 1\nide2: none,media=cdrom\n' >"$T/vm.extra"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  setlines="$(grep '^set 990' "$T/qm.calls")"
+  [[ "$setlines" == *"--delete numa1,hookscript,args,hugepages,cicustom,virtiofs0"* ]]
+  [[ "$setlines" == *"--protection 0"* ]]
+}
+
+@test "vm guardrail: a disk that is not a fresh scratch volume (raw host device, another guest's disk) refuses before anything is changed" {
+  vm_ok_image
+  for d in "scsi1: /dev/sdb" "virtio1: local-lvm:vm-101-disk-1,size=1G" "sata0: /dev/disk/by-id/ata-X"; do
+    clean vmstate qm.calls curl.args
+    printf '%s\n' "$d" >"$T/vm.extra"
+    drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+    [ "$status" -eq 1 ] || { echo "[$d] status $status" >&3; return 1; }
+    grep -q "not on the scratch volumes" "$T/curl.args" || { echo "[$d] no message" >&3; return 1; }
+    never '^set 990 --onboot|^start 990' "$T/qm.calls" || return 1
+  done
+}
+
+@test "vm guardrail: the drill only ever touches its scratch id, never the guest it copies or any other guest" {
+  vm_ok_image
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  grep -q '^set 990' "$T/qm.calls"       # non-vacuous: it did work
+  only_scratch_id
+}
+
+@test "vm guardrail: a container is restored with the same cap, and a CT with host bind mounts or raw lxc settings is refused" {
+  make_image ct104-20261001-120000.vma.zst.age CTDATA
+  echo 'BK_DRILL_VM_CHECK_104="systemctl is-active something"' >>"$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 104 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  grep -q -- "--bwlimit 40960" "$T/systemd-run.calls" || grep -q -- "--bwlimit 40960" "$T/pct.calls"
+  for x in "mp0: /srv/host,mp=/data" "lxc.mount.entry: /dev/x dev/x none bind"; do
+    clean vmstate pct.calls curl.args systemd-run.calls
+    printf '%s\n' "$x" >"$T/ct.extra"
+    drill vm --guest 104 --identity "$BK_AGE_IDENTITY"
+    [ "$status" -eq 1 ] || { echo "[$x] status $status" >&3; return 1; }
+    never '^start 990' "$T/pct.calls" || return 1
+  done
+}
+
+@test "vm guardrail: cleanup removes protection and onboot first, destroys with --skiplock, and proves the guest is gone" {
+  vm_ok_image
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  grep -q '^set 990 --protection 0 --onboot 0' "$T/qm.calls"
+  grep -q '^destroy 990 --skiplock 1 --purge 1 --destroy-unreferenced-disks 1' "$T/qm.calls"
+  never "still exists" "$T/curl.args"
+}
+
+@test "vm guardrail: a guest that cannot be destroyed is a loud P1 alert and a non-zero exit, never silent" {
+  vm_ok_image
+  : >"$T/destroy-fails"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -ne 0 ]
+  grep -q "scratch guest 990 still exists" "$T/curl.args"
+  grep -q "do not start it" "$T/curl.args"
+}
+
+@test "vm guardrail: orphan volumes of a restore that died before its config existed are removed" {
+  vm_ok_image
+  printf 'vm-101-disk-0\nvm-990-disk-0\nvm-990-disk-1\nvm-9901-disk-0\n' >"$T/lvnames"
+  age-keygen -o "$T/wrong.key" 2>/dev/null
+  drill vm --guest 101 --identity "$T/wrong.key"
+  [ "$status" -eq 1 ]
+  grep -q "pve/vm-990-disk-0" "$T/lvremove.calls"
+  grep -q "pve/vm-990-disk-1" "$T/lvremove.calls"
+  never "vm-101-disk-0|vm-9901" "$T/lvremove.calls"
+  never "volumes .* still exist" "$T/curl.args"
+}
+
+@test "vm guardrail: the kernel's dirty-page limits are lowered for the restore and put back, on success and on failure" {
+  vm_ok_image
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  grep -q -- "-q -w vm.dirty_background_bytes=67108864 vm.dirty_bytes=268435456" "$T/sysctl.calls"
+  grep -q -- "-q -w vm.dirty_ratio=20 vm.dirty_background_ratio=10" "$T/sysctl.calls"
+  lower="$(grep -n 'dirty_bytes' "$T/sysctl.calls" | head -1 | cut -d: -f1)"
+  restore="$(grep -n 'vm.dirty_ratio=20' "$T/sysctl.calls" | head -1 | cut -d: -f1)"
+  [ "$lower" -lt "$restore" ]
+  clean sysctl.calls qmrestore.calls vmstate
+  age-keygen -o "$T/wrong.key" 2>/dev/null
+  drill vm --guest 101 --identity "$T/wrong.key"
+  [ "$status" -eq 1 ]
+  grep -q -- "vm.dirty_ratio=20 vm.dirty_background_ratio=10" "$T/sysctl.calls"
+}
+
+@test "vm guardrail: if the kernel's dirty-page limits cannot be read or set, nothing is restored" {
+  vm_ok_image
+  : >"$T/dirty-unreadable"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  [ ! -e "$T/qmrestore.calls" ]
+  clean dirty-unreadable curl.args vmstate
+  : >"$T/sysctl-fail"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  [ ! -e "$T/qmrestore.calls" ]
+}
+
+@test "vm guardrail: the scratch qemu is made the preferred OOM victim" {
+  vm_ok_image
+  mkdir -p "$T/run"
+  sleep 57 &
+  victim=$!
+  echo "$victim" >"$T/run/990.pid"
+  BK_DRILL_QEMU_RUN_DIR="$T/run" drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [ "$(cat /proc/$victim/oom_score_adj)" = "1000" ]
+  kill "$victim" 2>/dev/null || true
+}
+
+@test "vm guardrail: a stale guard reason from an earlier run is never blamed on this run" {
+  vm_ok_image
+  mkdir -p "$BK_STATE_DIR"
+  echo "old stale reason: game was DEGRADED" >"$BK_STATE_DIR/drill-guard.reason"
+  age-keygen -o "$T/wrong.key" 2>/dev/null
+  drill vm --guest 101 --identity "$T/wrong.key"
+  [ "$status" -eq 1 ]
+  never "safety guard" "$T/curl.args"
+  [ ! -e "$BK_STATE_DIR/drill-guard.reason" ]
+}
+
+# ---- the guard -------------------------------------------------------------------------------
+
+@test "vm guard: ON by default (nothing set), and a game that is not READY stops the drill at the pre-check" {
   vm_ok_image
   guard_on_stubs
+  sed -i '/^BK_DRILL_GUARD=/d' "$BK_CONFIG_DIR/backup.env"
   echo 0 >"$T/degrade-after"
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   grep -q "the safety guard sees a problem" "$T/curl.args"
   grep -q "not READY" "$T/curl.args"
-  no_scratch_made
+  nothing_created
 }
 
-@test "vm guard: high host memory pressure stops the drill at the pre-check" {
+@test "vm guard: OFF only by the exact value 0, and then it is loudly recorded in the audit log" {
+  vm_ok_image
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARNING: the safety guard is OFF"* ]]
+  grep -q "drill_guard_off" "$BK_STATE_DIR/audit.log"
+  grep -q "drill_start" "$BK_STATE_DIR/audit.log"
+  grep -q "guard=0" "$BK_STATE_DIR/evidence.log"
+}
+
+@test "vm guard: with the guard on, the settings it ran under are recorded in evidence" {
+  vm_ok_image
+  guard_on_stubs
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; false; }
+  grep -q "guard=1 bwlimit_kib=40960 node=1 affinity=1,3,5,7 cpuunits=10 timeout_min=150" "$BK_STATE_DIR/evidence.log"
+}
+
+@test "vm guard: with no game host configured the guard would be blind, so the drill refuses" {
+  vm_ok_image
+  guard_on_stubs
+  sed -i '/^BK_BACKUP_SSH=/d' "$BK_CONFIG_DIR/backup.env"
+  unset BK_GUARD_GAME_SSH
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "no game host" "$T/curl.args"
+  nothing_created
+}
+
+@test "vm guard: a guard that cannot start (or dies at once) means the drill refuses to run unguarded, restores nothing, and cleans up" {
+  vm_ok_image
+  guard_on_stubs
+  echo 'BK_GUARD_INTERVAL_S=abc' >>"$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "did not start" "$T/curl.args"
+  [ ! -e "$T/qmrestore.calls" ]
+  [ ! -e "$T/vmstate/bridge" ]
+}
+
+@test "vm guard: host memory pressure, and a sampler that cannot read, each stop the drill at the pre-check" {
   vm_ok_image
   guard_on_stubs
   printf 'some avg10=40.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   grep -q "memory pressure" "$T/curl.args"
-  no_scratch_made
+  nothing_created
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
+  clean psi/io curl.args
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "cannot read host I/O pressure" "$T/curl.args"
+  nothing_created
 }
 
-@test "vm guard: a healthy host lets the drill finish with the guard watching the whole run" {
+@test "vm guard: a healthy host lets the drill finish with the guard watching the whole run, and the guard is gone afterwards" {
   vm_ok_image
   guard_on_stubs
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
@@ -1070,9 +1439,10 @@ EOS
   [[ "$output" == *"guard: watching PID"* ]]
   [ ! -e "$T/vmstate/scratch-exists" ]
   [ ! -e "$T/vmstate/bridge" ]
+  if pgrep -f "backup-guard.sh --target" >/dev/null; then echo "a guard process leaked" >&3; return 1; fi
 }
 
-@test "vm guard: a problem that appears DURING the restore stops it, destroys the scratch guest and the bridge, and says why" {
+@test "vm guard: a problem DURING the restore stops it with exit 130, destroys the scratch guest and bridge, kills the restore, and says why" {
   vm_ok_image
   guard_on_stubs
   echo 1 >"$T/degrade-after"      # the pre-check (call 1) passes; every later sample fails
@@ -1085,12 +1455,16 @@ exec sleep 331
 EOS
   chmod +x "$T/bin/qmrestore"
   drill vm --guest 101 --identity "$BK_AGE_IDENTITY"
-  [ "$status" -ne 0 ]
-  ! pgrep -fx 'sleep 331' >/dev/null
+  [ "$status" -eq 130 ] || { echo "status $status" >&3; echo "$output" >&3; false; }
+  if pgrep -fx 'sleep 331' >/dev/null; then echo "the restore process leaked" >&3; return 1; fi
+  if pgrep -f "backup-guard.sh --target" >/dev/null; then echo "a guard process leaked" >&3; return 1; fi
   grep -q "stopped by the safety guard" "$T/curl.args"
+  [ -e "$T/destroyed" ]
   [ ! -e "$T/vmstate/scratch-exists" ]
   [ ! -e "$T/vmstate/bridge" ]
   grep -q "link del vmbrdrill" "$T/ip.calls"
-  ! grep -q '^start 990' "$T/qm.calls"
+  never '^start 990' "$T/qm.calls"
+  grep -q -- "vm.dirty_ratio=20 vm.dirty_background_ratio=10" "$T/sysctl.calls"
+  [ ! -e "$BK_STATE_DIR/drill-guard.reason" ]
   ram_empty
 }

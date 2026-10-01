@@ -7,14 +7,15 @@ setup() {
   SCRIPT="$REPO_ROOT/scripts/backup-guard.sh"
   T="$BATS_TEST_TMPDIR"
   export BK_PSI_DIR="$T/psi"; mkdir -p "$BK_PSI_DIR"
-  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
   export BK_GUARD_GAME_SSH="dune@prod.test"
   cat >"$BK_CONFIG_DIR/backup.env" <<EOF
 BK_BACKUP_SSH=dune@prod.test
 EOF
   stub iostat 'echo "Device r/s rMB/s rrqm/s %rrqm r_await rareq-sz w/s wMB/s wrqm/s %wrqm w_await wareq-sz d/s dMB/s drqm/s %drqm d_await dareq-sz f/s f_await aqu-sz %util"
 for i in 1 2; do echo "sda 100.0 50.0 0 0 3.0 128 20.0 2.0 0 0 0.5 100 0 0 0 0 0 0 0 0 0 ${DISK_UTIL:-12.0}"; done'
-  stub lvs 'echo "  ${POOL_PCT:-17.7}"'
+  stub lvs 'echo "  ${POOL_PCT:-17.7}  ${META_PCT:-0.69}"'
   stub ssh 'if [ -f "$BATS_TEST_TMPDIR/ssh-down" ]; then exit 255; fi
 if [ -f "$BATS_TEST_TMPDIR/flap" ]; then c="$BATS_TEST_TMPDIR/flap.n"; n=$(( $(cat "$c" 2>/dev/null || echo 0) + 1 )); echo $n >"$c"; if [ $((n % 2)) -eq 0 ]; then printf "Overall:     DEGRADED\n"; exit 0; fi; fi
 printf "Overall:     %s\n" "${GAME_STATE:-READY}"'
@@ -44,7 +45,7 @@ teardown() { pkill -KILL -fx "sleep 330" 2>/dev/null || true; }
   printf 'some avg10=45.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
   DISK_UTIL=99.0 POOL_PCT=91.0 run bash "$SCRIPT" --once
   [ "$status" -eq 1 ]
-  [[ "$output" == *"I/O pressure 45.00%"* ]]
+  [[ "$output" == *"I/O pressure (some) 45.00%"* ]]
   [[ "$output" == *"disk sda 99.0% busy"* ]]
   [[ "$output" == *"thin pool 91.0% full"* ]]
 }
@@ -59,6 +60,52 @@ teardown() { pkill -KILL -fx "sleep 330" 2>/dev/null || true; }
   [[ "$output" == *"memory pressure 22.50% (limit 10%)"* ]]
   BK_GUARD_MEM_PRESSURE_MAX=30 run bash "$SCRIPT" --once
   [ "$status" -eq 0 ]
+}
+
+@test "--once: I/O pressure can be judged on the 'full' line (every task stalled) instead of 'some'" {
+  printf 'some avg10=80.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=5.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"I/O pressure (some) 80.00%"* ]]
+  BK_GUARD_IO_METRIC=full run bash "$SCRIPT" --once
+  [ "$status" -eq 0 ]
+  printf 'some avg10=80.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=45.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  BK_GUARD_IO_METRIC=full run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"I/O pressure (full) 45.00%"* ]]
+  BK_GUARD_IO_METRIC=most run bash "$SCRIPT" --once
+  [ "$status" -eq 2 ]
+}
+
+@test "--once: thin pool METADATA over its limit is reported" {
+  META_PCT=85.0 run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"thin pool metadata 85.0% full (limit 70%)"* ]]
+}
+
+@test "--once: a sampler that cannot read is a problem, never silent (a blind guard protects nothing)" {
+  rm -f "$BK_PSI_DIR/io"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot read host I/O pressure"* ]]
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  rm -f "$BK_PSI_DIR/memory"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot read host memory pressure"* ]]
+  printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/memory"
+  stub lvs 'exit 1'
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot read the thin pool usage"* ]]
+}
+
+@test "the pressure directory override is honoured under bats only (a stray variable cannot blind the guard)" {
+  printf 'some avg10=99.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=99.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  run env -u BATS_TEST_TMPDIR BK_PSI_DIR="$BK_PSI_DIR" bash "$SCRIPT" --once
+  [[ "$output" != *"99.00"* ]]
 }
 
 @test "--once: thresholds are configurable" {
