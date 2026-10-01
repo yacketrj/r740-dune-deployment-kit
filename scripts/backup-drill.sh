@@ -291,7 +291,7 @@ drill_db() {
 
 # ---- VM / CT drill ------------------------------------------------------------------------
 drill_vm() {
-  local image kind base check_var check_cmd mem cores model out rc up i
+  local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets base_rx sent
   bk_valid_vmid "$guest" || fail_drill "--guest must be a VM/CT id"
   case " $BK_VMIDS " in *" $guest "*) ;; *) fail_drill "guest $guest is not in BK_VMIDS" ;; esac
   [ -n "$identity" ] && [ -r "$identity" ] || fail_drill "--identity FILE is required and must be readable"
@@ -310,7 +310,9 @@ drill_vm() {
   fi
   check_var="BK_DRILL_VM_CHECK_$guest"
   check_cmd="${!check_var:-}"
-  [ -n "$check_cmd" ] || fail_drill "no in-guest check configured ($check_var); booting proves little without one"
+  [ -n "$check_cmd" ] || fail_drill "no in-guest check configured ($check_var); set a command, or the literal word boot-only for a guest without a guest agent"
+  boot_only=0
+  [ "$check_cmd" = "boot-only" ] && boot_only=1
   mem="${BK_DRILL_VM_MEMORY_MB:-8192}"
   cores="${BK_DRILL_VM_CORES:-4}"
   [[ "$mem" =~ ^[0-9]+$ && "$cores" =~ ^[0-9]+$ ]] || fail_drill "invalid drill memory/cores"
@@ -361,20 +363,39 @@ drill_vm() {
   fi
 
   STAGE="boot"
+  # boot-only (a guest with no guest agent): the proof of life is the restored VM's own network port on the
+  # isolated bridge. A guest that reached its OS and brought up networking sends packets (ARP, IPv6
+  # discovery); an image that cannot boot stays silent. The tap's rx_packets counts what the guest sent.
+  tap_rx() { cat "${BK_DRILL_NET_SYSFS:-/sys/class/net}/tap${scratch}i0/statistics/rx_packets" 2>/dev/null || echo 0; }
+  min_packets="${BK_DRILL_MIN_PACKETS:-5}"
+  base_rx=0
+  if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then base_rx="$(tap_rx)"; fi
   if [ "$kind" = "vm" ]; then qm start "$scratch" || fail_drill "scratch VM did not start"; else pct start "$scratch" || fail_drill "scratch CT did not start"; fi
   up=0
+  sent=0
   for i in $(seq 1 "${BK_DRILL_BOOT_TRIES:-120}"); do
-    if [ "$kind" = "vm" ]; then
+    if [ "$kind" = "vm" ] && [ "$boot_only" -eq 1 ]; then
+      sent=$(($(tap_rx) - base_rx))
+      if qm status "$scratch" 2>/dev/null | grep -q running && [ "$sent" -ge "$min_packets" ]; then up=1; break; fi
+    elif [ "$kind" = "vm" ]; then
       qm agent "$scratch" ping >/dev/null 2>&1 && { up=1; break; }
     else
       pct status "$scratch" 2>/dev/null | grep -q running && { up=1; break; }
     fi
     sleep "${BK_DRILL_BOOT_SLEEP:-5}"
   done
-  [ "$up" -eq 1 ] || fail_drill "the restored guest did not come up (no guest-agent answer / not running)"
+  if [ "$up" -ne 1 ]; then
+    if [ "$boot_only" -eq 1 ] && [ "$kind" = "vm" ]; then
+      fail_drill "the restored VM did not show signs of life: it sent $sent packet(s) on its isolated network (need $min_packets) or is not running; the image may not boot"
+    fi
+    fail_drill "the restored guest did not come up (no guest-agent answer / not running)"
+  fi
 
   STAGE="in-guest-check"
-  if [ "$kind" = "vm" ]; then
+  if [ "$boot_only" -eq 1 ]; then
+    bk_log "boot-only check: the restored guest is running and sent ${sent:-0} packets on its isolated network (no in-guest command was run)"
+    rc=0
+  elif [ "$kind" = "vm" ]; then
     out="$(qm guest exec "$scratch" --timeout 120 -- /bin/sh -c "$check_cmd" 2>&1)" || fail_drill "in-guest check could not run: $(printf '%s' "$out" | cut -c1-200)"
     rc="$(printf '%s' "$out" | jq -r '.exitcode // 1' 2>/dev/null || echo 1)"
   else
@@ -383,10 +404,10 @@ drill_vm() {
   [ "$rc" = "0" ] || fail_drill "in-guest check FAILED (exit $rc): $check_var"
 
   STAGE="record"
-  bk_evidence drill-vm PASS "guest=$guest image=$image scratch=$scratch check=$check_var"
+  bk_evidence drill-vm PASS "guest=$guest image=$image scratch=$scratch check=$check_var mode=$([ "$boot_only" -eq 1 ] && echo boot-only || echo in-guest)"
   bk_audit_log drill_ok "kind=vm" "guest=$guest" "image=$image"
   bk_dead_man_ping || true
-  bk_log "VM drill PASSED: $image restored to scratch $scratch, booted isolated, in-guest check passed; destroying the scratch guest"
+  bk_log "VM drill PASSED: $image restored to scratch $scratch, booted isolated ($([ "$boot_only" -eq 1 ] && echo "boot-only: sent packets, no in-guest command" || echo "in-guest check passed")); destroying the scratch guest"
 }
 
 case "$sub" in

@@ -25,6 +25,7 @@ BK_RCLONE_REMOTE=fake:r740
 BK_VMIDS="101 102 103 104"
 BK_DRILL_SSH=dune@dev.test
 BK_DRILL_KNOWN_HOSTS=$T/known_hosts
+BK_DRILL_NET_SYSFS=$T/sysfs
 BK_DRILL_PG_IMAGE=postgres:17
 BK_DRILL_MIN_TABLES=3
 BK_DRILL_ROW_CHECKS="dune.world_partition:2 dune.players:1"
@@ -100,11 +101,13 @@ make_proxmox_stubs() {
 echo "\$*" >>"$T/qm.calls"
 F="$T/vmstate"; mkdir -p "\$F"
 case "\$1" in
-  status) [ -f "\$F/scratch-exists" ]; exit \$? ;;
+  status) if [ -f "\$F/scratch-exists" ]; then if [ -f "\$F/started" ]; then echo "status: running"; else echo "status: stopped"; fi; exit 0; fi; exit 2 ;;
   config) if [ -f "\$F/set-done" ]; then echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbrdrill"; [ -f "$T/keep-extra" ] && cat "$T/vm.extra"
           else echo "net0: e1000e=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=20"; [ -f "$T/vm.extra" ] && cat "$T/vm.extra"; fi; exit 0 ;;
   set) [ -f "$T/set-fail" ] && exit 1; : >"\$F/set-done"; exit 0 ;;
-  start) [ -f "$T/start-fail" ] && exit 1; : >"\$F/started" ;;
+  start) [ -f "$T/start-fail" ] && exit 1; : >"\$F/started"
+         if [ ! -f "$T/tap-silent" ]; then mkdir -p "$T/sysfs/tap990i0/statistics"; echo 40 >"$T/sysfs/tap990i0/statistics/rx_packets"; fi
+         if [ -f "$T/stops-after-start" ]; then rm -f "\$F/started"; fi ;;
   agent) [ -f "\$F/started" ] && [ ! -f "$T/noagent" ] ;;
   guest) if [ -f "$T/check-fail" ]; then echo '{"exitcode":1}'; else echo '{"exitcode":0,"out-data":"ok"}'; fi ;;
   stop) rm -f "\$F/started" ;;
@@ -794,4 +797,59 @@ teardown() { pkill -KILL -fx "sleep 319" 2>/dev/null || true; }
   [[ "$output" == *"rc=143 leftover=0"* ]] || { printf '%s\n' "$output" >&3; false; }
   grep -q "^rm -f bk-drill-" "$T/docker.calls"
   ram_empty
+}
+
+
+# ---- boot-only mode (guests with no guest agent) ----------------------------------------------------
+
+boot_only_cfg() { echo 'BK_DRILL_VM_CHECK_102=boot-only' >>"$BK_CONFIG_DIR/backup.env"; touch "$T/noagent"; }
+
+@test "vm boot-only: a guest with no agent passes when it runs and sends packets; evidence says boot-only; no in-guest command runs" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 0 ]
+  [ "$(ev 'drill-vm.PASS')" = "1" ]
+  grep -q 'mode=boot-only' "$BK_STATE_DIR/evidence.log"
+  [[ "$output" == *"boot-only check"* ]]
+  ! grep -q '^guest ' "$T/qm.calls"
+  [ ! -e "$T/vmstate/scratch-exists" ]
+  [ ! -e "$T/vmstate/bridge" ]
+}
+
+@test "vm boot-only: a silent image (no packets) fails, alerts once, and everything is destroyed" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  touch "$T/tap-silent"
+  BK_DRILL_BOOT_TRIES=3 BK_DRILL_BOOT_SLEEP=0 drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  [ "$(alerts)" = "1" ]
+  grep -q "did not show signs of life" "$T/curl.args"
+  [ "$(ev 'drill-vm.FAIL')" = "1" ]
+  [ ! -e "$T/vmstate/scratch-exists" ]
+  [ ! -e "$T/vmstate/bridge" ]
+}
+
+@test "vm boot-only: packets alone are not enough, the VM must still be running" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  touch "$T/stops-after-start"
+  BK_DRILL_BOOT_TRIES=3 BK_DRILL_BOOT_SLEEP=0 drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "did not show signs of life" "$T/curl.args"
+}
+
+@test "vm boot-only: the packet threshold is configurable" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  BK_DRILL_MIN_PACKETS=1000 BK_DRILL_BOOT_TRIES=2 BK_DRILL_BOOT_SLEEP=0 drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+}
+
+@test "vm: an unset check is still refused, and the message names boot-only" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  sed -i '/^BK_DRILL_VM_CHECK_102=/d' "$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  grep -q "boot-only" "$T/curl.args"
 }
