@@ -1564,3 +1564,18 @@ EOS
   grep -q "still configured" "$T/curl.args"
   never '^start 990' "$T/qm.calls"
 }
+
+@test "vm guardrail: a --dry-run that is refused prints the reason but raises NO alert and records nothing" {
+  vm_ok_image
+  BK_DRILL_NOW_MIN=290 drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlap the blackout"* ]]
+  [ ! -e "$T/curl.args" ]
+  [ ! -e "$BK_STATE_DIR/evidence.log" ]
+  guard_on_stubs
+  echo 0 >"$T/degrade-after"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not READY"* ]]
+  [ ! -e "$T/curl.args" ]
+}
