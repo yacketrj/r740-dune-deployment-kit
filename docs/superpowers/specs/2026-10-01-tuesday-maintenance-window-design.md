@@ -23,6 +23,23 @@ that day's separate daily, so there is never a daily and a weekly backup on the 
 - Verify backup, update and server status at the end.
 - Tuesday was chosen because it is the usual patch day; the window gives a restore point before a patch.
 
+## 2a. Operator authorization, recorded verbatim (change record, 2026-10-01 08:08 PDT)
+
+The operator's chat messages, quoted exactly (the first answered the design proposal; the second answered the list of
+gaps and concerns). They are the standing authorization for this window, scoped to this job and to upstream releases
+only (README Requirements 7 and 32 exceptions are drafted from them):
+
+> "1) disable auto patching for the maintenance window 2) perform the backup as outlined. 3) Once backup has completed, check for update and apply if needed (both console and game) 4) verify backup/update/server statusgame status"
+
+> "1) always latest 2) can this be done vi a ! command? 3) lets use dune-dev as a test bed 4) agreed 5) agree, real gaps - design/arch them, stef 4 agree/ the bot vm is a production env, dune dev is as the name suggest a dev env, its purpose is to test and be broken."
+
+Interpretation recorded with them (the operator did not restate these): (1) the update policy is **always the latest
+upstream release, no pinning**; the compensating control is the verified pre-update image. (2) the privileged gate
+install on prod is done by a script the operator runs with the `!` prefix. (3) every rehearsal runs on dune-dev.
+(4) auto-update is always re-enabled. (5) the architectural gaps from the Layer 1 audit are designed, not deferred.
+The bot VM (103) is production: images only, no automated change in this window. dune-dev is a dev environment that
+may be broken on purpose.
+
 ## 3. Verified facts this design relies on
 
 | Fact | Evidence |
@@ -113,10 +130,9 @@ automation, so Requirement 32 needs a written exception covering only this job a
 2. RESOLVED (2026-10-01): `dune shutdown-protection` does not gate `dune stop`; the job itself must read the population
    (`dune status`) and apply decision 1, because `dune stop` will stop the game regardless of players. `DUNE_MANUAL_STOP=1`
    leaves a manual-stop marker, so P4 must confirm `dune start` clears it (to be tested on dune-dev).
-3. Should dune-dev and the bot VM be updated in the same window? Default no (dune-dev rests on the latest release by operator
-   decision; the bot VM deploys through its own hook).
+3. RESOLVED (2026-10-01): dune-dev is the rehearsal test bed and is not part of the window; the bot VM is production and gets images only.
 4. Tuesday 05:00 game restart: leave as is (it just restarts a patched game) or skip that one day?
 
 ## 10. Not in scope
 
-Updating dune-dev or the bot VM; changing the game's 05:00 daily restart; off-site copy automation; the OneDrive tier.
+Updating dune-dev or the bot VM (the bot VM is production: images only); changing the game's 05:00 daily restart; off-site copy automation; the OneDrive tier.
