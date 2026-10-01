@@ -33,6 +33,12 @@ only (README Requirements 7 and 32 exceptions are drafted from them):
 
 > "1) always latest 2) can this be done vi a ! command? 3) lets use dune-dev as a test bed 4) agreed 5) agree, real gaps - design/arch them, stef 4 agree/ the bot vm is a production env, dune dev is as the name suggest a dev env, its purpose is to test and be broken."
 
+Later the same day the operator answered the release-trust question (decision 9.5):
+
+> "A) Correct, I was vague. latest trusted upstream release"
+
+This fixes "always latest" to mean the latest release that passes the trust policy in 9.5 (Option A).
+
 Interpretation recorded with them (the operator did not restate these): (1) the update policy is **always the latest
 upstream release, no pinning**; the compensating control is the verified pre-update image. (2) the privileged gate
 install on prod is done by a script the operator runs with the `!` prefix. (3) every rehearsal runs on dune-dev.
@@ -177,13 +183,14 @@ A failed window is an incident logged in `INCIDENT-INDEX.md`.
 2. RESOLVED: `dune shutdown-protection` does not gate `dune stop`; `dune start` clears the manual-stop marker.
 3. RESOLVED: dune-dev is the rehearsal test bed and not in the window; the bot VM (103) is production and is imaged only.
 4. Tuesday 05:00 game restart: leave as is (it restarts a freshly patched game); the Tuesday notice says so.
-5. **OPEN, release trust for "always latest".** The operator chose the latest upstream release. The reviewers found that
+5. **RESOLVED (operator, 2026-10-01), release trust for "always latest": Option A.** The operator clarified "always latest" means the *latest trusted upstream release*, quoted in section 2a. The trust controls below are therefore mandatory, not optional, and a release that fails any of them is skipped with an alert (never installed). Residual supply-chain risk (no upstream signature) is recorded as accepted, mitigated by the verified pre-update image and dump. Original analysis follows.
+   (Original text:) The operator chose the latest upstream release. The operator chose the latest upstream release. The reviewers found that
    the stack updater performs no verification (no checksum or signature; a hostile or hijacked release would run as root-equivalent
    code on prod, unattended). Option A (recommended): keep "always latest" with controls: only a published, non-draft,
    non-pre-release GitHub release from `Red-Blink/dune-awakening-selfhost-docker` whose tag matches `^v[0-9]+\.[0-9]+\.[0-9]+$`,
    **at least 24 hours old**, same major version as the installed one, with the verified pre-update image and dump as rollback.
    These reduce but do not remove supply-chain risk. Option B: the job only reports "update available" and the operator
-   applies it attended. The operator must accept the residual risk of A in writing, or choose B.
+   applies it attended. (Chosen: A.)
 
 ## 10. Messages (draft wording for review; plain facts, lore tone kept; title <= 80, body <= 500)
 
