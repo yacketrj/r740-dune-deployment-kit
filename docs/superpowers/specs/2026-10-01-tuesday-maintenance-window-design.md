@@ -3,6 +3,18 @@
 Status: DESIGN v2, not built. As of 2026-10-01. v2 resolves the Layer 1 audit (docs/superpowers/audits/2026-10-01-maintenance-window-layer1-audit.md, 41 items, 1 CRITICAL). Operator decisions: section 2a. Open decisions: section 9 (two).
 Related: `2026-09-29-backup-strategy-design.md`, `docs/08-backup-runbook.md`, README Requirements 7, 20, 32.
 
+## 0. OPERATOR AMENDMENT 2026-10-02 (supersedes every clock time below)
+
+Operator (verbatim): "the weekly Tuesday maintance window starts at 0400 and goes until the backup is completed, with battlegroup restart aftwards."
+
+- **Start 04:00 Tuesday local, no fixed end.** The window runs until the backup has completed, then the battlegroup is restarted. The old 00:30-04:15 window, the 01:00 stop, the 04:15 hard stop and the 04:25 READY deadline in the sections below are SUPERSEDED. Shift the countdown to T-30 03:30, T-15 03:45, T-10 03:50, T-1 03:59; stop at 04:00 (decision 9.1 otherwise unchanged).
+- **Open-ended means the hard stop becomes a duration cap, not a clock time.** Proposed: a maximum window length (default 4 h, from the actual start, configurable) after which the safety timer on prod restarts the game and re-enables auto-update, and the operator is paged. An unbounded window with players locked out is not acceptable without a cap.
+- **The game's own 05:00 daily restart (warning 04:45) falls inside the window.** It must be suppressed for the window (or the window must treat it as an expected event) so it cannot start the game mid-backup or trip the guard. Not yet designed; decision 4 below ("leave as is") no longer holds.
+- **"Battlegroup restart afterwards" is read as a stop/start of the battlegroup once the backup finishes** (replacing the earlier "restart right after the snapshot" step). This changes the downtime profile: if the game stays down for the whole backup (about 47 min imaging for prod, longer with the daily set) the outage is far longer than the earlier design's roughly 5 minutes. OPEN QUESTION for the operator: (a) stop the game for the whole backup, or (b) keep the earlier snapshot-then-restart and treat "restart afterwards" as the post-update restart?
+- **OPEN QUESTION: is the update phase (decision A) still part of the window?** The amendment mentions only backup and restart. Until answered, the update phase stays in the design after the backup and before the restart.
+- **Restore-drill blackout** (`BK_DRILL_BLACKOUT`, currently 04:20-05:20) must be replaced by "Tuesday from 03:30 until the maintenance marker is gone", since the end is no longer a fixed time.
+- The persistent-timer catch-up rule, the DST-change refusal, `backup-status.sh` window display, the tests' clock edges and the runbook's desktop-sleep setting (Never from 03:30) all move with the new start.
+
 ## 1. Goal
 
 One weekly maintenance window, **Tuesday 00:30-04:15 local**, that replaces the separate Sunday weekly and
