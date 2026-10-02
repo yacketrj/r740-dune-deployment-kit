@@ -158,3 +158,60 @@ teardown() { pkill -KILL -fx "sleep 330" 2>/dev/null || true; }
   after="$(find "$BK_STATE_DIR" "$T" -maxdepth 1 -type f -printf '%f\n' | grep -v '\.calls$' | sort)"
   [ "$before" = "$after" ]
 }
+
+@test "warming grace: WARMING is tolerated inside the grace and does not stop the target" {
+  sleep 330 &
+  victim=$!
+  ( sleep 5; kill "$victim" 2>/dev/null ) &
+  GAME_STATE=WARMING BK_GUARD_WARMING_GRACE_S=30 run bash "$SCRIPT" --target "$victim" --reason-file "$T/reason" --interval 1 --consecutive 2
+  [ "$status" -eq 0 ]
+  [ ! -s "$T/reason" ]
+  [[ "$output" == *"the game is WARMING"* ]]
+  [[ "$output" != *"STOPPING"* ]]
+}
+
+@test "warming grace: WARMING that outlasts the grace stops the target with a clear reason" {
+  sleep 330 &
+  victim=$!
+  GAME_STATE=WARMING BK_GUARD_WARMING_GRACE_S=2 run bash "$SCRIPT" --target "$victim" --reason-file "$T/reason" --interval 1 --consecutive 2
+  [ "$status" -eq 0 ]
+  ! kill -0 "$victim" 2>/dev/null
+  grep -q "has been WARMING for more than 2s" "$T/reason"
+}
+
+@test "warming grace: it excuses WARMING only, never DEGRADED or any other state" {
+  sleep 330 &
+  victim=$!
+  GAME_STATE=DEGRADED BK_GUARD_WARMING_GRACE_S=60 run bash "$SCRIPT" --target "$victim" --reason-file "$T/reason" --interval 1 --consecutive 2
+  [ "$status" -eq 0 ]
+  ! kill -0 "$victim" 2>/dev/null
+  grep -q "DEGRADED" "$T/reason"
+}
+
+@test "warming grace: WARMING together with host I/O pressure still stops the target at once" {
+  printf 'some avg10=99.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=99.00 avg60=0.00 avg300=0.00 total=1\n' >"$BK_PSI_DIR/io"
+  sleep 330 &
+  victim=$!
+  GAME_STATE=WARMING BK_GUARD_WARMING_GRACE_S=60 run bash "$SCRIPT" --target "$victim" --reason-file "$T/reason" --interval 1 --consecutive 2
+  [ "$status" -eq 0 ]
+  ! kill -0 "$victim" 2>/dev/null
+  grep -q "I/O pressure" "$T/reason"
+}
+
+@test "warming grace: default 0 keeps WARMING a bad sample, and --once is always strict" {
+  sleep 330 &
+  victim=$!
+  GAME_STATE=WARMING run bash "$SCRIPT" --target "$victim" --reason-file "$T/reason" --interval 1 --consecutive 2
+  ! kill -0 "$victim" 2>/dev/null
+  grep -q "not READY (WARMING)" "$T/reason"
+  GAME_STATE=WARMING BK_GUARD_WARMING_GRACE_S=60 run bash "$SCRIPT" --once
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not READY (WARMING)"* ]]
+}
+
+@test "warming grace: a non-numeric or oversized value is refused" {
+  BK_GUARD_WARMING_GRACE_S=abc run bash "$SCRIPT" --once
+  [ "$status" -eq 2 ]
+  BK_GUARD_WARMING_GRACE_S=5000 run bash "$SCRIPT" --once
+  [ "$status" -eq 2 ]
+}

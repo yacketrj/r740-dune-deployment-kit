@@ -1483,7 +1483,7 @@ EOS
 echo "\$*" >>"$T/qmrestore.calls"
 cat >"$T/restored.bin"
 mkdir -p "$T/vmstate"; : >"$T/vmstate/scratch-exists"
-pkill -KILL -f 'backup-guard.sh --target' || true
+pkill -KILL -f 'backup-guard.sh --target .*--reason-file $BK_STATE_DIR/' || true   # only THIS test's guard, never a real one
 sleep 1
 EOS
   chmod +x "$T/bin/qmrestore"
@@ -1516,6 +1516,48 @@ EOS
   never "safety guard" "$T/curl.args"
   [ -e "$T/destroyed" ]
   [ ! -e "$BK_STATE_DIR/drill-guard.reason" ]
+}
+
+@test "vm drill: an operator interrupt says so loudly, is recorded as an interruption (not a failed drill), raises no alert and still cleans up" {
+  vm_ok_image
+  cat >"$T/bin/qmrestore" <<EOS
+#!/usr/bin/env bash
+echo "\$*" >>"$T/qmrestore.calls"
+cat >"$T/restored.bin"
+mkdir -p "$T/vmstate"; : >"$T/vmstate/scratch-exists"
+exec sleep 332
+EOS
+  chmod +x "$T/bin/qmrestore"
+  bash "$SCRIPT" vm --guest 101 --identity "$BK_AGE_IDENTITY" >"$T/out.txt" 2>&1 &
+  drill_pid=$!
+  for _ in $(seq 1 100); do [ -e "$T/qmrestore.calls" ] && break; sleep 0.1; done
+  [ -e "$T/qmrestore.calls" ]
+  sleep 1
+  kill -TERM "$drill_pid"
+  wait "$drill_pid" || true
+  grep -q "INTERRUPTED by SIGTERM: this is a controlled shutdown, NOT a failure" "$T/out.txt"
+  grep -q "shutdown complete: the host is back as it was" "$T/out.txt"
+  grep -q "drill_interrupted" "$BK_STATE_DIR/audit.log"
+  never "drill_failed" "$BK_STATE_DIR/audit.log"
+  never "DRILL FAILED|unexpected error" "$T/out.txt"
+  [ ! -e "$T/curl.args" ] || never "FAILED|unexpected error|P1" "$T/curl.args"
+  [ -e "$T/destroyed" ]
+}
+
+@test "vm guard: the drill gives the guard a 5 minute WARMING grace, configurable, and refuses a bad value" {
+  vm_ok_image
+  guard_on_stubs
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"game WARMING tolerated up to 300s"* ]]
+  sed -i '/^BK_DRILL_GUARD_WARMING_GRACE_S=/d' "$BK_CONFIG_DIR/backup.env"
+  echo 'BK_DRILL_GUARD_WARMING_GRACE_S=900' >>"$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [[ "$output" == *"tolerated up to 900s"* ]]
+  sed -i '/^BK_DRILL_GUARD_WARMING_GRACE_S=/d' "$BK_CONFIG_DIR/backup.env"
+  echo 'BK_DRILL_GUARD_WARMING_GRACE_S=abc' >>"$BK_CONFIG_DIR/backup.env"
+  drill vm --guest 101 --identity "$BK_AGE_IDENTITY" --dry-run
+  [ "$status" -eq 1 ]
 }
 
 @test "vm guard: if SIGINT is ignored in the shell that started the drill (so the guard could not stop it), the drill refuses" {

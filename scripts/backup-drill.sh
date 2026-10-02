@@ -66,6 +66,8 @@ scratch_kind=""
 scratch_created=0
 bridge_created=0
 DRILL_BRIDGE="vmbrdrill"
+interrupted=0
+operator_stop=0
 guard_reason="$BK_STATE_DIR/drill-guard.reason"
 guard_pid=""
 thin_vg="${BK_THIN_POOL:-pve/data}"
@@ -147,6 +149,7 @@ cleanup() {
   for _ in $(seq 1 "${BK_KILL_GRACE_S:-20}"); do [ -z "$(pgrep -P "$$" 2>/dev/null || true)" ] && break; sleep 1; done
   bk_kill_children KILL
   restore_dirty
+  if [ "$interrupted" -eq 1 ]; then bk_log "cleanup: kernel settings restored; removing the scratch guest and the bridge"; fi
   if [ -n "$container" ] && [[ "$container" =~ ^bk-drill-[0-9]+-[0-9]+$ ]]; then
     remote "docker rm -f $container" >/dev/null 2>&1 || true
   fi
@@ -163,14 +166,33 @@ cleanup() {
     report_failure "stopped by the safety guard to protect the game and the host: $(cat "$guard_reason")"
   fi
   rm -f -- "$guard_reason"
+  if [ "$interrupted" -eq 1 ]; then bk_log "shutdown complete: the host is back as it was (exit $rc). The drill did NOT finish; run it again to complete it."; fi
   exit "$rc"   # (a plain `return` from an EXIT trap does not reliably set the script's exit status)
 }
 trap cleanup EXIT
 # Ctrl-C / Ctrl-Z / kill / hangup: stop the children, then the EXIT trap above removes the
 # throwaway container, the scratch VM or CT, the drill bridge and the decrypted RAM files.
+# The hook tells the operator, loudly, that this is a controlled shutdown and not a failure (removing a big scratch
+# disk takes a minute or two and otherwise looks like a hang), and records it as an interruption, not a failed drill.
+drill_interrupted() { # signal-name
+  interrupted=1
+  if [ -s "$guard_reason" ]; then
+    bk_log "STOPPING: the safety guard asked this drill to stop (a protective stop, not a crash). Cleaning up now."
+  else
+    operator_stop=1
+    bk_log "INTERRUPTED by SIG$1: this is a controlled shutdown, NOT a failure. Stopping the restore, removing the scratch guest and the bridge, restoring the kernel settings. This can take a minute or two for a big disk; do not press Ctrl-C again."
+    bk_audit_log drill_interrupted "kind=$sub" "stage=$STAGE" "signal=$1"
+  fi
+}
+# shellcheck disable=SC2034  # read by bk_abort in backup-common.sh
+BK_ABORT_HOOK=drill_interrupted
 bk_install_abort_traps
 
 report_failure() {
+  # A Ctrl-C reaches the children and this shell together; the failed child can be noticed before the trap runs.
+  # Yield briefly so a pending signal trap runs first (it exits via cleanup), and report nothing for an operator stop.
+  sleep 0.5
+  if [ "$operator_stop" -eq 1 ]; then return 0; fi   # the guard's own stop is still reported (by cleanup)
   # A VM-drill --dry-run that is refused at PREFLIGHT (blackout, memory, a running backup, the guard) is an
   # expected "not now", not a failure: print it, raise no alert, record nothing. Other dry-run failures
   # (a damaged archive, no image on the share) are real findings and still alert.
@@ -423,7 +445,7 @@ disk_lines() { awk -F': ' '/^(scsi|virtio|sata|ide)[0-9]+:/ && $2 !~ /media=cdro
 drill_vm() {
   local image kind base check_var check_cmd mem cores model out rc up i boot_only min_packets min_read disk_read base_rx sent
   local iodev node aff units bwlimit blackout other guard_on gpre conf extra_nets stray rtmo f st pve del k v disk_rd disk_wr memhigh
-  local dirty_mb dirty_bg_mb guard_io_max guard_io_metric span pidf pid
+  local dirty_mb dirty_bg_mb guard_io_max warming_grace guard_io_metric span pidf pid
   bk_valid_vmid "$guest" || fail_drill "--guest must be a VM/CT id"
   case " $BK_VMIDS " in *" $guest "*) ;; *) fail_drill "guest $guest is not in BK_VMIDS" ;; esac
   [ -n "$identity" ] && [ -r "$identity" ] || fail_drill "--identity FILE is required and must be readable"
@@ -472,6 +494,7 @@ drill_vm() {
   guard_on="${BK_DRILL_GUARD:-1}"
   guard_io_metric="${BK_DRILL_GUARD_IO_METRIC:-full}"
   guard_io_max="${BK_DRILL_GUARD_IO_MAX:-20}"
+  warming_grace="${BK_DRILL_GUARD_WARMING_GRACE_S:-300}"   # a player logging in starts a map: WARMING for a few minutes is normal
   blackout="${BK_DRILL_BLACKOUT:-04:20-05:20}"
   [[ "$node" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_NUMA_NODE must be a node number"
   [[ "$aff" =~ ^[0-9]+([-,][0-9]+)*$ ]] || fail_drill "BK_DRILL_AFFINITY must look like 1,3,5,7 or 1-7"
@@ -486,6 +509,7 @@ drill_vm() {
   [[ "$guard_on" =~ ^[01]$ ]] || fail_drill "BK_DRILL_GUARD must be exactly 1 (on) or 0 (off), not '$guard_on'"
   [[ "$guard_io_metric" =~ ^(some|full)$ ]] || fail_drill "BK_DRILL_GUARD_IO_METRIC must be some or full"
   [[ "$guard_io_max" =~ ^[0-9]+$ ]] || fail_drill "BK_DRILL_GUARD_IO_MAX must be a number"
+  [[ "$warming_grace" =~ ^[0-9]+$ ]] && [ "$warming_grace" -le 1800 ] || fail_drill "BK_DRILL_GUARD_WARMING_GRACE_S must be 0-1800 seconds"
   if [ "$guard_on" = "1" ]; then
     [ -n "${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}" ] || fail_drill "the guard has no game host (set BK_GUARD_GAME_SSH or BK_BACKUP_SSH): it could not see the game, so it would protect nothing"
   fi
@@ -505,12 +529,12 @@ drill_vm() {
 
   if [ "$dry" -eq 1 ]; then
     echo "DRY RUN OK: guest $guest image $image ($kind)."
-    echo "PREFLIGHT OK: no overlap with the blackout $blackout for the next ${span} minutes; no backup running; $MEM_SUMMARY; safety guard $([ "$guard_on" = "1" ] && echo "pre-check OK, will watch the whole run (I/O pressure '$guard_io_metric' limit ${guard_io_max}%)" || echo "OFF (BK_DRILL_GUARD=0, recorded in the audit log)")."
+    echo "PREFLIGHT OK: no overlap with the blackout $blackout for the next ${span} minutes; no backup running; $MEM_SUMMARY; safety guard $([ "$guard_on" = "1" ] && echo "pre-check OK, will watch the whole run (I/O pressure '$guard_io_metric' limit ${guard_io_max}%, game WARMING tolerated up to ${warming_grace}s)" || echo "OFF (BK_DRILL_GUARD=0, recorded in the audit log)")."
     echo "PLAN: transient bridge $DRILL_BRIDGE (no uplink, IPv6 off); kernel dirty-page limits lowered to ${dirty_mb}MB/${dirty_bg_mb}MB for the run and restored after; restore to scratch id $scratch with new MACs inside a cgroup scope (MemoryHigh=$memhigh, disk /dev/$iodev write cap ${bwlimit}KiB/s), writes also capped by qmrestore at ${bwlimit}KiB/s, at most ${rtmo} minutes; restored config stripped of hookscript/args/hugepages/virtiofs/cicustom/protection and every disk checked to be on ${BK_DRILL_STORAGE:-local-lvm}; cap to ${mem}MB/${cores} cores, memory bound to host NUMA node $node, CPU affinity $aff, CPU weight $units, disk limits ${disk_rd}/${disk_wr} MB/s, autostart off; boot; run '$check_var'; destroy the scratch guest, prove it is gone, delete the bridge. Nothing is ever written to guest $guest or its disk."
     return 0
   fi
 
-  bk_audit_log drill_start "kind=$kind" "guest=$guest" "scratch=$scratch" "guard=$guard_on" "guard_io=$guard_io_metric:$guard_io_max" "bwlimit_kib=$bwlimit" "timeout_min=$rtmo" "node=$node" "affinity=$aff" "cpuunits=$units" "blackout=$blackout" "dirty_mb=$dirty_mb/$dirty_bg_mb" "memhigh=$memhigh"
+  bk_audit_log drill_start "kind=$kind" "guest=$guest" "scratch=$scratch" "guard=$guard_on" "guard_io=$guard_io_metric:$guard_io_max" "warming_grace_s=$warming_grace" "bwlimit_kib=$bwlimit" "timeout_min=$rtmo" "node=$node" "affinity=$aff" "cpuunits=$units" "blackout=$blackout" "dirty_mb=$dirty_mb/$dirty_bg_mb" "memhigh=$memhigh"
   if [ "$guard_on" != "1" ]; then
     bk_log "WARNING: the safety guard is OFF for this run (BK_DRILL_GUARD=0)"
     bk_audit_log drill_guard_off "guest=$guest"
@@ -531,7 +555,7 @@ drill_vm() {
   # high, or the thin pool fills. A refused SIGINT (script started with it ignored) would make that a no-op.
   if [ "$guard_on" = "1" ]; then
     trap -p INT | grep -q bk_abort || fail_drill "SIGINT is ignored in this shell (started in the background?), so the guard could not stop the drill; run it in the foreground"
-    BK_GUARD_IO_METRIC="$guard_io_metric" BK_GUARD_IO_PRESSURE_MAX="$guard_io_max" bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
+    BK_GUARD_WARMING_GRACE_S="$warming_grace" BK_GUARD_IO_METRIC="$guard_io_metric" BK_GUARD_IO_PRESSURE_MAX="$guard_io_max" bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
       --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >&2 &
     guard_pid=$!
     sleep "${BK_DRILL_GUARD_START_WAIT_S:-1}"

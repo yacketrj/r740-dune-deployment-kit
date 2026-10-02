@@ -22,6 +22,7 @@
 # It only READS (ssh `dune status`, /proc/pressure, iostat, lvs) and signals the one PID it was
 # given; it never touches the game or the backup's files.
 # Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_MEM_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX, BK_GUARD_META_MAX;
+# BK_GUARD_WARMING_GRACE_S (0-1800, default 0): tolerate the game being WARMING for this long in the WATCH only.
 # BK_GUARD_IO_METRIC (some|full) picks which PSI line the I/O limit applies to; the game host:
 # BK_GUARD_GAME_SSH (default BK_BACKUP_SSH).
 # =============================================================================
@@ -65,6 +66,11 @@ thin_pool="${BK_THIN_POOL:-pve/data}"
 io_metric="${BK_GUARD_IO_METRIC:-some}"   # some: any task stalled; full: every task stalled (the system-wide stall that hurts the game)
 [[ "$io_metric" =~ ^(some|full)$ ]] || { echo "BK_GUARD_IO_METRIC must be some or full" >&2; exit 2; }
 pool_max="${BK_GUARD_POOL_MAX:-85}"
+# A map starting because a player logged in makes the game report WARMING for a few minutes. When this is above 0 the
+# WATCH (never --once) tolerates WARMING, and only WARMING, for up to this many seconds in a row; every other state and
+# every host check still counts at once. 0 (the default) keeps the strict behaviour.
+warming_grace="${BK_GUARD_WARMING_GRACE_S:-0}"
+[[ "$warming_grace" =~ ^[0-9]+$ ]] && [ "$warming_grace" -le 1800 ] || { echo "BK_GUARD_WARMING_GRACE_S must be 0-1800 seconds" >&2; exit 2; }
 
 gt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
@@ -108,9 +114,21 @@ if [ "$once" -eq 1 ]; then
 fi
 
 bad=0
+warming_since=""
 bk_log "guard: watching PID $target every ${interval}s; will stop it after $consecutive bad samples in a row (I/O pressure > ${io_max}%, memory pressure > ${mem_max}%, disk > ${busy_max}% busy, pool > ${pool_max}% full, game not READY)"
 while kill -0 "$target" 2>/dev/null; do
   r="$(sample)"
+  if [ -n "$r" ] && [ "$warming_grace" -gt 0 ] && [ "$r" = "the game is not READY (WARMING);" ]; then
+    [ -n "$warming_since" ] || warming_since=$SECONDS
+    if [ $((SECONDS - warming_since)) -lt "$warming_grace" ]; then
+      bk_log "guard: the game is WARMING ($((SECONDS - warming_since))s so far; tolerated for up to ${warming_grace}s, any other problem still counts at once)"
+      r=""
+    else
+      r="the game has been WARMING for more than ${warming_grace}s;"
+    fi
+  else
+    warming_since=""
+  fi
   if [ -z "$r" ]; then
     bad=0
   else
