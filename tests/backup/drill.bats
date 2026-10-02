@@ -105,6 +105,8 @@ EOF
 }
 
 make_proxmox_stubs() {
+  # never write a stub outside the test sandbox: an empty $T once put test stubs into the host's /usr/bin
+  [ -n "${BATS_TEST_TMPDIR:-}" ] && [ -n "${T:-}" ] && [ "${T#"$BATS_TEST_TMPDIR"}" != "$T" ] && [ -d "$T/bin" ] || { echo "refusing to write stubs: T=[${T:-}] is not inside BATS_TEST_TMPDIR" >&2; return 1; }
   cat >"$T/bin/qm" <<'EOF'
 #!/usr/bin/env bash
 T="$BATS_TEST_TMPDIR"
