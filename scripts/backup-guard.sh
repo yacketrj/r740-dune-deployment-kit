@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# =============================================================================
+# backup-guard.sh -- stop a backup job if the game or the host looks stressed. READ-ONLY watcher.
+# =============================================================================
+#   backup-guard.sh --once                 one check: print "OK" (exit 0) or the reason (exit 1)
+#   backup-guard.sh --target PID [--reason-file F] [--interval N] [--consecutive N]
+#                                          watch while PID lives; if the checks fail N times in
+#                                          a row, write the reason to F and send PID a SIGINT
+#                                          (the same clean abort as Ctrl-C: it stops everything
+#                                          the job started and removes its partial file)
+#
+# Checks (any one failing counts as a bad sample):
+#   * the game does not answer `dune status` over ssh, or its Overall state is not READY
+#   * host I/O pressure (share of the last 10 s that tasks waited on the disk) above 30%
+#   * host memory pressure (share of the last 10 s that tasks stalled waiting for memory) above 10%
+#   * the disk is more than 95% busy
+#   * the thin pool is more than 85% full, or its metadata more than 70%
+#   * any of these cannot be read at all (a guard that cannot see protects nothing)
+# Several consecutive bad samples are required (default 3 x 10 s) so one slow ssh or a short blip
+# never aborts a run, but a sustained problem does within about 30 seconds.
+#
+# It only READS (ssh `dune status`, /proc/pressure, iostat, lvs) and signals the one PID it was
+# given; it never touches the game or the backup's files.
+# Thresholds: BK_GUARD_IO_PRESSURE_MAX, BK_GUARD_MEM_PRESSURE_MAX, BK_GUARD_DISK_BUSY_MAX, BK_GUARD_POOL_MAX, BK_GUARD_META_MAX;
+# BK_GUARD_WARMING_GRACE_S (0-1800, default 0): tolerate the game being WARMING for this long in the WATCH only.
+# BK_GUARD_IO_METRIC (some|full) picks which PSI line the I/O limit applies to; the game host:
+# BK_GUARD_GAME_SSH (default BK_BACKUP_SSH).
+# =============================================================================
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=backup-common.sh
+. "$here/backup-common.sh"
+bk_load_config 2>/dev/null || true
+
+once=0
+target=""
+reason_file=""
+interval=10
+consecutive=3
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --once) once=1; shift ;;
+    --target) target="${2:-}"; shift 2 ;;
+    --reason-file) reason_file="${2:-}"; shift 2 ;;
+    --interval) interval="${2:-10}"; shift 2 ;;
+    --consecutive) consecutive="${2:-3}"; shift 2 ;;
+    *) echo "usage: $0 --once | --target PID [--reason-file F] [--interval N] [--consecutive N]" >&2; exit 2 ;;
+  esac
+done
+[[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -ge 1 ] || { echo "interval must be >= 1" >&2; exit 2; }
+[[ "$consecutive" =~ ^[0-9]+$ ]] && [ "$consecutive" -ge 1 ] || { echo "consecutive must be >= 1" >&2; exit 2; }
+if [ "$once" -eq 0 ]; then
+  [[ "$target" =~ ^[0-9]+$ ]] || { echo "--target PID is required" >&2; exit 2; }
+fi
+
+# BK_PSI_DIR is a test hook: honoured under bats only, so a stray variable cannot blind the guard.
+psi_dir="/proc/pressure"
+[ -z "${BATS_TEST_TMPDIR:-}" ] || psi_dir="${BK_PSI_DIR:-/proc/pressure}"
+disk="${BK_STATUS_DISK:-sda}"
+game_ssh="${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}"
+io_max="${BK_GUARD_IO_PRESSURE_MAX:-30}"
+busy_max="${BK_GUARD_DISK_BUSY_MAX:-95}"
+mem_max="${BK_GUARD_MEM_PRESSURE_MAX:-10}"
+meta_max="${BK_GUARD_META_MAX:-70}"
+thin_pool="${BK_THIN_POOL:-pve/data}"
+io_metric="${BK_GUARD_IO_METRIC:-some}"   # some: any task stalled; full: every task stalled (the system-wide stall that hurts the game)
+[[ "$io_metric" =~ ^(some|full)$ ]] || { echo "BK_GUARD_IO_METRIC must be some or full" >&2; exit 2; }
+pool_max="${BK_GUARD_POOL_MAX:-85}"
+# A map starting because a player logged in makes the game report WARMING for a few minutes. When this is above 0 the
+# WATCH (never --once) tolerates WARMING, and only WARMING, for up to this many seconds in a row; every other state and
+# every host check still counts at once. 0 (the default) keeps the strict behaviour.
+warming_grace="${BK_GUARD_WARMING_GRACE_S:-0}"
+[[ "$warming_grace" =~ ^[0-9]+$ ]] && [ "$warming_grace" -le 1800 ] || { echo "BK_GUARD_WARMING_GRACE_S must be 0-1800 seconds" >&2; exit 2; }
+
+gt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
+
+# Print the reason(s) the system looks unhealthy, or nothing when it looks fine.
+sample() {
+  local reasons="" st io mem util line pool
+  if [ -n "$game_ssh" ]; then
+    st="$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=6 -- "$game_ssh" 'cd ~/dune-awakening-selfhost-docker && dune status 2>&1 | sed -n 1,8p' 2>/dev/null)" || st=""
+    if [ -z "$st" ]; then
+      reasons="$reasons the game host did not answer;"
+    elif ! printf '%s\n' "$st" | grep -q 'Overall: *READY'; then
+      reasons="$reasons the game is not READY ($(printf '%s\n' "$st" | sed -n 's/^Overall: *//p' | head -n 1));"
+    fi
+  fi
+  io="$(awk -v m="$io_metric" '$1 == m { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/io" 2>/dev/null | head -n 1)"
+  if [ -z "$io" ]; then reasons="$reasons cannot read host I/O pressure (a blind guard protects nothing);"
+  elif gt "$io" "$io_max"; then reasons="$reasons host I/O pressure ($io_metric) ${io}% (limit ${io_max}%);"; fi
+  mem="$(awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { sub("avg10=", "", $i); print $i } }' "$psi_dir/memory" 2>/dev/null | head -n 1)"
+  if [ -z "$mem" ]; then reasons="$reasons cannot read host memory pressure (a blind guard protects nothing);"
+  elif gt "$mem" "$mem_max"; then reasons="$reasons host memory pressure ${mem}% (limit ${mem_max}%);"; fi
+  if command -v iostat >/dev/null 2>&1; then
+    line="$(iostat -dxm 1 2 2>/dev/null | awk -v d="$disk" '$1 == d { l = $0 } END { print l }')"
+    if [ -n "$line" ]; then
+      util="$(awk '{ print $NF }' <<<"$line")"
+      if gt "${util:-0}" "$busy_max"; then reasons="$reasons disk ${disk} ${util}% busy (limit ${busy_max}%);"; fi
+    fi
+  fi
+  line="$(lvs --noheadings --units g --nosuffix -o data_percent,metadata_percent "$thin_pool" 2>/dev/null | awk 'NR == 1 { printf "%s %s", ($1 == "" ? "" : sprintf("%.1f", $1)), $2 }')"
+  read -r pool meta <<<"$line"
+  if [ -z "$pool" ]; then reasons="$reasons cannot read the thin pool usage (a blind guard protects nothing);"
+  elif gt "$pool" "$pool_max"; then reasons="$reasons thin pool ${pool}% full (limit ${pool_max}%);"; fi
+  if [ -n "${meta:-}" ] && gt "$meta" "$meta_max"; then reasons="$reasons thin pool metadata ${meta}% full (limit ${meta_max}%);"; fi
+  printf '%s' "${reasons# }"
+}
+
+if [ "$once" -eq 1 ]; then
+  r="$(sample)"
+  if [ -z "$r" ]; then echo "OK"; exit 0; fi
+  echo "$r"
+  exit 1
+fi
+
+bad=0
+warming_since=""
+bk_log "guard: watching PID $target every ${interval}s; will stop it after $consecutive bad samples in a row (I/O pressure > ${io_max}%, memory pressure > ${mem_max}%, disk > ${busy_max}% busy, pool > ${pool_max}% full, game not READY)"
+while kill -0 "$target" 2>/dev/null; do
+  r="$(sample)"
+  if [ -n "$r" ] && [ "$warming_grace" -gt 0 ] && [ "$r" = "the game is not READY (WARMING);" ]; then
+    [ -n "$warming_since" ] || warming_since=$SECONDS
+    if [ $((SECONDS - warming_since)) -lt "$warming_grace" ]; then
+      bk_log "guard: the game is WARMING ($((SECONDS - warming_since))s so far; tolerated for up to ${warming_grace}s, any other problem still counts at once)"
+      r=""
+    else
+      r="the game has been WARMING for more than ${warming_grace}s;"
+    fi
+  else
+    warming_since=""
+  fi
+  if [ -z "$r" ]; then
+    bad=0
+  else
+    bad=$((bad + 1))
+    bk_log "guard: bad sample $bad of $consecutive: $r"
+    if [ "$bad" -ge "$consecutive" ]; then
+      bk_log "guard: STOPPING the backup (PID $target) to protect the game: $r"
+      if [ -n "$reason_file" ]; then printf '%s\n' "$r" >"$reason_file" 2>/dev/null || true; fi
+      kill -INT "$target" 2>/dev/null || true
+      exit 0
+    fi
+  fi
+  sleep "$interval" &
+  wait "$!"
+done
+exit 0

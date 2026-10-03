@@ -8,6 +8,25 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Added
+- **`dune-watch.sh`: crash and downtime watch for dune-prod.** One read-only ssh every 5 minutes (`--install-timer`) posts to Discord with a mention when a game-server container restarts by any route, when a game server's crash journal grows (partition, time, crashes in 24 h), when the game is not READY for 15 minutes (with reminders and a RECOVERED notice), or when prod cannot be read. `--dry-run` and `--selftest` included. Prompted by partition 38 crashing about hourly with SIGFPE.
+- **Restore drill: boot-only check for MAC-matched guests.** The 2026-10-02 prod drills failed at boot with 0 packets because prod's netplan matches its MAC and the restore assigns a new one; `BK_DRILL_KEEP_MAC=1` keeps the live guest's MAC on the isolated scratch NIC. The boot wait now logs progress every minute and tries to save a console screenshot on failure.
+- **Restore drill: operator-stop notice and WARMING grace.** Ctrl-C/TERM/HUP now print "INTERRUPTED ... a controlled shutdown, NOT a failure", progress lines and "shutdown complete", are recorded as `drill_interrupted` (not a failed drill) and raise no alert; a guard stop prints its own protective-stop line. The drill guard tolerates the game being WARMING for up to 5 minutes in a row (`BK_DRILL_GUARD_WARMING_GRACE_S`, watcher only; `BK_GUARD_WARMING_GRACE_S` in the guard, default 0); every other state and host check still stops it. A test no longer risks killing a live drill's guard, and test stubs refuse to be written outside the bats sandbox.
+- **Guardrails for the VM restore drill** (`backup-drill.sh vm`): so a restore of a production image cannot hurt the host or dune-prod. The drill now refuses to run inside or into the 04:20-05:20 blackout, while a backup runs, or without enough host/NUMA memory; runs the safety guard for the whole run (pre-check plus watcher; refuses if the guard cannot start); caps the restore (`--bwlimit`, a cgroup scope with `MemoryHigh`, a time limit) and lowers the kernel's dirty-page limits for its duration; binds the scratch guest's memory to one NUMA node, confines its CPUs, gives it the lowest CPU weight and limits its disk speed, verifying every value in the config before boot; refuses or strips host-executing and host-sharing config (hookscript, args, hugepages, cicustom, virtiofs, raw devices, other guests' disks; for containers bind mounts and raw lxc settings); destroys the scratch guest interrupt-proof, removes orphan volumes and proves it is gone (a leftover is a P1 and a non-zero exit); records its settings in the audit and evidence logs. `--dry-run` now runs the preflight. **Behaviour change:** the scratch VM is no longer un-pinned: it keeps a NUMA binding (node 1) and CPU affinity (dune-dev's threads). New settings are in `backup.env.example`; the runbook has "How the VM restore drill protects the host and dune-prod".
+- **Guard:** memory-pressure check (`BK_GUARD_MEM_PRESSURE_MAX`), thin-pool metadata check (`BK_GUARD_META_MAX`), selectable I/O metric (`BK_GUARD_IO_METRIC` some|full), and a sampler that cannot read (PSI file, `lvs`) is now a reported problem instead of a silent pass. The pressure-directory override is honoured under the test suite only.
+- **Safety guard and in-game announcements for unattended weekly images** (`backup-guard.sh`, `backup-announce.sh`, `backup-weekly.sh --guard --announce`): pre-check and live sampling (game READY, disk pressure, thin pool; 3 bad samples stop the job), warnings 30/15/5/1 minutes before the start, a notice at the start and every 30 minutes, and a closing notice, sent through a console API key limited to `admin:broadcast`. Runbook section "Protecting live players" and `backup.env.example` settings documented.
+
+### Added
+
+- **Tiered, encrypted backup system** (design v2, issue #119): DB tier
+  every 6h, daily set, weekly VM/CT images; age-encrypted (host holds
+  the public key only), OneDrive (rclone crypt) plus desktop SMB;
+  restricted pull gate on dune-prod, artifact-based alarm with external
+  dead-man's-switch, restore drills, readiness doctor, systemd timers,
+  sandboxed test runner and a `backup-tests` CI job. Runbook:
+  `docs/08-backup-runbook.md`. **Not deployed until the runbook's
+  rollout gates pass; the host has no off-box backup until then.**
+
 ### Fixed
 
 - **Full document-set accuracy review** (`Project-Arrakis/meta`#73):
