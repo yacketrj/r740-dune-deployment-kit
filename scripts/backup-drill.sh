@@ -683,10 +683,19 @@ drill_vm() {
     else
       pct status "$scratch" 2>/dev/null | grep -q running && { up=1; break; }
     fi
+    if [ "$boot_only" -eq 1 ] && [ "$kind" = "vm" ] && [ $((i % 12)) -eq 0 ]; then
+      bk_log "boot wait: try $i, the guest has sent $sent packet(s) and read $((disk_read / 1048576)) MiB so far"
+    fi
     sleep "${BK_DRILL_BOOT_SLEEP:-5}"
   done
   if [ "$up" -ne 1 ]; then
     if [ "$boot_only" -eq 1 ] && [ "$kind" = "vm" ]; then
+      # best effort: save what the guest's console shows, so a failed boot can be diagnosed afterwards
+      shot="$BK_STATE_DIR/drill-boot-$scratch.ppm"
+      if printf 'screendump %s\n' "$shot" | timeout 90 qm monitor "$scratch" >/dev/null 2>&1 && [ -s "$shot" ]; then
+        python3 -c 'import sys;from PIL import Image;Image.open(sys.argv[1]).save(sys.argv[2])' "$shot" "${shot%.ppm}.png" >/dev/null 2>&1 || true
+        bk_log "saved the guest console screen to ${shot%.ppm}.png (or $shot) for diagnosis"
+      fi
       fail_drill "the restored VM did not show signs of life: it sent $sent packet(s) on its isolated network (need $min_packets) and read $((disk_read / 1048576)) MiB from its disk (need $((min_read / 1048576)) MiB), or is not running; the image may not boot"
     fi
     fail_drill "the restored guest did not come up (no guest-agent answer / not running)"

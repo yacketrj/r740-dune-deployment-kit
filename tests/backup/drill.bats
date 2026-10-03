@@ -893,6 +893,16 @@ boot_only_cfg() { echo 'BK_DRILL_VM_CHECK_102=boot-only' >>"$BK_CONFIG_DIR/backu
   [ ! -e "$T/vmstate/bridge" ]
 }
 
+@test "vm boot-only: a slow boot logs its progress every minute and a failed one still cleans up even if the console screenshot is unavailable" {
+  make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
+  boot_only_cfg
+  touch "$T/tap-silent"
+  BK_DRILL_BOOT_TRIES=12 BK_DRILL_BOOT_SLEEP=0 drill vm --guest 102 --identity "$BK_AGE_IDENTITY"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"boot wait: try 12, the guest has sent 0 packet(s)"* ]]
+  [ ! -e "$T/vmstate/scratch-exists" ]
+}
+
 @test "vm boot-only: a silent image (no packets) fails, alerts once, and everything is destroyed" {
   make_image vm102-20260930-020000.vma.zst.age FAKEDISKDATA
   boot_only_cfg
