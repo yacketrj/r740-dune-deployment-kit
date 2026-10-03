@@ -610,6 +610,14 @@ drill_vm() {
     [ -z "$extra_nets" ] || del="$del,$extra_nets"
     model="$(printf '%s\n' "$conf" | awk -F'[:=,]' '/^net0:/ { gsub(/ /, "", $2); print $2; exit }')"
     [ -n "$model" ] || model="virtio"
+    # A guest whose network config matches its MAC (netplan "match: macaddress") never brings the NIC up
+    # under the fresh MAC the restore assigns, so it stays silent. The scratch bridge has no uplink, so the
+    # original MAC is safe on it; the tap of the live guest is on another bridge.
+    if [ "${BK_DRILL_KEEP_MAC:-0}" = "1" ]; then
+      keep_mac="$(qm config "$guest" 2>/dev/null | awk -F'[:=,]' '/^net0:/ { for (n = 2; n <= NF; n++) if ($n ~ /^[0-9A-Fa-f]{2}$/) { print $n ":" $(n+1) ":" $(n+2) ":" $(n+3) ":" $(n+4) ":" $(n+5); exit } }')"
+      [[ "$keep_mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || fail_drill "BK_DRILL_KEEP_MAC=1 but the live guest $guest has no readable net0 MAC"
+      model="$model=$keep_mac"
+    fi
     # Memory bound to one host NUMA node, vCPUs confined to a few host threads (default: dune-dev's, the
     # expendable guest) at the lowest CPU weight: prod always wins. protection off so destroy cannot refuse.
     # shellcheck disable=SC2046  # $del is a comma list built above from validated key names
