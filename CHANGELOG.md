@@ -11,6 +11,9 @@ introduced them, in Keep a Changelog style, newest first.
 ### Changed
 - **The USB-copy warning is opt-in (default off).** A verified copy on the desktop share counts as the off-host copy (operator decision, 2026-10-06); moving it to USB is the operator's own routine. `BK_USB_MAX_AGE_D=N` turns the warning on; `backup-usb-done.sh` stays available to record a copy.
 
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
+
 ### Added
 - **Off-premises USB copy is now tracked, and alert wording is unambiguous.** New `backup-usb-done.sh [NOTE]` records (evidence log + hash-chained audit log) that you copied the share to the USB key; the hourly alarm warns when the last recorded copy is older than `BK_USB_MAX_AGE_D` days (default 14, `0` = off; never recorded starts a clock at the first check, no instant alarm). Alerts for a failed copy to the desktop now say "DESKTOP COPY FAILED" (the desktop is off this host but in the same building); "off-premises" means only the USB key. Runbook 9b updated.
 - **Desktop asleep: keep the local copy and announce the failed off-site save.** The daily/db tier no longer gives up when the SMB share is unreachable: it still pulls, verifies and encrypts, keeps a bit-exact copy in `BK_LOCAL_KEEP_DIR` (default `/var/lib/r740-backup/local-keep`, newest `BK_LOCAL_KEEP_COUNT`=7; empty disables it), posts "OFF-SITE SAVE TO THE DESKTOP FAILED ... kept on this host at ..." to Discord, records `run_degraded`, never records success, and uploads the kept copies to the share on the next run that can reach it. OneDrive is still served. The weekly images are too large to keep locally, so a missing share now fails with an explicit "OFF-SITE SAVE FAILED ... none is kept locally" alert and the previous images are untouched. **Behaviour change:** with no OneDrive remote and an unmounted share the daily run now pulls from prod and keeps the archive locally instead of failing before the pull (set `BK_LOCAL_KEEP_DIR=` for the old behaviour).
@@ -20,6 +23,9 @@ introduced them, in Keep a Changelog style, newest first.
 - **Guardrails for the VM restore drill** (`backup-drill.sh vm`): so a restore of a production image cannot hurt the host or dune-prod. The drill now refuses to run inside or into the 04:20-05:20 blackout, while a backup runs, or without enough host/NUMA memory; runs the safety guard for the whole run (pre-check plus watcher; refuses if the guard cannot start); caps the restore (`--bwlimit`, a cgroup scope with `MemoryHigh`, a time limit) and lowers the kernel's dirty-page limits for its duration; binds the scratch guest's memory to one NUMA node, confines its CPUs, gives it the lowest CPU weight and limits its disk speed, verifying every value in the config before boot; refuses or strips host-executing and host-sharing config (hookscript, args, hugepages, cicustom, virtiofs, raw devices, other guests' disks; for containers bind mounts and raw lxc settings); destroys the scratch guest interrupt-proof, removes orphan volumes and proves it is gone (a leftover is a P1 and a non-zero exit); records its settings in the audit and evidence logs. `--dry-run` now runs the preflight. **Behaviour change:** the scratch VM is no longer un-pinned: it keeps a NUMA binding (node 1) and CPU affinity (dune-dev's threads). New settings are in `backup.env.example`; the runbook has "How the VM restore drill protects the host and dune-prod".
 - **Guard:** memory-pressure check (`BK_GUARD_MEM_PRESSURE_MAX`), thin-pool metadata check (`BK_GUARD_META_MAX`), selectable I/O metric (`BK_GUARD_IO_METRIC` some|full), and a sampler that cannot read (PSI file, `lvs`) is now a reported problem instead of a silent pass. The pressure-directory override is honoured under the test suite only.
 - **Safety guard and in-game announcements for unattended weekly images** (`backup-guard.sh`, `backup-announce.sh`, `backup-weekly.sh --guard --announce`): pre-check and live sampling (game READY, disk pressure, thin pool; 3 bad samples stop the job), warnings 30/15/5/1 minutes before the start, a notice at the start and every 30 minutes, and a closing notice, sent through a console API key limited to `admin:broadcast`. Runbook section "Protecting live players" and `backup.env.example` settings documented.
+
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
 
 ### Added
 
@@ -62,6 +68,9 @@ introduced them, in Keep a Changelog style, newest first.
   5 port-forward table and `06-multi-battlegroup-public-exposure.md`'s
   status were both out of date relative to the real, live network
   state after dune-prod1 was split into dune-prod1/dune-prod2.
+
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
 
 ### Added
 
@@ -322,6 +331,9 @@ introduced them, in Keep a Changelog style, newest first.
   host — same exposure class as #28's local-staging finding. Fixed to
   `chmod 600` + `shred` after transfer. (#30)
 
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
+
 ### Added
 
 - `prompts/tabr-tau/01-bot-secrets-rotation.md` and
@@ -375,6 +387,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## 2026-08-12
 
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
+
 ### Added
 
 - Dell ProSupport case writeup for the R740xd's persistent "No bootable
@@ -389,6 +404,9 @@ introduced them, in Keep a Changelog style, newest first.
   creating a premature, unused third forward. (#40, #41)
 
 ## 2026-08-11 — 2026-08-12
+
+### Changed
+- **The weekly images move from Sunday 01:00 to Tuesday 05:00** (interim, until the 04:00 Tuesday maintenance window is built). The 30-minute in-game warnings run 05:00-05:30, imaging starts at 05:30 after the game's own 05:00 restart and the 04:30 database dump (the slot of the first prod image on 2026-10-01), window 05:00-07:30 (`BK_WEEKLY_WINDOW_START` / `BK_WEEKLY_HARD_STOP` defaults). The daily at 05:15 finishes during the warning countdown, so they do not overlap. Run `backup-install-timers.sh --no-enable --no-dbtier` again to rewrite the weekly unit.
 
 ### Added
 

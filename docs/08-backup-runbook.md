@@ -10,7 +10,7 @@ If you are here because something is broken, jump to **section 5 (alerts)** or *
 |---|---|---|---|---|
 | Database tier (optional, off in the lite profile) | newest official dump pair(s) | every 6h (04:45, 10:45, 16:45, 22:45) | desktop share | 8h |
 | Daily set | recent dump pairs, `runtime/secrets`, `.env`, host config | 05:15 | desktop share (OneDrive optional) | 26h |
-| Weekly images | full images of VM 101, 102, 103 and CT 104 | Sunday 01:00, no new image starts after 04:15 | desktop share | 8 days |
+| Weekly images | full images of VM 101, 102, 103 and CT 104 | Tuesday 05:00 (warnings first, imaging from 05:30), no new image starts after 07:30 | desktop share | 8 days |
 
 - Everything is encrypted with `age` before it leaves the hypervisor. **The hypervisor holds only the public key.** The private key lives in your password manager plus a second escrow.
 - `market-bot-seed` dumps (a feature seed made every 15 minutes) are excluded. The authoritative restore point is the newest dump whose sidecar says `backup_origin: automatic` (the scheduled 04:30 job).

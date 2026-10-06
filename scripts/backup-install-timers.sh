@@ -4,7 +4,8 @@
 # systemd units. The schedule follows design v2:
 #   dbtier   04:45 10:45 16:45 22:45  (15 min after each game DB dump)  RPO 6h
 #   daily    05:15                    (after the 04:30 dump and 04:45 tier)
-#   weekly   Sunday 01:00             (window 01:00-04:15, hard stop enforced by the job)
+#   weekly   Tuesday 05:00            (30 min of warnings, imaging from 05:30, after the game's 05:00 restart and
+#                                      the 04:30 dump; window 05:00-07:30, hard stop enforced by the job)
 #   check    hourly                   (the alarm)
 #   pipeline monthly, 2nd Saturday 03:00 (automated pipeline drill, no real key)
 #
@@ -31,7 +32,7 @@ done
 jobs=(
   "dbtier|$here/backup-daily.sh --tier db|*-*-* 04,10,16,22:45:00|database tier (RPO 6h)|1h|1"
   "daily|$here/backup-daily.sh --tier daily|*-*-* 05:15:00|daily set (dumps, secrets, host config)|2h|1"
-  "weekly|$here/backup-weekly.sh|Sun *-*-* 01:00:00|weekly VM and container images|4h|1"
+  "weekly|$here/backup-weekly.sh|Tue *-*-* 05:00:00|weekly VM and container images|4h|1"
   "check|$here/backup-check.sh|hourly|backup alarm|10min|0"
   "pipeline|$here/backup-drill.sh pipeline|Sat *-*-08..14 03:00:00|automated pipeline restore drill|1h|1"
 )
