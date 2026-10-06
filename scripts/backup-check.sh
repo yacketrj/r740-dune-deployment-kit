@@ -148,6 +148,29 @@ if [ "${BK_CHECK_REQUIRE_DRILLS:-1}" = "1" ]; then
   check_evidence drill-vm "${BK_DRILL_VM_MAX_AGE_D:-100}" "VM restore drill"
 fi
 
+# --- the hand-made off-premises USB copy (the alarm cannot see the key; you record each copy) ----------------
+# `backup-usb-done.sh` records "usb-copy" PASS in the evidence log after you copy the share to a key.
+# BK_USB_MAX_AGE_D=0 turns this off. Never recorded: the clock starts at the first check (no instant alarm).
+usb_max="${BK_USB_MAX_AGE_D:-14}"
+if [[ "$usb_max" =~ ^[0-9]+$ ]] && [ "$usb_max" -gt 0 ]; then
+  usb_last="$(awk -F'\t' '$2 == "usb-copy" && $3 == "PASS" { t = $1 } END { print t }' "$BK_STATE_DIR/evidence.log" 2>/dev/null || true)"
+  usb_e=0
+  [ -z "$usb_last" ] || usb_e="$(date -d "$usb_last" +%s 2>/dev/null || echo 0)"
+  if [ "$usb_e" -gt 0 ]; then
+    if [ $((now - usb_e)) -gt $((usb_max * 86400)) ]; then
+      add "off-premises USB copy: last recorded $(((now - usb_e) / 86400)) days ago (limit $usb_max); copy the share to the USB key and run backup-usb-done.sh"
+    fi
+  else
+    mkdir -p "$BK_STATE_DIR"
+    [ -s "$BK_STATE_DIR/usb-clock-start" ] || printf '%s\n' "$now" >"$BK_STATE_DIR/usb-clock-start"
+    usb_start="$(cat "$BK_STATE_DIR/usb-clock-start" 2>/dev/null || echo "$now")"
+    [[ "$usb_start" =~ ^[0-9]+$ ]] || usb_start="$now"
+    if [ $((now - usb_start)) -gt $((usb_max * 86400)) ]; then
+      add "off-premises USB copy: none recorded in $(((now - usb_start) / 86400)) days (limit $usb_max); copy the share to the USB key and run backup-usb-done.sh"
+    fi
+  fi
+fi
+
 # --- outcome ---------------------------------------------------------------------------
 check_ping() { # ok|fail : external heartbeat for the alarm itself
   local saved="${BK_DEADMAN_URL_FILE:-}"
