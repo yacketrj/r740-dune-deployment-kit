@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Fixed
+- **Flaky test: "db: a damaged archive fails decryption".** It overwrote one byte of the (random) ciphertext with a fixed `0xff`, which left the file unchanged about 1 time in 256, so the archive still decrypted and the push-to-main run for #146 failed (run 37509433631) although the PR run passed. The test now changes the byte to a different value and asserts it changed. Test-only; no script behaviour changes. Docs reviewed: none describe this test.
+
 ### Changed
 - **dune-watch names the sietch.** Restart and crash alerts now read "Project Atrium (instance 38)" or "Sietch Kadir (instance 1)" instead of `dune-server-survival-1-38`, using the same per-partition display names the console map navigation shows (read-only, in the existing single ssh). If the lookup fails the raw container name is shown as before. Docs reviewed: runbook does not quote alert text, no change needed.
 
