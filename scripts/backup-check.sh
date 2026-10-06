@@ -150,8 +150,8 @@ fi
 
 # --- the hand-made off-premises USB copy (the alarm cannot see the key; you record each copy) ----------------
 # `backup-usb-done.sh` records "usb-copy" PASS in the evidence log after you copy the share to a key.
-# BK_USB_MAX_AGE_D=0 turns this off. Never recorded: the clock starts at the first check (no instant alarm).
-usb_max="${BK_USB_MAX_AGE_D:-14}"
+# Opt-in: BK_USB_MAX_AGE_D=N (days) turns it on; the default 0 is off (the desktop copy is what the alarm watches). Never recorded: the clock starts at the first check (no instant alarm).
+usb_max="${BK_USB_MAX_AGE_D:-0}"
 if [[ "$usb_max" =~ ^[0-9]+$ ]] && [ "$usb_max" -gt 0 ]; then
   usb_last="$(awk -F'\t' '$2 == "usb-copy" && $3 == "PASS" { t = $1 } END { print t }' "$BK_STATE_DIR/evidence.log" 2>/dev/null || true)"
   usb_e=0
