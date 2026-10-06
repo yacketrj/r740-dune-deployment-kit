@@ -9,9 +9,9 @@
 #
 # It only READS prod (one ssh, `dune status` plus the crash journals); it never restarts or changes anything.
 # What it posts, each with the mention:
-#   RESTART    a game-server container that WAS RUNNING at the previous check started again (any route: console,
-#              command line, Discord, a crash). A container that was stopped or absent and is now up is a dynamic
-#              instance (Arrakeen, Deep Desert, ...) coming online on demand, and is not reported.
+#   RESTART    a game-server container started again (any route: console, command line, Discord, a crash). Maps
+#              whose `dune maps` mode is dynamic or overmap-active (Arrakeen, Deep Desert, ...) come online on
+#              demand and are not reported; always-on maps, Overmap, Survival_1 and the gateway are.
 #   CRASH      a game server's crash journal grew (which partition, when, and how many in the last 24 h)
 #   NOT READY  the game has not been READY for BK_WATCH_DOWN_CHECKS checks in a row (default 3 = 15 minutes);
 #              repeated every BK_WATCH_REMIND_MIN minutes (default 60) while it lasts
@@ -109,8 +109,9 @@ remote='cd ~/dune-awakening-selfhost-docker 2>/dev/null || exit 3
 dune status 2>&1 | awk "/^Overall:/ { print \"STATUS \" \$2; exit }"
 thr="$(date -u -d "24 hours ago" "+%Y-%m-%d %H:%M:%S")"
 docker ps -a --filter "name=^dune-server-" --format "{{.Names}}" 2>/dev/null | while read -r c; do
-  echo "CONT $c $(docker inspect --format "{{.State.Status}} {{.State.StartedAt}}" "$c" 2>/dev/null)"
+  echo "CONT $c $(docker inspect --format "{{.State.StartedAt}}" "$c" 2>/dev/null)"
 done
+dune maps list 2>/dev/null | awk "/Current:/ { print \"MODE \" \$1 \" \" \$3 }"
 for f in runtime/game/*/Saved/Crashes/CrashReportsJournal.txt; do
   [ -f "$f" ] || continue
   d="${f#runtime/game/}"; d="${d%%/*}"
@@ -165,21 +166,28 @@ else
   done <<<"$out"
   if [ -n "$crashed" ]; then msgs+=("CRASH on dune-prod:$crashed"); fi
 
-  # A game-server container that was running at the last check and has a new start time was restarted (console,
-  # command line, Discord or a crash). One that was stopped or absent and is now up is an on-demand instance
-  # (Arrakeen, Deep Desert, ...) coming online, not a restart. Crashes are reported by the crash journal above.
+  # A game-server container whose start time changed was restarted (console, command line, Discord or a crash).
+  # On-demand maps (`dune maps` mode dynamic or overmap-active) start whenever a player needs them: not a restart.
+  # Crashes are reported by the crash journal above. A container whose map is unknown is reported.
+  declare -A mode=()
+  while read -r tag map m; do
+    [ "$tag" = "MODE" ] || continue
+    [[ "$map" =~ ^[A-Za-z0-9_]+$ && "$m" =~ ^[a-z-]+$ ]] || continue
+    k="${map,,}"; mode["${k//_/-}"]="$m"
+  done <<<"$out"
   restarted=""
-  while read -r tag cname run started; do
+  while read -r tag cname started; do
     [ "$tag" = "CONT" ] || continue
     [[ "$cname" =~ ^[A-Za-z0-9_.-]+$ && -n "$started" ]] || continue
     key="cont.${cname//./_}"
-    rkey="contrun.${cname//./_}"
-    if [ -n "${st[$key]:-}" ] && [ "${st[$key]}" != "$started" ] && [ "${st[$rkey]:-0}" = "1" ]; then
+    mapkey="${cname#dune-server-}"; mapkey="${mapkey%-[0-9]*}"
+    on_demand=0
+    case "${mode[$mapkey]:-}" in dynamic|overmap-active) on_demand=1 ;; esac
+    if [ -n "${st[$key]:-}" ] && [ "${st[$key]}" != "$started" ] && [ "$on_demand" -eq 0 ]; then
       restarted="$restarted
 - $cname started again at ${started%%.*} UTC"
     fi
     st[$key]="$started"
-    if [ "$run" = "running" ]; then st[$rkey]=1; else st[$rkey]=0; fi
   done <<<"$out"
   if [ -n "$restarted" ]; then
     if [ -n "$crashed" ]; then note="(some of these are the crash restarts above)"; else note="(no crash was recorded: a normal restart)"; fi
