@@ -9,7 +9,9 @@
 #
 # It only READS prod (one ssh, `dune status` plus the crash journals); it never restarts or changes anything.
 # What it posts, each with the mention:
-#   RESTART    a game-server container started again (any route: console, command line, Discord, a crash)
+#   RESTART    a game-server container that WAS RUNNING at the previous check started again (any route: console,
+#              command line, Discord, a crash). A container that was stopped or absent and is now up is a dynamic
+#              instance (Arrakeen, Deep Desert, ...) coming online on demand, and is not reported.
 #   CRASH      a game server's crash journal grew (which partition, when, and how many in the last 24 h)
 #   NOT READY  the game has not been READY for BK_WATCH_DOWN_CHECKS checks in a row (default 3 = 15 minutes);
 #              repeated every BK_WATCH_REMIND_MIN minutes (default 60) while it lasts
@@ -107,7 +109,7 @@ remote='cd ~/dune-awakening-selfhost-docker 2>/dev/null || exit 3
 dune status 2>&1 | awk "/^Overall:/ { print \"STATUS \" \$2; exit }"
 thr="$(date -u -d "24 hours ago" "+%Y-%m-%d %H:%M:%S")"
 docker ps -a --filter "name=^dune-server-" --format "{{.Names}}" 2>/dev/null | while read -r c; do
-  echo "CONT $c $(docker inspect --format "{{.State.StartedAt}}" "$c" 2>/dev/null)"
+  echo "CONT $c $(docker inspect --format "{{.State.Status}} {{.State.StartedAt}}" "$c" 2>/dev/null)"
 done
 for f in runtime/game/*/Saved/Crashes/CrashReportsJournal.txt; do
   [ -f "$f" ] || continue
@@ -163,17 +165,21 @@ else
   done <<<"$out"
   if [ -n "$crashed" ]; then msgs+=("CRASH on dune-prod:$crashed"); fi
 
-  # A game-server container whose start time changed was restarted (console, command line, Discord or a crash).
+  # A game-server container that was running at the last check and has a new start time was restarted (console,
+  # command line, Discord or a crash). One that was stopped or absent and is now up is an on-demand instance
+  # (Arrakeen, Deep Desert, ...) coming online, not a restart. Crashes are reported by the crash journal above.
   restarted=""
-  while read -r tag cname started; do
+  while read -r tag cname run started; do
     [ "$tag" = "CONT" ] || continue
     [[ "$cname" =~ ^[A-Za-z0-9_.-]+$ && -n "$started" ]] || continue
     key="cont.${cname//./_}"
-    if [ -n "${st[$key]:-}" ] && [ "${st[$key]}" != "$started" ]; then
+    rkey="contrun.${cname//./_}"
+    if [ -n "${st[$key]:-}" ] && [ "${st[$key]}" != "$started" ] && [ "${st[$rkey]:-0}" = "1" ]; then
       restarted="$restarted
 - $cname started again at ${started%%.*} UTC"
     fi
     st[$key]="$started"
+    if [ "$run" = "running" ]; then st[$rkey]=1; else st[$rkey]=0; fi
   done <<<"$out"
   if [ -n "$restarted" ]; then
     if [ -n "$crashed" ]; then note="(some of these are the crash restarts above)"; else note="(no crash was recorded: a normal restart)"; fi

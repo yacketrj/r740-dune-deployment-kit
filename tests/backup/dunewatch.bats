@@ -18,7 +18,7 @@ CFG
 
 probe() { # STATUS [partition total n24 last]...
   local status="$1"; shift
-  { echo "STATUS $status"; [ -n "${CONT_STARTED:-}" ] && echo "CONT dune-server-survival-1 $CONT_STARTED"; while [ $# -ge 4 ]; do echo "CRASH $1 $2 $3 $4"; shift 4; done; } >"$T/ssh.out"
+  { echo "STATUS $status"; [ -n "${CONT_STARTED:-}" ] && echo "CONT dune-server-survival-1 ${CONT_RUN:-running} $CONT_STARTED"; while [ $# -ge 4 ]; do echo "CRASH $1 $2 $3 $4"; shift 4; done; } >"$T/ssh.out"
 }
 posts() { [ -f "$T/curl.args" ] && grep -c -e "-fsS" "$T/curl.args" || echo 0; }
 
@@ -115,4 +115,15 @@ posts() { [ -f "$T/curl.args" ] && grep -c -e "-fsS" "$T/curl.args" || echo 0; }
   grep -q 'dune-server-survival-1 started again at 2026-10-03T18:34:00 UTC' "$T/curl.args"
   grep -q '<@111222333>' "$T/curl.args"
   bash "$SCRIPT"; [ "$(posts)" = "1" ]
+}
+
+@test "an on-demand instance coming online (stopped or absent at the last check) is not reported as a restart" {
+  CONT_RUN=exited CONT_STARTED=2026-10-03T18:00:00.123Z probe READY
+  bash "$SCRIPT"; [ "$(posts)" = "0" ]
+  CONT_RUN=running CONT_STARTED=2026-10-03T18:34:00.456Z probe READY
+  bash "$SCRIPT"; [ "$(posts)" = "0" ]
+  # once it is seen running, a later new start time is a real restart
+  CONT_RUN=running CONT_STARTED=2026-10-03T19:00:00.789Z probe READY
+  bash "$SCRIPT"; [ "$(posts)" = "1" ]
+  grep -q 'started again at 2026-10-03T19:00:00 UTC' "$T/curl.args"
 }
