@@ -9,6 +9,9 @@ introduced them, in Keep a Changelog style, newest first.
 ## Unreleased
 
 ### Changed
+- **dune-watch names the sietch.** Restart and crash alerts now read "Project Atrium (instance 38)" or "Sietch Kadir (instance 1)" instead of `dune-server-survival-1-38`, using the same per-partition display names the console map navigation shows (read-only, in the existing single ssh). If the lookup fails the raw container name is shown as before. Docs reviewed: runbook does not quote alert text, no change needed.
+
+### Changed
 - **The USB-copy warning is opt-in (default off).** A verified copy on the desktop share counts as the off-host copy (operator decision, 2026-10-06); moving it to USB is the operator's own routine. `BK_USB_MAX_AGE_D=N` turns the warning on; `backup-usb-done.sh` stays available to record a copy.
 
 ### Changed

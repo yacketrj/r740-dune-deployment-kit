@@ -121,8 +121,39 @@ for f in runtime/game/*/Saved/Crashes/CrashReportsJournal.txt; do
   n24="$(printf "%s\n" "$dates" | awk -v t="$thr" "\$0 >= t" | grep -c .)"
   echo "CRASH $d $n ${n24} ${l// /_}"
 done'
+# Sietch names (what the console's map navigation shows), looked up per Survival_1 partition.
+names_remote=$(cat <<'EOS'
+ids="1 $(docker ps -a --filter "name=^dune-server-survival-1-" --format "{{.Names}}" 2>/dev/null | sed -n 's/^dune-server-survival-1-\([0-9][0-9]*\)$/\1/p' | tr '\n' ' ')"
+# shellcheck disable=SC2086
+dune_dir="$PWD"; python3 "$dune_dir/runtime/scripts/usersettings.py" partition-engine-values-many Survival_1 $ids 2>/dev/null | python3 -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for k, v in d.items():
+    n = re.sub(r"[^\w .-]", "", str((v or {}).get("server_display_name", ""))).strip()[:40]
+    if re.fullmatch(r"[0-9]+", str(k)) and n:
+        print("NAME", k, n)
+'
+EOS
+)
+remote="$remote"$'\n'"$names_remote"
 # shellcheck disable=SC2086  # BK_WATCH_SSH_OPTS is a list of ssh options
 out="$(printf '%s\n' "$remote" | ssh ${BK_WATCH_SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=10} "$target" bash -s 2>/dev/null)" || out=""
+
+declare -A sname=()
+while read -r tag id nm; do
+  [ "$tag" = "NAME" ] && [[ "$id" =~ ^[0-9]+$ && -n "$nm" ]] && sname["$id"]="$nm"
+done <<<"$out"
+# "survival-1-38" / "dune-server-survival-1" -> "Project Atrium (instance 38)"; anything else unchanged.
+label() {
+  if [[ "$1" =~ ^(dune-server-)?survival-1(-([0-9]+))?$ ]]; then
+    local id="${BASH_REMATCH[3]:-1}"
+    [ -n "${sname[$id]:-}" ] && { printf '%s (instance %s)' "${sname[$id]}" "$id"; return; }
+  fi
+  printf '%s' "$1"
+}
 
 msgs=()
 if ! printf '%s\n' "$out" | grep -q '^STATUS '; then
@@ -160,7 +191,7 @@ else
     key="crash.${part//./_}"
     if [ -n "${st[$key]:-}" ] && [ "$total" -gt "${st[$key]}" ]; then
       crashed="$crashed
-- $part crashed (+$((total - st[$key])) new, last at ${last//_/ } UTC); $n24 crash(es) in the last 24 h"
+- $(label "$part") crashed (+$((total - st[$key])) new, last at ${last//_/ } UTC); $n24 crash(es) in the last 24 h"
     fi
     st[$key]="$total"
   done <<<"$out"
@@ -185,7 +216,7 @@ else
     case "${mode[$mapkey]:-}" in dynamic|overmap-active) on_demand=1 ;; esac
     if [ -n "${st[$key]:-}" ] && [ "${st[$key]}" != "$started" ] && [ "$on_demand" -eq 0 ]; then
       restarted="$restarted
-- $cname started again at ${started%%.*} UTC"
+- $(label "$cname") started again at ${started%%.*} UTC"
     fi
     st[$key]="$started"
   done <<<"$out"

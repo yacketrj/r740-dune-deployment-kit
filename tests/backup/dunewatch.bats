@@ -18,7 +18,7 @@ CFG
 
 probe() { # STATUS [partition total n24 last]...
   local status="$1"; shift
-  { echo "STATUS $status"; [ -n "${CONT_STARTED:-}" ] && echo "CONT ${CONT_NAME:-dune-server-survival-1} $CONT_STARTED"; [ -n "${MODES:-}" ] && printf "%b" "$MODES"; while [ $# -ge 4 ]; do echo "CRASH $1 $2 $3 $4"; shift 4; done; } >"$T/ssh.out"
+  { echo "STATUS $status"; [ -n "${CONT_STARTED:-}" ] && echo "CONT ${CONT_NAME:-dune-server-survival-1} $CONT_STARTED"; [ -n "${MODES:-}" ] && printf "%b" "$MODES"; [ -n "${NAMES:-}" ] && printf "%b" "$NAMES"; while [ $# -ge 4 ]; do echo "CRASH $1 $2 $3 $4"; shift 4; done; } >"$T/ssh.out"
 }
 posts() { [ -f "$T/curl.args" ] && grep -c -e "-fsS" "$T/curl.args" || echo 0; }
 
@@ -126,4 +126,25 @@ posts() { [ -f "$T/curl.args" ] && grep -c -e "-fsS" "$T/curl.args" || echo 0; }
   [ "$(posts)" = "1" ]
   grep -q 'dune-server-sh-harkovillage-4 started again' "$T/curl.args"
   ! grep -q 'arrakeen\|deepdesert\|overland' "$T/curl.args"
+}
+
+@test "sietch names are shown with the instance number in restart and crash messages" {
+  N='NAME 1 Sietch Kadir\nNAME 37 Sietch Zahir\nNAME 38 Project Atrium\n'
+  NAMES=$N CONT_NAME=dune-server-survival-1-38 CONT_STARTED=2026-10-06T17:00:00.1Z probe READY survival-1-38 46 25 2026-10-03_16:35:17
+  bash "$SCRIPT"
+  NAMES=$N CONT_NAME=dune-server-survival-1-38 CONT_STARTED=2026-10-06T17:30:17.2Z probe READY survival-1-38 47 26 2026-10-06_17:30:00
+  bash "$SCRIPT"
+  grep -q 'Project Atrium (instance 38) started again at 2026-10-06T17:30:17 UTC' "$T/curl.args"
+  grep -q 'Project Atrium (instance 38) crashed' "$T/curl.args"
+  CONT_NAME=dune-server-survival-1 NAMES=$N CONT_STARTED=2026-10-06T17:00:00.1Z probe READY
+  bash "$SCRIPT"
+  CONT_NAME=dune-server-survival-1 NAMES=$N CONT_STARTED=2026-10-06T17:29:09.3Z probe READY
+  bash "$SCRIPT"
+  grep -q 'Sietch Kadir (instance 1) started again' "$T/curl.args"
+}
+
+@test "without a name lookup the raw container name is shown unchanged" {
+  CONT_NAME=dune-server-survival-1-38 CONT_STARTED=2026-10-06T17:00:00.1Z probe READY; bash "$SCRIPT"
+  CONT_NAME=dune-server-survival-1-38 CONT_STARTED=2026-10-06T17:30:17.2Z probe READY; bash "$SCRIPT"
+  grep -q 'dune-server-survival-1-38 started again' "$T/curl.args"
 }
