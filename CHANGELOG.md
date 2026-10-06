@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Changed
+- **The USB-copy warning is opt-in (default off).** A verified copy on the desktop share counts as the off-host copy (operator decision, 2026-10-06); moving it to USB is the operator's own routine. `BK_USB_MAX_AGE_D=N` turns the warning on; `backup-usb-done.sh` stays available to record a copy.
+
 ### Added
 - **Off-premises USB copy is now tracked, and alert wording is unambiguous.** New `backup-usb-done.sh [NOTE]` records (evidence log + hash-chained audit log) that you copied the share to the USB key; the hourly alarm warns when the last recorded copy is older than `BK_USB_MAX_AGE_D` days (default 14, `0` = off; never recorded starts a clock at the first check, no instant alarm). Alerts for a failed copy to the desktop now say "DESKTOP COPY FAILED" (the desktop is off this host but in the same building); "off-premises" means only the USB key. Runbook 9b updated.
 - **Desktop asleep: keep the local copy and announce the failed off-site save.** The daily/db tier no longer gives up when the SMB share is unreachable: it still pulls, verifies and encrypts, keeps a bit-exact copy in `BK_LOCAL_KEEP_DIR` (default `/var/lib/r740-backup/local-keep`, newest `BK_LOCAL_KEEP_COUNT`=7; empty disables it), posts "OFF-SITE SAVE TO THE DESKTOP FAILED ... kept on this host at ..." to Discord, records `run_degraded`, never records success, and uploads the kept copies to the share on the next run that can reach it. OneDrive is still served. The weekly images are too large to keep locally, so a missing share now fails with an explicit "OFF-SITE SAVE FAILED ... none is kept locally" alert and the previous images are untouched. **Behaviour change:** with no OneDrive remote and an unmounted share the daily run now pulls from prod and keeps the archive locally instead of failing before the pull (set `BK_LOCAL_KEEP_DIR=` for the old behaviour).

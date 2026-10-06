@@ -291,7 +291,14 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
   [ ! -e "$T/rclone.calls" ] || ! grep -q . "$T/rclone.calls"
 }
 
+@test "USB copy: off by default (the desktop copy is what the alarm watches); nothing recorded and no alarm" {
+  run_check
+  [ "$status" -eq 0 ]
+  [ ! -e "$BK_STATE_DIR/usb-clock-start" ]
+}
+
 @test "USB copy: never recorded starts a clock at the first check (no instant alarm), then alarms after BK_USB_MAX_AGE_D days" {
+  echo 'BK_USB_MAX_AGE_D=14' >>"$BK_CONFIG_DIR/backup.env"
   run_check
   [ "$status" -eq 0 ]
   [ -s "$BK_STATE_DIR/usb-clock-start" ]
@@ -303,6 +310,7 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
 
 @test "USB copy: a recorded copy keeps the alarm quiet until it is older than the limit; the limit is configurable and 0 turns it off" {
   printf '%s\tusb-copy\tPASS\tnote=x\n' "$(date -u -d "@$((NOW - 3 * 86400))" +%Y-%m-%dT%H:%M:%SZ)" >>"$BK_STATE_DIR/evidence.log"
+  echo 'BK_USB_MAX_AGE_D=14' >>"$BK_CONFIG_DIR/backup.env"
   run_check
   [ "$status" -eq 0 ]
   echo 'BK_USB_MAX_AGE_D=2' >>"$BK_CONFIG_DIR/backup.env"
@@ -316,6 +324,7 @@ alerts() { { grep -c "FAILED" "$T/curl.args" 2>/dev/null; } || true; }
 }
 
 @test "backup-usb-done.sh records the copy in the evidence and audit logs and the alarm then sees it" {
+  echo 'BK_USB_MAX_AGE_D=14' >>"$BK_CONFIG_DIR/backup.env"
   echo "$((NOW - 40 * 86400))" >"$BK_STATE_DIR/usb-clock-start"
   run bash "$REPO_ROOT/scripts/backup-usb-done.sh" "key A"
   [ "$status" -eq 0 ]
