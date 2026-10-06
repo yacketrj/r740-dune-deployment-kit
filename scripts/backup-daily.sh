@@ -104,14 +104,20 @@ case "${BK_AGE_RECIPIENT:-}" in age1*) ;; *) fail "no age recipient configured (
 # OneDrive (rclone) is optional: with BK_RCLONE_REMOTE unset the share is the only target.
 remote_on=0
 [ -z "${BK_RCLONE_REMOTE:-}" ] || remote_on=1
-# The desktop being asleep must not cost us the off-site copy: SMB trouble is a degraded
-# run (loud alert at the end), not a reason to skip OneDrive.
+# The desktop being asleep must not cost us the backup: SMB trouble is a degraded run (loud
+# alert at the end). The encrypted archive is kept on this host (BK_LOCAL_KEEP_DIR, newest
+# BK_LOCAL_KEEP_COUNT) and uploaded to the share by the next run that can reach it; OneDrive
+# is still served. Set BK_LOCAL_KEEP_DIR= (empty) to turn the local copy off.
 smb_err=""
 smb_ok=0
+keep_dir="${BK_LOCAL_KEEP_DIR-$BK_STATE_DIR/local-keep}"
+keep_count="${BK_LOCAL_KEEP_COUNT:-7}"
+[[ "$keep_count" =~ ^[0-9]+$ ]] && [ "$keep_count" -ge 1 ] || fail "BK_LOCAL_KEEP_COUNT must be a positive number"
+kept=""
 bk_require_mounted "$BK_SMB_MOUNT" || smb_err="SMB share not mounted at $BK_SMB_MOUNT"
-if [ -n "$smb_err" ] && [ "$remote_on" -eq 0 ]; then
+if [ -n "$smb_err" ] && [ "$remote_on" -eq 0 ] && [ -z "$keep_dir" ]; then
   STAGE="smb"
-  fail "$smb_err, and no other target is configured: nothing would be written"
+  fail "$smb_err, and no other target or local copy is configured: nothing would be written"
 fi
 bk_require_free_gb "$BK_STAGE_DIR" "${BK_MIN_STAGE_GB:-2}" || fail "not enough staging space in $BK_STAGE_DIR"
 mkdir -p "$BK_STAGE_DIR"
@@ -217,8 +223,39 @@ if [ -z "$smb_err" ]; then
   fi
 fi
 if [ -n "$smb_err" ]; then
-  [ "$remote_on" -eq 1 ] || fail "$smb_err (and no other target is configured, so no backup was written)"
-  bk_log "SMB copy failed (continuing to OneDrive): $smb_err"
+  if [ -n "$keep_dir" ]; then
+    STAGE="local-keep"
+    # Only a bit-exact copy counts. Files here are age-encrypted, so keeping them is safe at rest.
+    mkdir -p "$keep_dir" && chmod 700 "$keep_dir" || fail "$smb_err, and the local keep directory $keep_dir cannot be created"
+    if cp -f -- "$work/$name" "$keep_dir/$name.partial" && cmp -s -- "$work/$name" "$keep_dir/$name.partial" && mv -f -- "$keep_dir/$name.partial" "$keep_dir/$name"; then
+      kept="$keep_dir/$name"
+      bk_prune_keep_newest "$keep_dir" "$prefix" "$keep_count" || bk_log "prune of the local keep directory failed (ignored)"
+    else
+      rm -f -- "$keep_dir/$name.partial" 2>/dev/null || true
+      [ "$remote_on" -eq 1 ] || fail "$smb_err, and the local copy could not be written to $keep_dir: no backup was saved anywhere"
+      bk_log "local copy to $keep_dir failed (continuing to OneDrive)"
+    fi
+    STAGE="smb"
+  elif [ "$remote_on" -eq 0 ]; then
+    fail "$smb_err (and no other target is configured, so no backup was written)"
+  fi
+  bk_log "SMB copy failed: $smb_err"
+fi
+
+# The share is reachable again: send up what earlier runs had to keep here (name not on the share yet).
+if [ "$smb_ok" -eq 1 ] && [ -n "$keep_dir" ] && [ -d "$keep_dir" ]; then
+  for old in "$keep_dir/$prefix"-*.tar.age; do
+    [ -f "$old" ] || continue
+    [ ! -e "$BK_SMB_MOUNT/$prefix/$(basename "$old")" ] || { rm -f -- "$old"; continue; }
+    p2="$BK_SMB_MOUNT/$prefix/$(basename "$old").partial"
+    if timeout "$smb_timeout" cp -f -- "$old" "$p2" && cmp -s -- "$old" "$p2" && mv -f -- "$p2" "$BK_SMB_MOUNT/$prefix/$(basename "$old")"; then
+      rm -f -- "$old"
+      bk_log "uploaded the kept local copy $(basename "$old") to the share"
+    else
+      rm -f -- "$p2" 2>/dev/null || true
+      bk_log "could not upload the kept local copy $(basename "$old") yet; it stays here and is retried next run"
+    fi
+  done
 fi
 
 if [ "$remote_on" -eq 1 ]; then
@@ -244,9 +281,12 @@ STAGE="record"
 result_name="$name"
 if [ -n "${BK_AUDIT_SHIP_DIR:-}" ]; then mkdir -p "$BK_AUDIT_SHIP_DIR" 2>/dev/null || true; fi
 if [ -n "$smb_err" ]; then
-  bk_audit_log run_degraded "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "smb_error=$smb_err"
+  bk_audit_log run_degraded "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "smb_error=$smb_err" "local_copy=${kept:-none}" "onedrive=$remote_on"
   STAGE="smb"
-  fail "DEGRADED: the OneDrive copy of $name is verified but the desktop copy is missing: $smb_err"
+  where=""
+  [ -z "$kept" ] || where="kept on this host at $kept (uploaded to the desktop automatically on the next run that can reach it)"
+  [ "$remote_on" -eq 0 ] || where="${where:+$where; }the OneDrive copy is verified"
+  fail "OFF-SITE SAVE TO THE DESKTOP FAILED for $name: $smb_err. $where"
 fi
 bk_audit_log run_ok "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "dumps=$dumps" "authoritative=$authoritative"
 bk_state_touch "$prefix"

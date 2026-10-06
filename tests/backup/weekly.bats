@@ -214,7 +214,7 @@ EOF
   chmod +x "$BATS_TEST_TMPDIR/bin/mountpoint"
   run_weekly
   [ "$status" -eq 1 ]
-  grep -q "SMB share dropped" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "the desktop share dropped" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ]
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
 }

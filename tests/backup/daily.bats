@@ -268,9 +268,43 @@ EOF
   [ "$(ls "$REMOTE_ROOT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
   grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
-  grep -q "DEGRADED" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "OFF-SITE SAVE TO THE DESKTOP FAILED" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
   grep -q '"event":"run_degraded"' "$BK_STATE_DIR/audit.log" || grep -q 'run_degraded' "$BK_STATE_DIR/audit.log"
+}
+
+@test "desktop asleep and no OneDrive: the encrypted archive is kept locally, Discord says the off-site save failed, and the next run uploads it" {
+  sed -i '/^BK_RCLONE_REMOTE=/d' "$BK_CONFIG_DIR/backup.env"
+  stub mountpoint 'exit 1'
+  run_daily --tier daily
+  [ "$status" -eq 1 ]
+  kept="$(ls "$BK_STATE_DIR"/local-keep/daily-*.tar.age)"
+  [ "$(head -c 21 "$kept")" = "age-encryption.org/v1" ]
+  [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
+  grep -q "OFF-SITE SAVE TO THE DESKTOP FAILED" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "kept on this host" "$BATS_TEST_TMPDIR/curl.args"
+  [ ! -e "$BK_STATE_DIR/last-success-daily" ]
+  # the desktop is back: this run's archive goes up, and so does the kept one
+  rm "$BATS_TEST_TMPDIR/bin/mountpoint"; stub mountpoint 'exit 0'
+  sleep 1
+  run_daily --tier daily
+  [ "$status" -eq 0 ]
+  [ "$(ls "$BK_SMB_MOUNT"/daily/daily-*.tar.age | wc -l)" -eq 2 ]
+  [ -z "$(ls "$BK_STATE_DIR"/local-keep 2>/dev/null)" ]
+}
+
+@test "the local copy is limited to BK_LOCAL_KEEP_COUNT and can be turned off" {
+  sed -i '/^BK_RCLONE_REMOTE=/d' "$BK_CONFIG_DIR/backup.env"
+  echo 'BK_LOCAL_KEEP_COUNT=2' >>"$BK_CONFIG_DIR/backup.env"
+  stub mountpoint 'exit 1'
+  for _ in 1 2 3; do run_daily --tier daily; [ "$status" -eq 1 ]; sleep 1; done
+  [ "$(ls "$BK_STATE_DIR"/local-keep | wc -l)" -eq 2 ]
+  rm -rf "$BK_STATE_DIR/local-keep"
+  echo 'BK_LOCAL_KEEP_DIR=' >>"$BK_CONFIG_DIR/backup.env"
+  run_daily --tier daily
+  [ "$status" -eq 1 ]
+  [ ! -d "$BK_STATE_DIR/local-keep" ]
+  grep -q "nothing would be written" "$BATS_TEST_TMPDIR/curl.args"
 }
 
 @test "a share that drops mid-run still leaves nothing on the share and a verified OneDrive copy" {
@@ -508,19 +542,21 @@ no_remote() { sed -i 's#^BK_RCLONE_REMOTE=.*#BK_RCLONE_REMOTE=#' "$BK_CONFIG_DIR
   [ -f "$BATS_TEST_TMPDIR/x/prod/runtime/backups/db/auto-1.backup" ]
 }
 
-@test "no remote: an unmounted share fails before anything is pulled (no other copy would exist)" {
+@test "no remote and no local copy configured: an unmounted share fails before anything is pulled (no other copy would exist)" {
   no_remote
+  echo 'BK_LOCAL_KEEP_DIR=' >>"$BK_CONFIG_DIR/backup.env"
   stub mountpoint 'exit 1'
   run_daily --tier daily
   [ "$status" -eq 1 ]
   [ ! -e "$BATS_TEST_TMPDIR/ssh.calls" ]
   grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
-  grep -q "no other target" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "no other target or local copy" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
 }
 
-@test "no remote: a failed share copy is a plain failure, not a degraded success" {
+@test "no remote and no local copy configured: a failed share copy is a plain failure, not a degraded success" {
   no_remote
+  echo 'BK_LOCAL_KEEP_DIR=' >>"$BK_CONFIG_DIR/backup.env"
   stub cmp 'case "$*" in *smb*) exit 1 ;; *) exec /usr/bin/cmp "$@" ;; esac'
   run_daily --tier daily
   [ "$status" -eq 1 ]
