@@ -1,0 +1,651 @@
+#!/usr/bin/env bash
+# =============================================================================
+# backup-common.sh -- sourced by the backup-*.sh scripts. Do not run directly.
+# See docs/superpowers/specs/2026-09-29-backup-strategy-design.md
+# =============================================================================
+# shellcheck shell=bash
+
+BK_CONFIG_DIR="${BK_CONFIG_DIR:-/root/.config/r740-backup}"
+BK_STATE_DIR="${BK_STATE_DIR:-/var/lib/r740-backup}"
+
+bk_load_config() {
+  local cfg="${BK_CONFIG_FILE:-$BK_CONFIG_DIR/backup.env}"
+  if [ ! -f "$cfg" ]; then
+    echo "backup: config not found: $cfg" >&2
+    return 1
+  fi
+  # shellcheck disable=SC1090
+  . "$cfg"
+}
+
+# Strip anything secret-shaped from stdin (Strict Requirement 24).
+bk_redact() {
+  sed -E \
+    -e 's#(https://(ptb\.|canary\.)?discord(app)?\.com/api/webhooks/)[^[:space:]"]+#\1[REDACTED]#g' \
+    -e 's#(AGE-SECRET-KEY-)[A-Z0-9]+#\1[REDACTED]#g' \
+    -e 's#((password|token|secret|pass)[[:space:]]*[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#Ig' \
+    -e 's#"([A-Za-z_]*(password|token|secret|passwd)[A-Za-z_]*)"[[:space:]]*:[[:space:]]*"[^"]*"#"\1":"[REDACTED]"#Ig' \
+    -e 's#(://[^/:@[:space:]]+:)[^/@[:space:]]+@#\1[REDACTED]@#g' \
+    -e 's#(Authorization:[[:space:]]*Basic[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig' \
+    -e 's#(Authorization:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig' \
+    -e 's#(Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig'
+}
+
+bk_log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | bk_redact
+}
+
+# Post a message to the Discord webhook. Never fails the caller, but records the
+# outcome in BK_NOTIFY_LAST_RC (0 delivered, 1 failed, 2 skipped: no webhook) so
+# a caller that MUST know (the alarm) can react to a dead webhook.
+export BK_NOTIFY_LAST_RC=2
+bk_notify() {
+  local msg="$1" url payload
+  BK_NOTIFY_LAST_RC=2
+  if [ -z "${BK_DISCORD_WEBHOOK_FILE:-}" ] || [ ! -r "$BK_DISCORD_WEBHOOK_FILE" ]; then
+    bk_log "notify skipped (no webhook file)"
+    return 0
+  fi
+  BK_NOTIFY_LAST_RC=1
+  url="$(cat "$BK_DISCORD_WEBHOOK_FILE")" || { bk_log "notify: could not read webhook file (ignored)"; return 0; }
+  msg="$(printf '%s' "$msg" | bk_redact)"
+  [ "${#msg}" -le 1900 ] || msg="${msg:0:1890} [truncated]"
+  payload="$(jq -n --arg c "$msg" '{content:$c}')" || { bk_log "notify: could not build payload (ignored)"; return 0; }
+  if printf 'url = "%s"\n' "$url" | curl -fsS -m 10 -H 'Content-Type: application/json' -d "$payload" -K - >/dev/null 2>&1; then
+    BK_NOTIFY_LAST_RC=0
+  else
+    bk_log "notify failed (ignored)"
+  fi
+  return 0
+}
+
+# Exclusive per-name lock; the lock is held for the life of the calling shell.
+bk_lock() {
+  bk_require_test_isolation || return 1
+  mkdir -p "$BK_STATE_DIR"
+  exec 9>"$BK_STATE_DIR/$1.lock"
+  if ! flock -n 9; then
+    bk_log "another '$1' run holds the lock; exiting"
+    return 1
+  fi
+}
+
+bk_require_free_gb() {
+  local dir="$1" need="$2" avail
+  if ! [[ "$need" =~ ^[0-9]+$ ]]; then
+    bk_log "invalid free space requirement: $need (must be numeric)"
+    return 1
+  fi
+  avail="$(df -BG --output=avail "$dir" | tail -n 1 | tr -dc '0-9')"
+  if [ -z "$avail" ] || [ "$avail" -lt "$need" ]; then
+    bk_log "insufficient free space in $dir: ${avail:-?}GB free, ${need}GB required"
+    return 1
+  fi
+}
+
+# Fill BK_SSH_OPTS with the hardened client options every pull/probe uses: no user ssh
+# config, no agent or port forwarding, keepalives so a stalled peer cannot hang a run,
+# a pinned host key when BK_KNOWN_HOSTS is set.
+bk_ssh_opts_init() {
+  BK_SSH_OPTS=(-F /dev/null -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+    -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ClearAllForwardings=yes)
+  [ -z "${BK_BACKUP_SSH_KEY:-}" ] || BK_SSH_OPTS+=(-i "$BK_BACKUP_SSH_KEY")
+  [ -z "${BK_KNOWN_HOSTS:-}" ] || BK_SSH_OPTS+=(-o "UserKnownHostsFile=$BK_KNOWN_HOSTS")
+}
+
+# Thin-pool headroom: fail (message on stderr) when free space or usage is out of bounds.
+# A full thin pool freezes I/O for every guest, so anything that writes a big volume into
+# it (a snapshot backup, a scratch restore) must check first.
+bk_pool_headroom() { # min_free_gb [max_pct]
+  local min_free="${1:?min free GB}" max_pct="${2:-${BK_MAX_POOL_PCT:-80}}" pool line size pct free
+  pool="${BK_THIN_POOL:-pve/data}"
+  if ! line="$(lvs --noheadings --nosuffix --units g -o lv_size,data_percent "$pool" 2>/dev/null)" || [ -z "$line" ]; then
+    echo "cannot read thin pool usage for $pool" >&2
+    return 1
+  fi
+  read -r size pct <<<"$line"
+  free="$(awk -v s="$size" -v p="$pct" 'BEGIN { printf "%d", s * (100 - p) / 100 }')"
+  if [ "$free" -lt "$min_free" ]; then echo "thin pool $pool has only ${free}GB free (need ${min_free}GB)" >&2; return 1; fi
+  if awk -v p="$pct" -v m="$max_pct" 'BEGIN { exit !(p + 0 > m + 0) }'; then echo "thin pool $pool is ${pct}% full (limit ${max_pct}%)" >&2; return 1; fi
+  return 0
+}
+
+# --- in-game announcements (console Server Broadcast) ------------------------------------------
+# POST /api/admin/broadcast on the game console: {title, body, durationSec}, published to all players.
+# Needs a bearer API key scoped to the single action admin:broadcast, kept in a root-only file
+# (BK_ANNOUNCE_KEY_FILE) and sent on curl's stdin, never in argv. Best-effort: an announcement that
+# cannot be sent is logged and NEVER fails the caller. Limits: title <= 80 chars, body <= 500.
+# Every text can be replaced with BK_ANNOUNCE_TEXT_<KEY>_TITLE / _BODY (KEY in upper case).
+
+# Set BK_ANN_TITLE and BK_ANN_BODY for KEY (lead|start|ongoing|done|halted|postponed) and N
+# (minutes: until the start for "lead", elapsed so far for "ongoing").
+bk_announce_text() { # key [n]
+  local key="${1:?key}" n="${2:-0}" up unit
+  up="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+  unit="minutes"; [ "$n" = "1" ] && unit="minute"
+  case "$key" in
+    lead)
+      BK_ANN_TITLE="The Mentats Prepare the Great Record"
+      BK_ANN_BODY="In $n $unit the Mentats will commit the memory of Arrakis to the archives. The sands may stir: brief pauses or delays may be felt. The recording itself needs no restart, and nothing will be lost."
+      ;;
+    start)
+      BK_ANN_TITLE="The Recording of Arrakis Begins"
+      BK_ANN_BODY="The Mentats are now recording the memory of Arrakis. The sands may pause or stutter for a time. This is expected and nothing is lost. Patience, as the Fremen teach."
+      ;;
+    ongoing)
+      BK_ANN_TITLE="The Record Continues"
+      BK_ANN_BODY="The Mentats are still recording the memory of Arrakis, about $n minutes so far. Pauses or delays may be felt; they will pass like a sandstorm."
+      ;;
+    done)
+      BK_ANN_TITLE="The Record Is Sealed"
+      BK_ANN_BODY="The Mentats have sealed the record of Arrakis. The sands run true once more. Thank you for your patience."
+      ;;
+    halted)
+      BK_ANN_TITLE="The Recording Was Halted"
+      BK_ANN_BODY="The Mentats halted the recording early to keep the sands steady. Nothing is lost and nothing is needed from you."
+      ;;
+    postponed)
+      BK_ANN_TITLE="The Recording Is Postponed"
+      BK_ANN_BODY="The Mentats have postponed the recording of Arrakis. Nothing is needed from you."
+      ;;
+    test)
+      BK_ANN_TITLE="Test of the Speaking-Stone"
+      BK_ANN_BODY="This is a test of the server's announcement system. Please ignore it."
+      ;;
+    *) return 1 ;;
+  esac
+  local tv="BK_ANNOUNCE_TEXT_${up}_TITLE" bv="BK_ANNOUNCE_TEXT_${up}_BODY"
+  [ -z "${!tv:-}" ] || BK_ANN_TITLE="${!tv}"
+  [ -z "${!bv:-}" ] || BK_ANN_BODY="${!bv}"
+  BK_ANN_TITLE="${BK_ANN_TITLE:0:80}"
+  BK_ANN_BODY="${BK_ANN_BODY:0:500}"
+  return 0
+}
+
+# Is the announcement channel configured (URL and a readable key file)?
+bk_announce_configured() {
+  [ -n "${BK_ANNOUNCE_URL:-}" ] && [ -n "${BK_ANNOUNCE_KEY_FILE:-}" ] && [ -r "$BK_ANNOUNCE_KEY_FILE" ]
+}
+
+# Send the announcement for KEY. Sets BK_ANNOUNCE_LAST_RC: 0 sent, 1 failed, 2 not configured.
+# Never returns non-zero.
+export BK_ANNOUNCE_LAST_RC=2
+bk_announce() { # key [n]
+  local key="${1:?key}" n="${2:-0}" k payload
+  BK_ANNOUNCE_LAST_RC=2
+  bk_announce_text "$key" "$n" || { bk_log "announce: unknown message '$key' (ignored)"; return 0; }
+  if ! bk_announce_configured; then
+    bk_log "announce skipped: $key (not configured)"
+    return 0
+  fi
+  k="$(tr -d '[:space:]' <"$BK_ANNOUNCE_KEY_FILE")"
+  payload="$(jq -nc --arg t "$BK_ANN_TITLE" --arg b "$BK_ANN_BODY" --argjson d "${BK_ANNOUNCE_DURATION_S:-40}" '{title:$t, body:$b, durationSec:$d}')" || return 0
+  BK_ANNOUNCE_LAST_RC=1
+  if printf 'url = "%s/api/admin/broadcast"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${BK_ANNOUNCE_URL%/}" "$k" \
+    | curl -fsS -m 15 -X POST -d "$payload" -K - >/dev/null 2>&1; then
+    BK_ANNOUNCE_LAST_RC=0
+    bk_log "announced in game: $key ($BK_ANN_TITLE)"
+  else
+    bk_log "announce FAILED: $key (ignored; the backup is not affected)"
+  fi
+  return 0
+}
+
+# --- abort handling: nothing a job started may outlive it ---------------------------------
+# Kill PID and everything below it (children first), whatever process group they are in.
+bk_kill_tree() { # signal pid
+  local sig="$1" pid="$2" c
+  for c in $(pgrep -P "$pid" 2>/dev/null || true); do bk_kill_tree "$sig" "$c"; done
+  kill "-$sig" "$pid" 2>/dev/null || true
+}
+# Kill every child of the running script (the whole tree below the main shell).
+# NOTE: $BASHPID inside $( ) is the PID of the substitution's own subshell, so the script's PID
+# must be captured first, in the current shell (that mistake made this function kill nothing).
+bk_kill_children() { # signal
+  local sig="$1" me="$BASHPID" c
+  for c in $(pgrep -P "$me" 2>/dev/null || true); do bk_kill_tree "$sig" "$c"; done
+}
+# Run a command as a background job and wait for it. Bash runs a trap only AFTER the current
+# foreground command finishes, so a signal sent to a script blocked in a hung ssh/cp/rclone would be
+# deferred until that command ends. The `wait` builtin returns at once when a trapped signal
+# arrives, so a long command run through here can be aborted immediately (bk_abort then kills its
+# tree). stdin is kept (an async command would otherwise get /dev/null).
+bk_run_bg() { # command args...
+  local pid
+  "$@" <&0 &
+  pid=$!
+  wait "$pid"
+}
+
+# Every descendant of PID, parents before children (one per line).
+bk_tree_pids() { # pid
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null || true); do
+    echo "$c"
+    bk_tree_pids "$c"
+  done
+}
+# Abort handler: log, optional hook, then stop the whole tree of processes the script started.
+# The tree is snapshotted first so the grace wait only watches THOSE processes (not its own
+# `sleep`). Order: CONT (Ctrl-Z stops children; a stopped process cannot act on TERM), TERM, wait
+# up to BK_KILL_GRACE_S, KILL what is left, then `exit` so the script's own EXIT trap removes
+# partial files and scratch resources. Set BK_ABORT_HOOK to a function name to be called with the
+# signal name first.
+bk_abort() { # signal-name number
+  local sig="$1" n="$2" me="$BASHPID" kids k alive
+  trap '' INT TERM HUP QUIT TSTP
+  kids="$(bk_tree_pids "$me")"
+  [ "${BK_ABORT_QUIET:-0}" = "1" ] || bk_log "aborted by SIG$sig: stopping everything this job started"
+  if [ -n "${BK_ABORT_HOOK:-}" ]; then "$BK_ABORT_HOOK" "$sig" || true; fi
+  for k in $kids; do kill -CONT "$k" 2>/dev/null || true; done
+  for k in $kids; do kill -TERM "$k" 2>/dev/null || true; done
+  for _ in $(seq 1 "${BK_KILL_GRACE_S:-20}"); do
+    alive=0
+    for k in $kids; do if kill -0 "$k" 2>/dev/null; then alive=1; break; fi; done
+    [ "$alive" -eq 1 ] || break
+    sleep 1
+  done
+  for k in $kids; do kill -KILL "$k" 2>/dev/null || true; done
+  exit $((128 + n))
+}
+# Ctrl-C, kill, hangup, quit and Ctrl-Z (a SUSPENDED backup would hold its snapshot forever)
+# all abort the job. Call once near the top of a script that starts long-running children.
+bk_install_abort_traps() {
+  trap 'bk_abort INT 2' INT
+  trap 'bk_abort TERM 15' TERM
+  trap 'bk_abort HUP 1' HUP
+  trap 'bk_abort QUIT 3' QUIT
+  trap 'bk_abort TSTP 20' TSTP
+}
+
+# Refuse to write into an unmounted mountpoint (it would fill the local disk).
+bk_require_mounted() {
+  if ! timeout 20 mountpoint -q "$1"; then
+    bk_log "not a mounted filesystem: $1"
+    return 1
+  fi
+}
+
+# Encrypt IN to OUT with age. Fails closed and leaves no OUT on any error.
+bk_age_encrypt() {
+  local in="$1" out="$2"
+  case "${BK_AGE_RECIPIENT:-}" in
+    age1*) ;;
+    *)
+      bk_log "BK_AGE_RECIPIENT is unset or not an age recipient; refusing to write"
+      return 1
+      ;;
+  esac
+  if age -r "$BK_AGE_RECIPIENT" -o "$out.partial" "$in"; then
+    mv -f -- "$out.partial" "$out"
+  else
+    rm -f -- "$out.partial"
+    bk_log "age encryption failed for $(basename "$in")"
+    return 1
+  fi
+}
+
+# A backup name is trusted for retention only when its embedded YYYYMMDD-HHMMSS
+# stamp is a real date that is not in the future: the share is writable by other
+# machines, so a planted "...-99991231-235959..." name must never outrank real files.
+bk_stamp_plausible() {
+  local stamp="${1:?stamp}" epoch
+  [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ ]] || return 1
+  epoch="$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s 2>/dev/null)" || return 1
+  [ "$epoch" -le $(( $(date -u +%s) + 3600 )) ]
+}
+
+# Keep the newest KEEP_DAILY files plus the newest file of each of the newest
+# KEEP_MONTHLY calendar months. Only touches PREFIX-YYYYMMDD-HHMMSS*.tar.age.
+bk_prune_daily_monthly() {
+  local dir="$1" prefix="$2" keep_daily="$3" keep_monthly="$4"
+  local -a files=()
+  local base ym months=" " mcount=0 n=0 keep_it f failed=0
+  if ! [[ "$keep_daily" =~ ^[0-9]+$ ]] || [ "$keep_daily" -lt 1 ]; then
+    bk_log "invalid keep_daily: $keep_daily (must be numeric and >= 1)"
+    return 1
+  fi
+  if ! [[ "$keep_monthly" =~ ^[0-9]+$ ]] || [ "$keep_monthly" -lt 1 ]; then
+    bk_log "invalid keep_monthly: $keep_monthly (must be numeric and >= 1)"
+    return 1
+  fi
+  while IFS= read -r f; do
+    files+=("$f")
+  done < <(find "$dir" -maxdepth 1 -type f -name "${prefix}-[0-9]*.tar.age" -printf '%f\n' | sort -r)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  for base in "${files[@]}"; do
+    ym="$(printf '%s' "$base" | sed -nE "s/^${prefix}-([0-9]{6})[0-9]{2}-[0-9]{6}\.tar\.age$/\1/p")"
+    [ -n "$ym" ] || continue
+    bk_stamp_plausible "$(printf '%s' "$base" | sed -nE "s/^${prefix}-([0-9]{8}-[0-9]{6})\.tar\.age$/\1/p")" || continue
+    n=$((n + 1))
+    keep_it=0
+    [ "$n" -le "$keep_daily" ] && keep_it=1
+    if [[ "$months" != *" $ym "* ]]; then
+      months="$months$ym "
+      mcount=$((mcount + 1))
+      [ "$mcount" -le "$keep_monthly" ] && keep_it=1
+    fi
+    if [ "$keep_it" -ne 1 ]; then rm -f -- "$dir/$base" || failed=1; fi
+  done
+  return "$failed"
+}
+
+# Keep the newest KEEP files whose name starts with PREFIX- (any extension).
+bk_prune_keep_newest() {
+  local dir="$1" prefix="$2" keep="$3" f n=0
+  if ! [[ "$keep" =~ ^[0-9]+$ ]] || [ "$keep" -lt 1 ]; then
+    bk_log "invalid keep count: $keep (must be numeric and >= 1)"
+    return 1
+  fi
+  local stamp failed=0
+  while IFS= read -r f; do
+    stamp="$(printf '%s' "$f" | sed -nE "s/^${prefix}-([0-9]{8}-[0-9]{6})\.[A-Za-z0-9.]+\.age$/\1/p")"
+    [ -n "$stamp" ] && bk_stamp_plausible "$stamp" || continue
+    n=$((n + 1))
+    if [ "$n" -gt "$keep" ]; then rm -f -- "$dir/$f" || failed=1; fi
+  done < <(find "$dir" -maxdepth 1 -type f -name "${prefix}-[0-9]*.age" -printf '%f\n' | sort -r)
+  return "$failed"
+}
+
+# Apply the daily/monthly rule to an rclone remote by mirroring names locally.
+bk_prune_remote() {
+  local remote="$1" prefix="$2" keep_daily="$3" keep_monthly="$4"
+  local tmp name
+  local -a before=()
+  tmp="$(mktemp -d)"
+  while IFS= read -r name; do
+    : >"$tmp/$name"
+    before+=("$name")
+  done < <(rclone lsf --files-only "$remote")
+  bk_prune_daily_monthly "$tmp" "$prefix" "$keep_daily" "$keep_monthly"
+  local failed=0
+  for name in "${before[@]}"; do
+    if [ ! -e "$tmp/$name" ]; then
+      rclone deletefile "$remote/$name" || { bk_log "could not delete $remote/$name"; failed=1; }
+    fi
+  done
+  rm -rf "$tmp"
+  return "$failed"
+}
+
+bk_state_touch() {
+  bk_require_test_isolation || return 1
+  mkdir -p "$BK_STATE_DIR"
+  date +%s >"$BK_STATE_DIR/last-success-$1"
+}
+
+# Seconds since the last success for a tier; a very large number if never.
+bk_state_age_seconds() {
+  local f="$BK_STATE_DIR/last-success-$1" ts
+  if [ ! -s "$f" ]; then
+    echo 999999999
+    return 0
+  fi
+  ts="$(cat "$f")"
+  echo $(($(date +%s) - ts))
+}
+
+# =============================================================================
+# v2 additions (design v2, audit themes T4/T10/T11/T12)
+# =============================================================================
+
+# Backups hold secrets: files created by the jobs must not be world-readable.
+bk_secure_umask() {
+  umask 077
+}
+
+# Under bats, refuse to touch any state directory outside the test's own temp
+# dir (a test that forgets to override BK_STATE_DIR must not be able to alter
+# production state, e.g. silence the staleness alarm). No effect outside bats.
+bk_require_test_isolation() {
+  [ -n "${BATS_TEST_TMPDIR:-}" ] || return 0
+  case "$BK_STATE_DIR" in
+    "$BATS_TEST_TMPDIR"/*) return 0 ;;
+  esac
+  bk_log "refusing to run under bats: BK_STATE_DIR='$BK_STATE_DIR' is not under BATS_TEST_TMPDIR"
+  return 1
+}
+
+# Proxmox VM/CT ids are 100 and up; anything else must never reach a command.
+bk_valid_vmid() {
+  [[ "${1:-}" =~ ^[1-9][0-9]{2,8}$ ]]
+}
+
+# rm -rf PATH only if it resolves strictly inside ROOT. Refuses empty arguments,
+# "/", ROOT itself, "..", and symlink escapes (realpath -m resolves them).
+bk_safe_rm_under() {
+  local root="${1:-}" path="${2:-}" real_root real_path
+  if [ -z "$root" ] || [ -z "$path" ]; then
+    bk_log "bk_safe_rm_under: refusing an empty argument"
+    return 1
+  fi
+  real_root="$(realpath -m -- "$root")"
+  real_path="$(realpath -m -- "$path")"
+  if [ "$real_root" = "/" ] || [ "$real_path" = "/" ] || [ "$real_path" = "$real_root" ]; then
+    bk_log "bk_safe_rm_under: refusing to remove the root itself or /"
+    return 1
+  fi
+  case "$real_path" in
+    "$real_root"/*) ;;
+    *)
+      bk_log "bk_safe_rm_under: '$path' resolves outside '$root'"
+      return 1
+      ;;
+  esac
+  rm -rf -- "$real_path"
+}
+
+# Refuse a tar that holds anything but plain files and directories. A symlink,
+# hardlink, device or fifo member lets a later member be written through it, so a
+# hostile archive could write outside the extraction directory as root. Names are
+# checked separately by the callers. Returns 0 only for an all-regular archive.
+bk_tar_members_safe() {
+  local tarfile="${1:?tar file}" listing types
+  listing="$(tar -tvf "$tarfile" 2>/dev/null)" || return 1
+  [ -n "$listing" ] || return 1
+  types="$(printf '%s\n' "$listing" | cut -c1 | sort -u | tr -d '\n')"
+  case "$types" in
+    ''|*[!d-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# Like bk_tar_members_safe, but only for the named prefixes (e.g. "./prod"): every member
+# named exactly a prefix or under "<prefix>/" must be a regular file or a directory. Other
+# members (the host's /etc/pve is made of symlinks) are allowed here because the caller
+# never extracts them. Fails on an unreadable or empty archive.
+bk_tar_prefix_safe() { # tarfile prefix...
+  local tarfile="${1:?tar file}"
+  shift
+  tar -tvf "$tarfile" 2>/dev/null | awk -v prefixes="$*" '
+    BEGIN { n = split(prefixes, P, " ") }
+    { seen = 1; t = substr($0, 1, 1); name = $6
+      for (i = 7; i <= NF; i++) name = name " " $i
+      sub(/ -> .*/, "", name); sub(/ link to .*/, "", name)
+      for (j = 1; j <= n; j++) if (name == P[j] || index(name, P[j] "/") == 1) { if (t != "-" && t != "d") bad = 1 } }
+    END { exit (seen && !bad) ? 0 : 1 }'
+}
+
+# Append "sha256  size  name" for FILE to MANIFEST.
+bk_manifest_add() {
+  local manifest="${1:?manifest}" f="${2:?file}" sum size
+  if [ ! -f "$f" ]; then
+    bk_log "manifest: no such file: $f"
+    return 1
+  fi
+  sum="$(sha256sum -- "$f" | cut -d' ' -f1)" || return 1
+  size="$(stat -c %s -- "$f")" || return 1
+  printf '%s  %s  %s\n' "$sum" "$size" "$(basename -- "$f")" >>"$manifest"
+}
+
+# Bit-exact comparison of a source file and its transferred copy.
+# --- honest read-back from a network share ---------------------------------------------------
+# With the share mounted cache=strict (the fast default, ~110 MB/s) a file just written is still in
+# the host's page cache, so reading it back would check the CACHE, not the copy on the desktop
+# (measured 2026-09-30: 7.5 GB/s from cache vs 117 MB/s from the wire). Before any read-back the
+# file is flushed to the server and evicted from the cache, and the eviction is VERIFIED; if pages
+# remain, the read uses O_DIRECT (slower, still honest).
+
+# Is FILE on a network filesystem? (BK_FORCE_NETFS=1 is a test hook.)
+bk_netfs() {
+  [ "${BK_FORCE_NETFS:-0}" = "1" ] && return 0
+  case "$(stat -f -c %T -- "$1" 2>/dev/null)" in cifs | smb | smb2 | smb3) return 0 ;; esac
+  return 1
+}
+
+# Flush FILE's dirty pages to the server, drop its cached pages, verify none remain (<= 1 MiB).
+# Returns 0 when the next read will come over the wire (or FILE is not on a network share).
+bk_flush_evict() { # file
+  local f="${1:?file}" res
+  bk_netfs "$f" || return 0
+  sync -d -- "$f" 2>/dev/null || true
+  dd if="$f" iflag=nocache count=0 status=none 2>/dev/null || true
+  res="$(fincore -n -b -o RES -- "$f" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')"
+  [ "${res:-0}" -le 1048576 ]
+}
+
+# Set BK_HONEST_READ to the extra dd flags a read-back of FILE needs (empty, or iflag=direct).
+BK_HONEST_READ=()
+bk_prepare_honest_read() { # file
+  BK_HONEST_READ=()
+  bk_netfs "$1" || return 0
+  if ! bk_flush_evict "$1"; then
+    BK_HONEST_READ=(iflag=direct)
+    bk_log "cache of $(basename -- "$1") could not be dropped; reading it with O_DIRECT (slower, still honest)" >&2
+  fi
+}
+
+bk_verify_copy() {
+  local src="${1:?src}" dst="${2:?dst}" same=0
+  if bk_netfs "$dst"; then
+    bk_prepare_honest_read "$dst"
+    if dd if="$dst" bs=4M "${BK_HONEST_READ[@]}" status=none | cmp -s -- - "$src"; then same=1; fi
+  elif cmp -s -- "$src" "$dst"; then
+    same=1
+  fi
+  if [ "$same" -eq 1 ]; then
+    return 0
+  fi
+  bk_log "copy verification FAILED: $(basename -- "$1") differs from its destination"
+  return 1
+}
+
+# Ping the external dead-man's-switch (URL in a root-only file, sent on curl's
+# stdin so it never appears in argv). Arg "fail" pings the failure endpoint.
+# Returns 0 ok, 3 not configured, 4 ping failed. Never aborts the caller.
+bk_dead_man_ping() {
+  local f="${BK_DEADMAN_URL_FILE:-}" url
+  if [ -z "$f" ] || [ ! -r "$f" ]; then
+    bk_log "dead-man ping skipped (no URL file configured)"
+    return 3
+  fi
+  url="$(tr -d '\r\n' <"$f")" || return 4
+  [ "${1:-}" = "fail" ] && url="${url%/}/fail"
+  if printf 'url = "%s"\n' "$url" | curl -fsS -m 10 -K - >/dev/null 2>&1; then
+    return 0
+  fi
+  bk_log "dead-man ping failed"
+  return 4
+}
+
+# Actionable failure alert: job, failed stage, redacted error, re-run command,
+# runbook. bk_notify redacts and never fails the caller.
+bk_alert() {
+  local stage="${1:-unknown}" err="${2:-}" rerun="${3:-}" job="${BK_JOB:-backup}"
+  bk_notify "${BK_ALERT_MENTION:-} r740 ${job} FAILED at stage '${stage}': ${err:-no detail} | re-run: ${rerun:-see runbook} | runbook: ${BK_RUNBOOK_URL:-docs/08-backup-runbook.md}"
+}
+
+# Append one JSON line (time, event, host, plus key=value pairs) to the audit
+# log, and mirror it to $BK_AUDIT_SHIP_DIR when that is a directory. Values are
+# redacted. Never fails the caller.
+bk_audit_log() {
+  local ev="${1:?event}" kv k v filter='{time:$time,event:$event,host:$host,prev:$prev'
+  shift
+  bk_require_test_isolation || return 0
+  mkdir -p "$BK_STATE_DIR" 2>/dev/null || return 0
+  local -a args=(--arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg event "$ev" --arg host "$(hostname)")
+  for kv in "$@"; do
+    k="${kv%%=*}"
+    v="${kv#*=}"
+    [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    case "$k" in time | event | host | prev) continue ;; esac
+    v="$(printf '%s' "$v" | bk_redact)"
+    args+=(--arg "$k" "$v")
+    filter="$filter,$k:\$$k"
+  done
+  filter="$filter}"
+  # Hash chain: every record carries the sha256 of the previous line, so an edit, a
+  # deletion or a reordering anywhere breaks every later link (bk_audit_verify). Reading
+  # the last line and appending happen under one lock, or two overlapping jobs would
+  # both link to the same predecessor and fork the chain.
+  (
+    flock -x -w 30 9 || exit 0
+    prev="genesis"
+    if [ -s "$BK_STATE_DIR/audit.log" ]; then
+      prev="$(tail -n 1 "$BK_STATE_DIR/audit.log" | sha256sum | cut -d' ' -f1)"
+    fi
+    line="$(jq -nc "${args[@]}" --arg prev "$prev" "$filter")" || exit 0
+    printf '%s\n' "$line" >>"$BK_STATE_DIR/audit.log" 2>/dev/null || exit 0
+    if [ -n "${BK_AUDIT_SHIP_DIR:-}" ] && [ -d "$BK_AUDIT_SHIP_DIR" ]; then
+      printf '%s\n' "$line" >>"$BK_AUDIT_SHIP_DIR/audit.log" 2>/dev/null || bk_log "audit ship failed (ignored)"
+    fi
+  ) 9>"$BK_STATE_DIR/audit.lock" || true
+  return 0
+}
+
+# Append one tab-separated evidence record: time, kind, PASS|FAIL, detail.
+# The alarm reads this log to know whether escrow checks and restore drills are due.
+bk_evidence() { # kind result detail
+  bk_require_test_isolation || return 0
+  mkdir -p "$BK_STATE_DIR" || return 0
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >>"$BK_STATE_DIR/evidence.log"
+  # Also into the chained (and optionally shipped) audit log, where an edit is detectable.
+  bk_audit_log evidence "kind=$1" "result=$2" "detail=$3"
+}
+
+# Verify the audit log's hash chain. Prints the first broken line number on failure.
+bk_audit_verify() { # [file]
+  local f="${1:-$BK_STATE_DIR/audit.log}" n=0 prev="genesis" line want
+  [ -s "$f" ] || return 0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    want="$(printf '%s' "$line" | jq -r '.prev // empty' 2>/dev/null)" || want=""
+    if [ "$want" != "$prev" ]; then
+      echo "$n"
+      return 1
+    fi
+    prev="$(printf '%s\n' "$line" | sha256sum | cut -d' ' -f1)"
+  done <"$f"
+  return 0
+}
+
+# Create a private (0700) RAM-backed working directory and print its path.
+# Decrypted backup material must never touch persistent disk.
+bk_make_ram_dir() {
+  local base="${BK_RAM_DIR:-/dev/shm}" d
+  if [ ! -d "$base" ]; then
+    bk_log "RAM-backed directory not available: $base"
+    return 1
+  fi
+  d="$(mktemp -d "$base/bk-work.XXXXXX")" || return 1
+  chmod 700 "$d"
+  printf '%s\n' "$d"
+}
+
+# Shred every file in DIR (a bk_make_ram_dir directory) and remove it. Refuses
+# anything that is not a bk-work.* directory directly under the RAM base.
+bk_wipe_dir() {
+  local d="${1:-}" base="${BK_RAM_DIR:-/dev/shm}"
+  [ -n "$d" ] || return 0
+  case "$d" in
+    "$base"/bk-work.*) ;;
+    *)
+      bk_log "bk_wipe_dir: refusing '$d' (not a bk-work directory under $base)"
+      return 1
+      ;;
+  esac
+  [ -d "$d" ] || return 0
+  find "$d" -type f -exec shred -u -n 1 {} + 2>/dev/null || true
+  rm -rf -- "$d"
+}
+
