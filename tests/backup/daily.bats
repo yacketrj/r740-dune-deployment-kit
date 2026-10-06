@@ -268,7 +268,7 @@ EOF
   [ "$(ls "$REMOTE_ROOT"/daily/daily-*.tar.age | wc -l)" -eq 1 ]
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
   grep -q "stage 'smb'" "$BATS_TEST_TMPDIR/curl.args"
-  grep -q "OFF-SITE SAVE TO THE DESKTOP FAILED" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "DESKTOP COPY FAILED" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
   grep -q '"event":"run_degraded"' "$BK_STATE_DIR/audit.log" || grep -q 'run_degraded' "$BK_STATE_DIR/audit.log"
 }
@@ -281,7 +281,7 @@ EOF
   kept="$(ls "$BK_STATE_DIR"/local-keep/daily-*.tar.age)"
   [ "$(head -c 21 "$kept")" = "age-encryption.org/v1" ]
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
-  grep -q "OFF-SITE SAVE TO THE DESKTOP FAILED" "$BATS_TEST_TMPDIR/curl.args"
+  grep -q "DESKTOP COPY FAILED" "$BATS_TEST_TMPDIR/curl.args"
   grep -q "kept on this host" "$BATS_TEST_TMPDIR/curl.args"
   [ ! -e "$BK_STATE_DIR/last-success-daily" ]
   # the desktop is back: this run's archive goes up, and so does the kept one

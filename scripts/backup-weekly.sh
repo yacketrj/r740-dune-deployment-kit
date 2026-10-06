@@ -187,7 +187,7 @@ else
   fi
 fi
 
-bk_require_mounted "$BK_SMB_MOUNT" || fail "OFF-SITE SAVE FAILED: the desktop share is not mounted at $BK_SMB_MOUNT (is the desktop asleep?). No weekly image was taken and none is kept locally (they are too large); the previous weekly images on the share are untouched. Re-run once the desktop is back."
+bk_require_mounted "$BK_SMB_MOUNT" || fail "DESKTOP COPY FAILED: the desktop share is not mounted at $BK_SMB_MOUNT (is the desktop asleep?). No weekly image was taken and none is kept locally (they are too large); the previous weekly images on the share are untouched. Re-run once the desktop is back."
 
 # --- thin-pool headroom (snapshot copy-on-write grows the pool while the game writes) ---
 pool="${BK_THIN_POOL:-pve/data}"
@@ -293,7 +293,7 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   [ "$progress" -eq 0 ] || plog "guest $id: progress lines every ${progress_s}s (the first appears after that long)"
   [ "$verbose" -eq 0 ] || plog "guest $id: keeping $keep images; window ends in $(hms "$remaining"); a snapshot backup runs while the guest stays up"
   rm -f -- "$partial" "$tmpdir/sha.pre"
-  bk_require_mounted "$BK_SMB_MOUNT" || { failures+=("$id: OFF-SITE SAVE FAILED, the desktop share dropped before the image started (is the desktop asleep?); no local copy is kept for weekly images"); partial=""; return 1; }
+  bk_require_mounted "$BK_SMB_MOUNT" || { failures+=("$id: DESKTOP COPY FAILED, the desktop share dropped before the image started (is the desktop asleep?); no local copy is kept for weekly images"); partial=""; return 1; }
 
   # A snapshot backup makes guest writes wait on the sink, so a hung share must never be
   # allowed to hold the live guest: the pipeline runs as its own process group and a

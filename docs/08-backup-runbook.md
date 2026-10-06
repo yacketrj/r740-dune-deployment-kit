@@ -245,7 +245,9 @@ The jobs write only to the desktop share. The off-site copy is one you make by h
 3. **Do not** put the private age key on the same USB key as the backups.
 4. Once a quarter, prove a copy is usable: on any machine with `age` and the private key from your password manager, decrypt the newest `daily` file from the key and run `sha256sum -c MANIFEST.sha256` (section 6a).
 
-The alarm cannot see the USB key, so nothing reminds you: put a recurring reminder in your calendar.
+The alarm cannot see the key itself, so after each copy (and after you checked the newest `daily-*.tar.age` on it) tell it: `bash /root/projects/repos-worktrees/backup-live/scripts/backup-usb-done.sh "key B, daily + newest vm"`. That records a `usb-copy` PASS in the evidence and audit logs. The hourly alarm then warns in Discord when the last recorded copy is older than `BK_USB_MAX_AGE_D` days (default 14; `0` turns it off). If no copy has ever been recorded, the clock starts at the first check, so enabling this does not alarm at once. Keep the calendar reminder too: the alarm only knows what you tell it.
+
+Wording in alerts: "DESKTOP COPY FAILED" means the copy to the desktop share (off this host, same building) failed; the daily job keeps the encrypted archive on this host (`BK_LOCAL_KEEP_DIR`) and uploads it on the next run that can reach the share. "Off-premises" always means the USB key.
 
 ## 10. Data protection
 

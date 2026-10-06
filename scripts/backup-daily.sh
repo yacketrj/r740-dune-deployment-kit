@@ -286,7 +286,7 @@ if [ -n "$smb_err" ]; then
   where=""
   [ -z "$kept" ] || where="kept on this host at $kept (uploaded to the desktop automatically on the next run that can reach it)"
   [ "$remote_on" -eq 0 ] || where="${where:+$where; }the OneDrive copy is verified"
-  fail "OFF-SITE SAVE TO THE DESKTOP FAILED for $name: $smb_err. $where"
+  fail "DESKTOP COPY FAILED for $name: $smb_err. $where"
 fi
 bk_audit_log run_ok "tier=$tier" "file=$name" "sha256=$sha" "size=$size" "dumps=$dumps" "authoritative=$authoritative"
 bk_state_touch "$prefix"
