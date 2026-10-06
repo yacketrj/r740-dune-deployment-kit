@@ -443,7 +443,11 @@ EOF
   make_set
   f="$BK_SMB_MOUNT/daily/daily-20260930-051500.tar.age"
   size="$(stat -c %s "$f")"
-  printf '\xff' | dd of="$f" bs=1 seek=$((size - 20)) conv=notrunc 2>/dev/null
+  # Change the byte to a DIFFERENT value. Writing a fixed 0xff left the file intact about 1 time in 256
+  # (the ciphertext is random), the archive then decrypted and the test failed on main (run 37509433631).
+  old="$(od -An -tu1 -j $((size - 20)) -N1 "$f" | tr -d ' ')"
+  printf "$(printf '\\x%02x' $(( (old + 1) % 256 )))" | dd of="$f" bs=1 seek=$((size - 20)) conv=notrunc 2>/dev/null
+  [ "$(od -An -tu1 -j $((size - 20)) -N1 "$f" | tr -d ' ')" != "$old" ]
   drill db --identity "$BK_AGE_IDENTITY"
   [ "$status" -eq 1 ]
   [ ! -e "$T/docker.calls" ]
