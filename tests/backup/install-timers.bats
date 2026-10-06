@@ -24,11 +24,11 @@ setup() {
   grep -q "^ExecStart=$REPO_ROOT/scripts/backup-drill.sh pipeline$" "$UNIT_DIR/r740-backup-pipeline.service"
 }
 
-@test "schedule matches the design: db tier every 6h after the game dump, daily 05:15, weekly Sunday 01:00, alarm hourly" {
+@test "schedule matches the design: db tier every 6h after the game dump, daily 05:15, weekly Tuesday 05:00, alarm hourly" {
   bash "$INSTALL" --no-enable
   grep -q '^OnCalendar=\*-\*-\* 04,10,16,22:45:00$' "$UNIT_DIR/r740-backup-dbtier.timer"
   grep -q '^OnCalendar=\*-\*-\* 05:15:00$' "$UNIT_DIR/r740-backup-daily.timer"
-  grep -q '^OnCalendar=Sun \*-\*-\* 01:00:00$' "$UNIT_DIR/r740-backup-weekly.timer"
+  grep -q '^OnCalendar=Tue \*-\*-\* 05:00:00$' "$UNIT_DIR/r740-backup-weekly.timer"
   grep -q '^OnCalendar=hourly$' "$UNIT_DIR/r740-backup-check.timer"
   grep -q '^OnCalendar=Sat \*-\*-08..14 03:00:00$' "$UNIT_DIR/r740-backup-pipeline.timer"
 }

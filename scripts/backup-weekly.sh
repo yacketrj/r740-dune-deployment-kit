@@ -9,7 +9,7 @@
 # thin-pool headroom check. One guest failing never stops the others, but the
 # run only counts as a success (state, dead-man ping) if every guest succeeded.
 #
-# RUN THIS: on the Proxmox host as root, Sunday 01:00 from r740-backup-weekly.timer.
+# RUN THIS: on the Proxmox host as root, Tuesday 05:00 from r740-backup-weekly.timer.
 # Set BK_WEEKLY_FORCE=1 for a manual, watched run outside the window (the
 # hard-stop timeout then comes from BK_WEEKLY_FORCE_MINUTES, default 180; tests
 # use BK_WEEKLY_FORCE_SECONDS and BK_MIN_REMAINING_S).
@@ -180,10 +180,10 @@ if [ "${BK_WEEKLY_FORCE:-0}" = "1" ]; then
   hard_stop=$((now + ${BK_WEEKLY_FORCE_SECONDS:-$((${BK_WEEKLY_FORCE_MINUTES:-180} * 60))}))
 else
   today="$(date -d "@$now" +%Y-%m-%d)"
-  win_start="$(date -d "$today ${BK_WEEKLY_WINDOW_START:-01:00}" +%s)"
-  hard_stop="$(date -d "$today ${BK_WEEKLY_HARD_STOP:-04:15}" +%s)"
+  win_start="$(date -d "$today ${BK_WEEKLY_WINDOW_START:-05:00}" +%s)"
+  hard_stop="$(date -d "$today ${BK_WEEKLY_HARD_STOP:-07:30}" +%s)"
   if [ "$now" -lt "$win_start" ] || [ "$now" -ge "$hard_stop" ]; then
-    fail "outside the maintenance window (${BK_WEEKLY_WINDOW_START:-01:00}-${BK_WEEKLY_HARD_STOP:-04:15}); use BK_WEEKLY_FORCE=1 for a watched manual run"
+    fail "outside the maintenance window (${BK_WEEKLY_WINDOW_START:-05:00}-${BK_WEEKLY_HARD_STOP:-07:30}); use BK_WEEKLY_FORCE=1 for a watched manual run"
   fi
 fi
 
