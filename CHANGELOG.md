@@ -46,6 +46,11 @@ introduced them, in Keep a Changelog style, newest first.
 
 ### Fixed
 
+- **Guest bootstrap now installs and enables `qemu-guest-agent`**: the VMs were
+  provisioned with `--agent enabled=1` but the package was never installed, so every weekly
+  backup warned "guest agent not running" and images were crash-consistent. Fixed live on
+  VMs 101/102/103 on 2026-10-13; this keeps rebuilt VMs from regressing. Refs #126.
+
 - **Full document-set accuracy review** (`Project-Arrakis/meta`#73):
   found and corrected significant drift across 10 files — every
   `yacketrj/*` repo link and `~/projects/dune/`, `~/projects/acp/`,
