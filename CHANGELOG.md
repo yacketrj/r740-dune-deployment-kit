@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Added
+- **Freeze guardrails for VM images (#126).** The guest agent now runs in VMs 101-103, so vzdump freezes each guest's filesystem when it takes the snapshot. New `scripts/backup-freeze-watch.sh` runs next to every VM image in `backup-weekly.sh`: it logs each freeze, warns after `BK_FREEZE_WARN_S` (10 s), forces a thaw and alerts after `BK_FREEZE_MAX_S` (30 s), alerts and tries one thaw when the agent stops answering, and thaws a guest left frozen when the job ends (`BK_FREEZE_WATCH=0` disables it). New opt-in `BK_WEEKLY_MAX_PLAYERS=N` skips the prod VM image while more than N players are online (an unreadable count also skips it). Runbook section "Filesystem freeze guardrails" documents both and the per-guest kill switch `freeze-fs-on-backup=0`. Docs reviewed: runbook and `backup.env.example` updated. Behaviour change for operators: none unless the new settings are used; the watcher is on by default. Live scripts are read from the `backup-live` worktree, which must be updated to pick this up.
+
 ### Fixed
 - **Flaky test: "db: a damaged archive fails decryption".** It overwrote one byte of the (random) ciphertext with a fixed `0xff`, which left the file unchanged about 1 time in 256, so the archive still decrypted and the push-to-main run for #146 failed (run 37509433631) although the PR run passed. The test now changes the byte to a different value and asserts it changed. Test-only; no script behaviour changes. Docs reviewed: none describe this test.
 

@@ -74,6 +74,17 @@ For an unattended image of a guest that hosts players (the prod game VM), run th
 
 **The game restarts itself every day at 05:00 (warning 04:45).** On dune-prod the timer `dune-awakening-scheduled-restart.timer` stops and restarts the whole battlegroup (the game is back by about 05:05-05:10). A backup job that is running then would see the game not READY and the guard would stop it after 3 bad samples, and players would be told "no backup restart" while the game restarts anyway. So **imaging must start after about 05:15, with its countdown also after the restart** (the 2026-10-01 run started at 05:00 and imaged from 05:30, which worked, but its first two warnings went out during the restart). Check the real schedule before choosing a time: `ssh dune@192.168.20.10 systemctl list-timers dune-awakening-scheduled-restart.timer`.
 
+**Filesystem freeze guardrails (#126).** Once the guest agent runs in a VM, vzdump freezes that VM's filesystems for the moment it takes the snapshot (measured 2026-10-13: about 2 s round trip on dune-dev and on an idle dune-prod). Proxmox itself allows a freeze to last up to an hour, so the weekly job runs `scripts/backup-freeze-watch.sh` next to each VM image:
+
+- a freeze longer than `BK_FREEZE_WARN_S` (default 10 s) posts a warning when it ends;
+- a freeze longer than `BK_FREEZE_MAX_S` (default 30 s) is thawed by force and posts an alert;
+- a guest agent that stops answering for longer than `BK_FREEZE_MAX_S` gets one thaw attempt and an alert (a hung freeze looks like this);
+- if the job ends while the guest is still frozen, the watcher thaws it and alerts.
+
+`BK_FREEZE_WATCH=0` turns the watcher off. **Limit:** a thaw is an ordinary agent command, so if the freeze command is hung inside the guest the thaw queues behind it; the alert is then the guardrail. **Kill switch** (keeps the agent, skips the freeze, the image goes back to crash-consistent): `qm set <id> --agent enabled=1,freeze-fs-on-backup=0`; undo with `--agent enabled=1`.
+
+**Player gate (opt-in).** `BK_WEEKLY_MAX_PLAYERS=N` makes the weekly job skip the prod VM image when `dune status` shows more than N players online (0 = nobody may be online). An unreadable player count also skips it: an unknown count is not assumed to be zero. A skipped image is reported as a failure, so the alarm fires and no success is recorded. Leave it unset to rely on the in-game announcements above.
+
 **Scheduling a one-off prod image.** Use a transient timer that runs a pinned copy of the scripts, so later edits cannot change what runs:
 
 ```
