@@ -34,7 +34,10 @@ echo
 echo "--- Updating base system ---"
 sudo apt-get update
 sudo apt-get upgrade -y
-sudo apt-get install -y ca-certificates curl gnupg git tar
+sudo apt-get install -y ca-certificates curl gnupg git tar qemu-guest-agent
+# The host sets --agent enabled=1 (02-provision-vms.sh), but that only opens the virtio
+# channel; without this package vzdump cannot freeze the filesystem (crash-consistent images).
+sudo systemctl enable --now qemu-guest-agent
 
 # --- Docker install (per repo's own documented bootstrap pattern) ----------
 echo
