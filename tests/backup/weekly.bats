@@ -39,6 +39,7 @@ head -c 2000 /dev/zero | tr '\\0' 'x'
 EOF
   cat >"$T/bin/qm" <<EOF
 #!/usr/bin/env bash
+echo "\$*" >>"$T/qm.calls"
 case "\$1" in
   status) case "\$2" in 101|102|103) exit 0 ;; *) exit 1 ;; esac ;;
   agent) [ -f "$T/noagent-\$2" ] && exit 1; exit 0 ;;
@@ -61,7 +62,7 @@ exit 0
 EOF
   chmod +x "$T"/bin/vzdump "$T"/bin/qm "$T"/bin/pct "$T"/bin/lvs "$T"/bin/ssh
   stub mountpoint 'exit 0'
-  stub curl 'cat >>"$BATS_TEST_TMPDIR/curl.stdin"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
+  stub curl 'cat >>"$BATS_TEST_TMPDIR/curl.args"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"'
 }
 
 teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; }
@@ -77,7 +78,7 @@ imgs() { ls "$BK_SMB_MOUNT"/vm/ 2>/dev/null; }
   f="$(ls "$BK_SMB_MOUNT"/vm/vm101-*.age)"
   [ "$(age -d -i "$BK_AGE_IDENTITY" "$f" | head -c 41)" = "PLAINIMAGEMARKER image of 101" ] || age -d -i "$BK_AGE_IDENTITY" "$f" | head -1 | grep -q "PLAINIMAGEMARKER image of 101"
   [ -s "$BK_STATE_DIR/last-success-weekly" ]
-  grep -q DEADMANID "$BATS_TEST_TMPDIR/curl.stdin"
+  grep -q DEADMANID "$BATS_TEST_TMPDIR/curl.args"
   grep -q "weekly backup OK" "$BATS_TEST_TMPDIR/curl.args"
 }
 
@@ -374,7 +375,7 @@ EOF
   ls "$BK_SMB_MOUNT"/vm/ct104-*.age "$BK_SMB_MOUNT"/vm/vm103-*.age
   [ -z "$(ls "$BK_SMB_MOUNT"/vm/vm101-* "$BK_SMB_MOUNT"/vm/vm102-* 2>/dev/null)" ]
   [ ! -e "$BK_STATE_DIR/last-success-weekly" ]
-  ! grep -q DEADMANID "$BATS_TEST_TMPDIR/curl.stdin" 2>/dev/null
+  ! grep -q DEADMANID "$BATS_TEST_TMPDIR/curl.args" 2>/dev/null
 }
 
 @test "--only refuses a guest that is not configured, before doing anything" {
@@ -771,7 +772,7 @@ EOF
 # ---- in-game announcements (--announce) -----------------------------------------------------------
 
 ann_curl() {
-  stub curl 'in="$(cat)"; echo "$in" >>"$BATS_TEST_TMPDIR/curl.stdin"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"
+  stub curl 'in="$(cat)"; echo "$in" >>"$BATS_TEST_TMPDIR/curl.args"; echo "$*" >>"$BATS_TEST_TMPDIR/curl.args"
 case "$in" in *admin/broadcast*) [ -f "$BATS_TEST_TMPDIR/ann-fail" ] && exit 22 ;; esac; exit 0'
 }
 ann_cfg() { # lead-minutes
@@ -832,7 +833,7 @@ teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "s
   ann_cfg "2 1"; ann_vzdump 1
   run_weekly --announce
   [ "$status" -eq 0 ]
-  grep -q 'Bearer dak_testkey123' "$BATS_TEST_TMPDIR/curl.stdin"
+  grep -q 'Bearer dak_testkey123' "$BATS_TEST_TMPDIR/curl.args"
   ! grep -q 'dak_testkey123' "$BATS_TEST_TMPDIR/curl.args"
   [[ "$output" != *"dak_testkey123"* ]]
 }
@@ -851,7 +852,7 @@ teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "s
   sed -i '/^BK_ANNOUNCE_KEY_FILE=/d' "$BK_CONFIG_DIR/backup.env"
   run_weekly --announce
   [ "$status" -eq 0 ]
-  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.args"
   [[ "$output" == *"not configured; the countdown still runs"* ]]
 }
 
@@ -859,11 +860,11 @@ teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "s
   ann_cfg "2 1"; ann_vzdump 1
   run_weekly
   [ "$status" -eq 0 ]
-  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.args"
   sed -i 's#^BK_VMIDS=.*#BK_VMIDS="101 102"#' "$BK_CONFIG_DIR/backup.env"
   run_weekly --announce --only 102
   [ "$status" -eq 0 ]
-  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.stdin"
+  ! grep -q 'admin/broadcast' "$BATS_TEST_TMPDIR/curl.args"
 }
 
 @test "announce: the safety guard refusing to start sends a 'postponed' message after the warnings" {
@@ -916,4 +917,42 @@ EOF
   run_weekly --announce
   [ "$status" -eq 1 ]
   [ "$(titles | tail -n 1)" = "The Recording Was Halted" ]
+}
+
+pop_ssh() { # POPULATION_LINE ("" = unreadable): make the game host answer `dune status`
+  cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOS
+#!/usr/bin/env bash
+echo "\$*" >>"$BATS_TEST_TMPDIR/ssh.calls"
+case "\$*" in *"dune status"*) [ -z "$1" ] || printf 'Overall:     READY\n$1\n'; exit 0 ;; esac
+exit 0
+EOS
+  chmod +x "$BATS_TEST_TMPDIR/bin/ssh"
+}
+
+@test "player gate (#126): players above BK_WEEKLY_MAX_PLAYERS skip the prod image, the others still run, and it alerts" {
+  echo "BK_WEEKLY_MAX_PLAYERS=0" >>"$BK_CONFIG_DIR/backup.env"
+  pop_ssh "Population:  3/180"
+  run_weekly
+  [ "$status" -eq 1 ]
+  [ -z "$(ls "$BK_SMB_MOUNT"/vm/vm101-* 2>/dev/null)" ]
+  ls "$BK_SMB_MOUNT"/vm/vm102-*.age "$BK_SMB_MOUNT"/vm/vm103-*.age
+  grep -q "3 player(s) online" "$BATS_TEST_TMPDIR/curl.args"
+  ! grep -q '^101 ' "$BATS_TEST_TMPDIR/vzdump.calls"
+}
+
+@test "player gate (#126): an unreadable player count is not treated as zero" {
+  echo "BK_WEEKLY_MAX_PLAYERS=0" >>"$BK_CONFIG_DIR/backup.env"
+  pop_ssh ""
+  run_weekly
+  [ "$status" -eq 1 ]
+  [ -z "$(ls "$BK_SMB_MOUNT"/vm/vm101-* 2>/dev/null)" ]
+  grep -q "could not read the player count" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "player gate (#126): zero players images the prod VM as usual" {
+  echo "BK_WEEKLY_MAX_PLAYERS=0" >>"$BK_CONFIG_DIR/backup.env"
+  pop_ssh "Population:  0/180"
+  run_weekly
+  [ "$status" -eq 0 ]
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
 }

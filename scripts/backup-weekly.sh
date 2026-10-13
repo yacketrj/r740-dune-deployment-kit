@@ -273,6 +273,17 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   keep_var="BK_KEEP_WEEKLY_$id"
   keep="${!keep_var:-${BK_KEEP_WEEKLY_DEFAULT:-3}}"
 
+  if [ "$id" = "${BK_PROD_VMID:-101}" ] && [ -n "${BK_WEEKLY_MAX_PLAYERS:-}" ]; then
+    # Opt-in (#126): do not freeze the live game VM while more than this many players are online.
+    pop="$(timeout 20 ssh -o BatchMode=yes -o ConnectTimeout=6 -- "${BK_GUARD_GAME_SSH:-${BK_BACKUP_SSH:-}}" 'cd ~/dune-awakening-selfhost-docker && dune status 2>&1 | sed -n 1,12p' 2>/dev/null | sed -n 's/^Population: *\([0-9][0-9]*\)\/.*/\1/p' | head -n 1)"
+    if [ -z "$pop" ]; then
+      failures+=("$id: skipped, could not read the player count (BK_WEEKLY_MAX_PLAYERS is set, so an unreadable count is not assumed to be zero)")
+      return 1
+    elif [ "$pop" -gt "$BK_WEEKLY_MAX_PLAYERS" ]; then
+      failures+=("$id: skipped, $pop player(s) online (limit $BK_WEEKLY_MAX_PLAYERS); no image was taken this run")
+      return 1
+    fi
+  fi
   if [ "$id" = "${BK_PROD_VMID:-101}" ] && [ -n "${BK_BACKUP_SSH:-}" ]; then
     # A known-good logical dump inside the image (the image alone is only crash-consistent).
     if ! gate_ssh "dump-now" >/dev/null 2>"$tmpdir/dump.err"; then
@@ -323,6 +334,13 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
       | dd of="$partial" bs=4M iflag=fullblock oflag=nocache conv=fdatasync status=none
   ) &
   pipe_pid=$!
+  # Keep the guest's filesystem freeze short (#126): force a thaw if it lasts too long, alert on slow ones.
+  fw_pid=""
+  if [ "$kind" = "vm" ] && [ "${BK_FREEZE_WATCH:-1}" = "1" ]; then
+    bash "$here/backup-freeze-watch.sh" --vmid "$id" --target "$pipe_pid" \
+      --max-s "${BK_FREEZE_MAX_S:-30}" --warn-s "${BK_FREEZE_WARN_S:-10}" >>"$progress_log" 2>&1 &
+    fw_pid=$!
+  fi
   last_size=-1
   last_change="$(date +%s)"
   tick=0
@@ -362,6 +380,8 @@ backup_one() { # id ; returns 0 ok, 1 failed (already recorded in failures)
   done
   if wait "$pipe_pid" 2>/dev/null; then rc=0; else rc=$?; fi
   pipe_pid=""
+  # The watcher ends on its own once the job is gone (and thaws the guest if it is somehow still frozen).
+  if [ -n "$fw_pid" ]; then wait "$fw_pid" 2>/dev/null || true; fi
   set +m
   if [ "$stalled" -eq 1 ]; then
     rm -f -- "$partial"; partial=""
