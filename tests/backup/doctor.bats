@@ -43,6 +43,7 @@ EOC
   stub dpkg 'exit 0'
   stub lvs 'echo "  1634.87 20.00"'
   stub rclone 'exit 0'
+  stub mount.cifs 'exit 0'   # the doctor checks the tool exists; do not depend on cifs-utils being installed on the runner
   stub vzdump 'exit 0'
   stub pct '[ "$1" = "status" ] && [ "$2" = "104" ]'
   stub qm 'case "$1" in status) [ "$2" = "101" ] ;; agent) [ ! -f "$BATS_TEST_TMPDIR/noagent" ] ;; esac'
