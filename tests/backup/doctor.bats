@@ -63,7 +63,7 @@ line() { printf '%s\n' "$output" | grep -F "$1"; }
 
 @test "happy path: everything is OK and the exit code is 0" {
   doctor
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || { printf 'doctor exit %s\n%s\n' "$status" "$output" >&3; false; }
   [[ "$output" == *"0 FAIL, 0 WARN"* ]]
   [[ "$output" != *"[FAIL]"* ]]
 }
