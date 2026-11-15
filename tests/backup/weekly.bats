@@ -703,7 +703,8 @@ case "\${@: -1}" in
   *"dune status"*)
     n=\$(( \$(cat "$BATS_TEST_TMPDIR/status.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$BATS_TEST_TMPDIR/status.n"
     lim="\$(cat "$BATS_TEST_TMPDIR/degrade-after" 2>/dev/null || echo 99999)"
-    if [ "\$n" -gt "\$lim" ]; then echo "Overall:     DEGRADED"; else echo "Overall:     READY"; fi ;;
+    rdy="\$(cat "$BATS_TEST_TMPDIR/ready-after" 2>/dev/null || echo 0)"
+    if [ "\$n" -le "\$rdy" ] || [ "\$n" -gt "\$lim" ]; then echo "Overall:     WARMING"; else echo "Overall:     READY"; fi ;;
   *) exit 0 ;;
 esac
 EOF
@@ -723,6 +724,7 @@ EOF
 
 @test "guard: refuses to START when the game is not READY (nothing is imaged, one alert)" {
   guard_stubs
+  echo BK_GUARD_PRECHECK_WAIT_S=0 >>"$BK_CONFIG_DIR/backup.env"
   echo 0 >"$BATS_TEST_TMPDIR/degrade-after"
   slow_vzdump
   run_weekly --guard
@@ -731,6 +733,29 @@ EOF
   [ -z "$(find "$BK_SMB_MOUNT" -type f)" ]
   grep -q "not starting" "$BATS_TEST_TMPDIR/curl.args"
   grep -q "not READY" "$BATS_TEST_TMPDIR/curl.args"
+}
+
+@test "guard: a game that is warming at the start is re-checked and the run goes ahead once READY" {
+  guard_stubs
+  echo 2 >"$BATS_TEST_TMPDIR/ready-after"
+  { echo 'BK_GUARD_PRECHECK_RETRY_S=1'; echo 'BK_GUARD_PRECHECK_WAIT_S=30'; } >>"$BK_CONFIG_DIR/backup.env"
+  slow_vzdump
+  run_weekly --guard
+  [ "$status" -eq 0 ] || { printf 'STATUS=%s\n%s\n' "$status" "$output" >&3; cat "$BK_STATE_DIR/weekly-progress.log" >&3; false; }
+  [ "$(grep -c 'pre-check not OK' "$BK_STATE_DIR/weekly-progress.log")" -eq 2 ]
+  grep -q 'guard: pre-check OK' "$BK_STATE_DIR/weekly-progress.log"
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+}
+
+@test "guard: a game that never becomes READY fails after the wait, with nothing imaged" {
+  guard_stubs
+  echo 99999 >"$BATS_TEST_TMPDIR/ready-after"
+  { echo 'BK_GUARD_PRECHECK_RETRY_S=1'; echo 'BK_GUARD_PRECHECK_WAIT_S=3'; } >>"$BK_CONFIG_DIR/backup.env"
+  slow_vzdump
+  run_weekly --guard
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ]
+  grep -q "still sees a problem after waiting" "$BATS_TEST_TMPDIR/curl.args"
 }
 
 @test "guard: a problem that appears DURING the run stops it cleanly, removes the partial, alerts, and leaves nothing running" {
@@ -869,6 +894,7 @@ teardown() { pkill -KILL -fx "sleep 317" 2>/dev/null || true; pkill -KILL -fx "s
 
 @test "announce: the safety guard refusing to start sends a 'postponed' message after the warnings" {
   guard_stubs
+  echo BK_GUARD_PRECHECK_WAIT_S=0 >>"$BK_CONFIG_DIR/backup.env"
   ann_cfg "2 1"; ann_vzdump 1
   echo 0 >"$BATS_TEST_TMPDIR/degrade-after"
   run_weekly --announce --guard

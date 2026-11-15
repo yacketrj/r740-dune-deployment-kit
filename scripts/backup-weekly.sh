@@ -456,9 +456,18 @@ fi
 
 if [ "$guard" -eq 1 ]; then
   STAGE="guard-precheck"
-  if ! pre="$(bash "$here/backup-guard.sh" --once)"; then
-    fail "not starting: the safety guard sees a problem right now: $pre"
-  fi
+  # A game still warming up after the 05:00 restart (or a busy disk) is usually transient: re-check every
+  # BK_GUARD_PRECHECK_RETRY_S (default 300) for up to BK_GUARD_PRECHECK_WAIT_S (default 3600, never past the
+  # hard stop) before giving up. 0 waits not at all (the old behaviour: one check, then fail).
+  pre_deadline=$(($(date +%s) + ${BK_GUARD_PRECHECK_WAIT_S:-3600}))
+  [ "$pre_deadline" -le "$hard_stop" ] || pre_deadline="$hard_stop"
+  until pre="$(bash "$here/backup-guard.sh" --once)"; do
+    if [ "$(date +%s)" -ge "$pre_deadline" ]; then
+      fail "not starting: the safety guard still sees a problem after waiting up to ${BK_GUARD_PRECHECK_WAIT_S:-3600}s: $pre"
+    fi
+    plog "guard: pre-check not OK ($pre); re-checking in ${BK_GUARD_PRECHECK_RETRY_S:-300}s"
+    wait_until "$(($(date +%s) + ${BK_GUARD_PRECHECK_RETRY_S:-300}))"
+  done
   plog "guard: pre-check OK; watching the game and the host while the job runs"
   bash "$here/backup-guard.sh" --target "$$" --reason-file "$guard_reason" \
     --interval "${BK_GUARD_INTERVAL_S:-10}" --consecutive "${BK_GUARD_CONSECUTIVE:-3}" >>"$progress_log" 2>&1 &
