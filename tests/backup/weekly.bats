@@ -704,7 +704,7 @@ case "\${@: -1}" in
     n=\$(( \$(cat "$BATS_TEST_TMPDIR/status.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$BATS_TEST_TMPDIR/status.n"
     lim="\$(cat "$BATS_TEST_TMPDIR/degrade-after" 2>/dev/null || echo 99999)"
     rdy="\$(cat "$BATS_TEST_TMPDIR/ready-after" 2>/dev/null || echo 0)"
-    if [ "\$n" -le "\$rdy" ] || [ "\$n" -gt "\$lim" ]; then echo "Overall:     WARMING"; else echo "Overall:     READY"; fi ;;
+    if [ "\$n" -le "\$rdy" ] || [ "\$n" -gt "\$lim" ]; then if [ -f "$BATS_TEST_TMPDIR/warming-body" ]; then cat "$BATS_TEST_TMPDIR/warming-body"; else echo "Overall:     WARMING"; fi; else echo "Overall:     READY"; fi ;;
   *) exit 0 ;;
 esac
 EOF
@@ -745,6 +745,40 @@ EOF
   [ "$(grep -c 'pre-check not OK' "$BK_STATE_DIR/weekly-progress.log")" -eq 2 ]
   grep -q 'guard: pre-check OK' "$BK_STATE_DIR/weekly-progress.log"
   ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+}
+
+# What `dune status` prints when only Funcom's FLS declarations wait (the maps are all READY), with one map row and one FLS line settable.
+fls_status() {
+  printf '%s\n' "Overall:     WARMING" "Title:       T" "" "=== Game servers ===" "MAP                      STATE         UPTIME" \
+    "Survival_1               $1         Up 12 hours" "Overmap                  READY         Up 12 hours" "" \
+    "Note: 6 always-on map servers expected, starting 1 at a time." "" "=== Funcom/FLS summary ===" \
+    "Director heartbeat:       OK" "Population declaration:   $2" "Max capacity declaration: $2" "Gateway DB monitoring:    $3" >"$BATS_TEST_TMPDIR/warming-body"
+}
+
+@test "guard: WARMING only because the FLS declarations wait (every map READY) does not stop the run" {
+  guard_stubs
+  fls_status READY WAIT OK
+  echo 99999 >"$BATS_TEST_TMPDIR/ready-after"
+  echo BK_GUARD_PRECHECK_WAIT_S=0 >>"$BK_CONFIG_DIR/backup.env"
+  slow_vzdump
+  run_weekly --guard
+  [ "$status" -eq 0 ] || { printf 'STATUS=%s\n%s\n' "$status" "$output" >&3; cat "$BK_STATE_DIR/weekly-progress.log" >&3; false; }
+  grep -q 'guard: pre-check OK' "$BK_STATE_DIR/weekly-progress.log"
+  ls "$BK_SMB_MOUNT"/vm/vm101-*.age
+}
+
+@test "guard: WARMING with a map still warming, or the gateway DB monitor down, is still refused" {
+  guard_stubs
+  echo 99999 >"$BATS_TEST_TMPDIR/ready-after"
+  echo BK_GUARD_PRECHECK_WAIT_S=0 >>"$BK_CONFIG_DIR/backup.env"
+  slow_vzdump
+  fls_status WARMING WAIT OK
+  run_weekly --guard
+  [ "$status" -eq 1 ]
+  fls_status READY WAIT WAIT
+  run_weekly --guard
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/vzdump.calls" ]
 }
 
 @test "guard: a game that never becomes READY fails after the wait, with nothing imaged" {
