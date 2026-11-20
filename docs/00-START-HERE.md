@@ -1,5 +1,11 @@
 # R740 Dune: Awakening Prod/Dev Deployment — Master Runbook
 
+**Correction (2026-11-20):** the sizing and layout below (dune-prod 40 vCPU /
+152 GB on socket 0, dune-dev 20 vCPU / 50 GB) are superseded. Live now:
+dune-prod 60 vCPUs / 192 GB across both NUMA nodes, dune-dev 8 vCPUs / 26 GB.
+BIOS power profile, game-container CPU pinning and the QXL display fix applied
+since then are in `07-live-tuning-2026-11.md`.
+
 **Correction (2026-09-17):** this entire document describes the original
 July 2026 stand-up plan as a forward-looking runbook. The stand-up
 already happened, and real execution diverged from several specifics

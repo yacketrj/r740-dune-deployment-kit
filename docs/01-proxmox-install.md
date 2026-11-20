@@ -69,16 +69,26 @@ Navigate to **System BIOS Settings > Processor Settings** and confirm/enable:
   enable it now even if unused today)
 - **Logical Processor**: Enabled (this is hyperthreading — leave on, you
   want all 80 logical threads available)
-- **Power Profile**: **"Maximum Performance"** — NOT the default "OS Control"
+- **Power Profile**: **"Performance"** (iDRAC/Redfish `SysProfile =
+  PerfOptimized`, shown in some BIOS menus as "Performance" or "Maximum
+  Performance") — NOT the default "Performance Per Watt (DAPC)" / "OS Control"
   or "Balanced" profile. This matters specifically for this workload: the
   default profile favors power savings and slower turbo-clock ramp-up, but
   the Gold 6248's clock speed is your primary bottleneck for the
   single-thread-bound game server processes discussed earlier in this
   project. Do not skip this setting.
-- **C-States**: Disabled (C-states are power-saving CPU sleep states; disabling
-  them reduces turbo-ramp latency at the cost of slightly higher idle power
-  draw — the right tradeoff for a server that needs to react quickly to
-  bursty single-thread game-server load)
+- **C-States / C1E**: Disabled (C-states are power-saving CPU sleep states;
+  disabling them reduces turbo-ramp latency at the cost of slightly higher
+  idle power draw — the right tradeoff for a server that needs to react
+  quickly to bursty single-thread game-server load). Selecting the
+  `PerfOptimized` profile sets C-states, C1E, uncore frequency (`MaxUFS`),
+  power/performance (`MaxPerf`) and PCIe ASPM L1 (off) in one step.
+
+**Correction (2026-11-20):** the live host was found running
+`PerfPerWattOptimizedDapc` with C-states on, contrary to the two settings
+above, and was switched to `PerfOptimized` on 2026-11-20. Check this after any
+BIOS reset or firmware update. See `07-live-tuning-2026-11.md` for the exact
+before/after attributes, the Redfish procedure and the rollback.
 
 Save and exit BIOS (F10), then boot from the USB drive. If it doesn't boot
 automatically, press **F11** during POST for the one-time boot menu and
