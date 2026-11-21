@@ -1,0 +1,9 @@
+# /etc/prometheus-pve-exporter/pve.yml  (root:prometheus, mode 640; NEVER commit the real file)
+# Token: pveum user add metrics@pve; pveum acl modify / --users metrics@pve --roles PVEAuditor
+#        pveum user token add metrics@pve exporter --privsep 1
+#        pveum acl modify / --tokens 'metrics@pve!exporter' --roles PVEAuditor
+default:
+  user: metrics@pve
+  token_name: exporter
+  token_value: PASTE_THE_TOKEN_VALUE_HERE
+  verify_ssl: false

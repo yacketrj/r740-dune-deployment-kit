@@ -216,6 +216,15 @@ def hostvm():
                 "Used share of dune-prod memory.",
                 [target('1 - node_memory_MemAvailable_bytes{job="dune-node"}/node_memory_MemTotal_bytes{job="dune-node"}', "used")],
                 12, 21, 12, 8, unit="percentunit", mn=0, mx=1, fixed=BLUE))
+    vm_colors = {"dune-prod": BLUE, "dune-dev": ORANGE, "acp-bot": AQUA}
+    p.append(ts("VM CPU use (share of each VM's vCPUs)",
+                "From the Proxmox API (read-only token), per VM. 1.0 means every vCPU of that VM is fully busy.",
+                [target('pve_cpu_usage_ratio{id=~"qemu/.*"} * on(id) group_left(name) pve_guest_info', "{{name}}")],
+                0, 29, 12, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(vm_colors)))
+    p.append(ts("VM memory used (share of each VM's RAM)",
+                "From the Proxmox API, per VM, as seen by the hypervisor.",
+                [target('pve_memory_usage_bytes{id=~"qemu/.*"} / pve_memory_size_bytes{id=~"qemu/.*"} * on(id) group_left(name) pve_guest_info', "{{name}}")],
+                12, 29, 12, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(vm_colors)))
     return dashboard("dune-host", "Dune - Host, VM and services",
                      "R740 host clocks, temperatures and NUMA, dune-prod guest load, and supporting services (meta#99).",
                      p, ["dune", "host"])

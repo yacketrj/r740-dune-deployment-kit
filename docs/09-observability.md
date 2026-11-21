@@ -17,9 +17,11 @@ pinning changes in `07-live-tuning-2026-11.md`. The files are in `observability/
 
 Retention is 30 days or 8 GB on dune-prod (Core's default is 7 days / 2 GB).
 
-Not collected yet: per-VM CPU and steal from the Proxmox API (a
-`prometheus-pve-exporter` with a read-only token), and iDRAC temperatures, fans and
-power (a Redfish exporter; change the iDRAC factory password first).
+Per-VM CPU and memory come from the Proxmox API through `prometheus-pve-exporter`
+with a read-only token (15 s; job `host-pve`, pushed by the host agent).
+
+Not collected yet: iDRAC temperatures, fans and power (a Redfish exporter; change
+the iDRAC factory password first, and use a dedicated read-only Redfish user).
 
 ## 2. How it fits together
 
@@ -90,6 +92,31 @@ URL in `prometheus-agent.yml` first. Both services listen on `127.0.0.1` only.
 Undo: `systemctl disable --now prometheus prometheus-node-exporter`, then
 `apt-get remove` both.
 
+### Per-VM metrics (pve-exporter)
+
+There is no Debian package; install the pinned release from PyPI into its own venv:
+
+```bash
+python3 -m venv /opt/pve-exporter
+/opt/pve-exporter/bin/pip install "prometheus-pve-exporter==3.12.0"
+pveum user add metrics@pve --comment "read-only monitoring"
+pveum acl modify / --users metrics@pve --roles PVEAuditor
+install -d -m 750 -o root -g prometheus /etc/prometheus-pve-exporter
+pveum user token add metrics@pve exporter --privsep 1 --output-format json   # keep the value out of chat and logs
+pveum acl modify / --tokens 'metrics@pve!exporter' --roles PVEAuditor
+# write the token into /etc/prometheus-pve-exporter/pve.yml (see host/pve.yml.example), root:prometheus, mode 640
+install -m 644 observability/host/prometheus-pve-exporter.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now prometheus-pve-exporter
+```
+
+The token has `PVEAuditor` only (read-only), privilege separation on, and the
+exporter listens on `127.0.0.1:9221`. The `host-pve` job in `prometheus-agent.yml`
+(metrics path `/pve`, `module=default`, `cluster=1`, `node=1`) scrapes it; reload
+the agent with `systemctl reload prometheus`. Query it with those parameters; a
+request without `cluster` and `node` returns only partial data. Undo:
+`systemctl disable --now prometheus-pve-exporter`, `pveum user delete metrics@pve`
+(removes its token and ACLs), `rm -r /opt/pve-exporter /etc/prometheus-pve-exporter`.
+
 ## 5. Dashboards and burst tracking
 
 Two dashboards, provisioned in the folder "Dune":
@@ -98,7 +125,9 @@ Two dashboards, provisioned in the folder "Dune":
   bursts per interval by map, whole-process CPU, guest vCPUs above 90%, steal and
   CPU pressure.
 - **Dune - Host, VM and services:** host core clocks, temperatures, NUMA misses,
-  guest load and memory, service CPU.
+  guest load and memory, service CPU, and per-VM CPU and memory from the Proxmox
+  API. (The hypervisor's memory view of a VM includes the guest's file cache, so
+  a VM can read near 100% without the game using that much.)
 
 The recording rules in `prometheus/rules-extra/dune-bursts.yml` define a burst as a
 map's main thread at or above 0.9 core (`dune:map_main_thread_hot`); `changes()` of
