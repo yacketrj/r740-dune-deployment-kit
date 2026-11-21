@@ -1,0 +1,31 @@
+name: obs
+services:
+  obs-process-exporter:
+    image: ncabatoff/process-exporter:0.8.7
+    container_name: obs-process-exporter
+    restart: unless-stopped
+    command:
+      - --procfs=/host/proc
+      - --config.path=/config/process-exporter.yml
+    volumes:
+      - /proc:/host/proc:ro
+      - /home/dune/observability/process-exporter:/config:ro
+    cpus: 0.5
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    networks: [dune-net]
+  obs-write-proxy:
+    image: nginx:1.27-alpine
+    container_name: obs-write-proxy
+    restart: unless-stopped
+    ports:
+      - "192.168.20.10:9091:9091"
+    volumes:
+      - /home/dune/observability/write-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    cpus: 0.25
+    mem_limit: 64m
+    security_opt: [no-new-privileges:true]
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true

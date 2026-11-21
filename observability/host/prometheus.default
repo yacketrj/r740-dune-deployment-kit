@@ -1,0 +1,2 @@
+# Agent mode, UI/API on localhost only.
+ARGS="--enable-feature=agent --web.listen-address=127.0.0.1:9092 --storage.agent.path=/var/lib/prometheus/agent"
