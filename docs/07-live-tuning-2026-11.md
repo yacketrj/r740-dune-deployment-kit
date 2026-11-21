@@ -15,7 +15,7 @@ evidence and findings are in `Project-Arrakis/meta`
 |---|---|
 | Hardware | Dell R740, 2x Xeon Gold 6248 (20c/40t each, 2.5 GHz base, 3.9 GHz turbo), 256 GB DDR4-2400 as 8x32 GB (4 DIMMs per socket, 4 of 6 channels used) |
 | dune-prod (VM 101) | 60 vCPUs (2 sockets x 30 cores), 192 GB, `balloon: 0`, two vNUMA nodes: node 0 = vCPUs 0-39 with 112 GB bound to host node 0, node 1 = vCPUs 40-59 with 80 GB bound to host node 1; CPU affinity = host node 0 even threads plus node 1 odd threads 41-79 |
-| dune-dev (VM 102) | 8 vCPUs, 26 GB, affinity on host odd threads 1-39 (node 1), `vga: qxl`, `e1000e` NIC |
+| dune-dev (VM 102) | 8 vCPUs, 26 GB, affinity on host odd threads 1-39 (node 1), `vga: std` (changed 2026-11-20), `e1000e` NIC |
 | Memory per socket | 128 GB. The prod VM's 192 GB therefore cannot fit on one socket, so a single-socket prod layout needs a memory cut. The operator decided **not** to reduce prod memory (ceilings of 3 Sietches, 3 Deep Deserts and dynamic maps exceed 112 GB) |
 | Guest | Ubuntu 26.04, game engine single-thread bound per map, `kernel.numa_balancing=1` |
 
@@ -111,7 +111,7 @@ Finding: on 2026-11-20 a `qm shutdown` of dune-prod hung. The guest's `qxl`
 display driver wedged during shutdown (`qxl_fence_wait` stuck, then
 `[TTM] Buffer eviction failed` repeating roughly 290,000 times), so the guest
 never powered off and Proxmox reported "VM quit/powerdown failed". The
-previous boot showed the same driver errors. dune-dev's shutdown also failed.
+previous boot showed the same driver errors. dune-dev showed the same failure on its earlier stop.
 
 Changes on dune-prod:
 
@@ -125,7 +125,10 @@ Changes on dune-prod:
   configured (`serial-getty@ttyS0` disabled), so `none` would leave no
   console if networking or sshd failed.
 
-dune-dev still uses `qxl` and should get the same change at its next stop.
+dune-dev got the same change on 2026-11-20: `qm set 102 --vga std`, the same
+`blacklist-qxl.conf` plus `update-initramfs -u`, and a full stop/start. Its
+`qm shutdown` completed gracefully (no force-stop), the guest uses the `bochs`
+framebuffer and `qxl` is not loaded; the game was READY afterwards.
 
 When stopping a VM for a host reboot: run `dune stop` first, then
 `qm shutdown <id> --timeout 120`, and `qm stop <id>` only if it has not

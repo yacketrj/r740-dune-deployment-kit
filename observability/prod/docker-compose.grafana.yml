@@ -1,0 +1,30 @@
+# Grafana for the Dune metrics stack (meta#99). Kept outside the managed
+# checkout so self-updates do not remove it. Start: docker compose -f docker-compose.grafana.yml up -d
+name: obs
+services:
+  obs-grafana:
+    image: grafana/grafana:11.1.0
+    container_name: obs-grafana
+    restart: unless-stopped
+    user: "472"
+    ports:
+      - "192.168.20.10:3000:3000"
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.example.com
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SECURITY_COOKIE_SECURE: "true"
+    volumes:
+      - dune-grafana-data:/var/lib/grafana
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana-dashboards:ro
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true
+volumes:
+  dune-grafana-data:
+    external: true
+    name: dune-awakening-selfhost-docker-metrics_dune-grafana-data

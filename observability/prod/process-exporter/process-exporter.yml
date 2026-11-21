@@ -1,0 +1,16 @@
+# Per-map-server CPU for the single-thread-bound game processes (meta#99, fork#1352).
+# SECURITY: game process command lines contain tokens and a DB password. Names below
+# come ONLY from named regex captures (map name, partition index); never use {{.Cmdline}}.
+process_names:
+  - name: "{{.Matches.Map}}_p{{.Matches.Part}}"
+    cmdline:
+      - "DuneSandbox (?P<Map>[A-Za-z_0-9]+)"
+      - "-PartitionIndex=(?P<Part>[0-9]+)"
+  - name: "{{.Comm}}"
+    comm:
+      - Director
+      - beam.smp
+      - postgres
+      - dockerd
+      - containerd
+      - prometheus

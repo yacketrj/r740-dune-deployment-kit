@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Generate the Grafana dashboards for the Dune R740 stack (meta#99, fork#1352).
+
+Colors: dataviz reference palette, dark-mode categorical steps, assigned to an entity in
+a fixed order (never by rank). Status red is reserved for threshold/critical use.
+Usage: gen_dashboards.py <output-dir>
+"""
+import json
+import sys
+from pathlib import Path
+
+DS = {"type": "prometheus", "uid": "prometheus"}
+BLUE, ORANGE, AQUA, YELLOW, MAGENTA, GREEN = "#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#0ca30c"
+RED = "#e66767"
+MAP_COLORS = {
+    "Survival_1_p1": BLUE,
+    "Survival_1_p37": ORANGE,
+    "DeepDesert_1_p8": AQUA,
+    "DeepDesert_1_p36": YELLOW,
+    "Overmap_p2": MAGENTA,
+}
+SVC_COLORS = {
+    "dockerd": BLUE,
+    "containerd": ORANGE,
+    "Director": AQUA,
+    "beam.smp": YELLOW,
+    "postgres": MAGENTA,
+    "prometheus": GREEN,
+}
+
+_id = 0
+
+
+def nid():
+    global _id
+    _id += 1
+    return _id
+
+
+def target(expr, legend="", ref="A", instant=False):
+    t = {"datasource": DS, "expr": expr, "legendFormat": legend, "refId": ref}
+    if instant:
+        t["instant"] = True
+    return t
+
+
+def color_overrides(mapping):
+    return [
+        {
+            "matcher": {"id": "byName", "options": name},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": c}}],
+        }
+        for name, c in mapping.items()
+    ]
+
+
+def ts(title, desc, targets, x, y, w, h, unit="none", mn=0, mx=None, overrides=None,
+       threshold=None, bars=False, stack=False, decimals=None, fixed=None):
+    custom = {
+        "drawStyle": "bars" if bars else "line",
+        "lineWidth": 2,
+        "fillOpacity": 60 if bars else 0,
+        "showPoints": "never",
+        "spanNulls": False,
+        "stacking": {"mode": "normal" if stack else "none", "group": "A"},
+        "axisBorderShow": False,
+        "gradientMode": "none",
+    }
+    defaults = {"unit": unit, "min": mn, "custom": custom,
+                "color": {"mode": "fixed", "fixedColor": fixed} if fixed else {"mode": "palette-classic"}}
+    if mx is not None:
+        defaults["max"] = mx
+    if decimals is not None:
+        defaults["decimals"] = decimals
+    if threshold is not None:
+        custom["thresholdsStyle"] = {"mode": "line"}
+        defaults["thresholds"] = {"mode": "absolute", "steps": [
+            {"color": "transparent", "value": None}, {"color": RED, "value": threshold}]}
+    return {
+        "id": nid(), "type": "timeseries", "title": title, "description": desc,
+        "datasource": DS, "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        "fieldConfig": {"defaults": defaults, "overrides": overrides or []},
+        "options": {
+            "legend": {"displayMode": "table" if len(targets) > 1 else "list", "placement": "bottom",
+                       "calcs": ["max", "lastNotNull"] if len(targets) > 1 else []},
+            "tooltip": {"mode": "multi", "sort": "desc"},
+        },
+        "targets": targets,
+    }
+
+
+def stat(title, desc, expr, x, y, w=4, h=4, unit="none", decimals=None, red_at=None, color=None):
+    defaults = {"unit": unit, "color": {"mode": "fixed", "fixedColor": color or "text"}}
+    if decimals is not None:
+        defaults["decimals"] = decimals
+    if red_at is not None:
+        defaults["color"] = {"mode": "thresholds"}
+        defaults["thresholds"] = {"mode": "absolute", "steps": [
+            {"color": "text", "value": None}, {"color": RED, "value": red_at}]}
+    return {
+        "id": nid(), "type": "stat", "title": title, "description": desc, "datasource": DS,
+        "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        "fieldConfig": {"defaults": defaults, "overrides": []},
+        "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+                    "colorMode": "value", "graphMode": "none", "textMode": "value"},
+        "targets": [target(expr, instant=False)],
+    }
+
+
+def dashboard(uid, title, desc, panels, tags):
+    return {
+        "uid": uid, "title": title, "description": desc, "tags": tags, "schemaVersion": 39,
+        "version": 1, "editable": True, "graphTooltip": 1, "refresh": "10s",
+        "time": {"from": "now-6h", "to": "now"}, "timezone": "browser",
+        "annotations": {"list": [{
+            "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": True,
+            "iconColor": MAGENTA, "name": "Changes",
+            "target": {"type": "tags", "tags": ["change"], "limit": 100, "matchAny": False, "queryType": "tags"},
+        }]},
+        "templating": {"list": []}, "links": [], "panels": panels,
+    }
+
+
+def bursts():
+    p = []
+    p += [
+        stat("Maps saturated now", "Map main threads at or above 0.9 core right now.",
+             "sum(dune:map_main_thread_hot)", 0, 0, red_at=1, decimals=0),
+        stat("Busiest map main thread", "Highest main-thread CPU of any map (1.0 = one core).",
+             "max(dune:map_main_thread:cores)", 4, 0, decimals=2),
+        stat("Saturated time in range", "Total seconds a map main thread was at or above 0.9 core, summed over all maps.",
+             "sum(sum_over_time(dune:map_main_thread_hot[$__range]))*5", 8, 0, unit="s", decimals=0),
+        stat("Bursts in range", "Number of times any map's main thread crossed 0.9 core (rising edges).",
+             "sum(changes(dune:map_main_thread_hot[$__range]))/2", 12, 0, decimals=0),
+        stat("Guest vCPUs above 90%", "vCPUs of dune-prod busier than 90% over 15 s.",
+             "dune:vcpu_hot:count", 16, 0, decimals=0),
+        stat("Busiest guest vCPU", "Highest single-vCPU busy share of dune-prod over 15 s.",
+             "dune:vcpu_busy_max:ratio", 20, 0, unit="percentunit", decimals=0),
+    ]
+    p.append(ts("Main thread CPU per map",
+                "The game's main thread per map is single-threaded, so this is the limit. 1.0 means one core saturated; the red line is the 0.9 burst threshold.",
+                [target("dune:map_main_thread:cores", "{{groupname}}")],
+                0, 4, 24, 9, mn=0, mx=1.2, overrides=color_overrides(MAP_COLORS), threshold=0.9, decimals=2))
+    p.append(ts("Bursts per interval, by map",
+                "How often each map's main thread crossed 0.9 core in each interval. Compare before and after the 2026-11-20 BIOS and pinning changes.",
+                [target("sum by (groupname)(changes(dune:map_main_thread_hot[$__interval]))/2", "{{groupname}}")],
+                0, 13, 12, 8, overrides=color_overrides(MAP_COLORS), bars=True, stack=True, decimals=0))
+    p.append(ts("Whole-process CPU per map",
+                "All threads of each map server, in cores. Higher than the main thread when worker threads are busy.",
+                [target("dune:map_process:cores", "{{groupname}}")],
+                12, 13, 12, 8, overrides=color_overrides(MAP_COLORS), decimals=2))
+    p.append(ts("Guest vCPUs above 90% busy",
+                "Count of dune-prod vCPUs over 90% busy, 15 s window.",
+                [target("dune:vcpu_hot:count", "vCPUs above 90%")],
+                0, 21, 8, 7, decimals=0, fixed=BLUE))
+    p.append(ts("CPU steal",
+                "Share of vCPU time stolen by the hypervisor (host contention).",
+                [target("dune:cpu_steal:ratio", "steal")],
+                8, 21, 8, 7, unit="percentunit", fixed=ORANGE))
+    p.append(ts("CPU pressure (waiting)",
+                "Share of time tasks waited for a CPU in the guest (PSI).",
+                [target("dune:cpu_pressure_waiting:ratio", "waiting")],
+                16, 21, 8, 7, unit="percentunit", fixed=AQUA))
+    return dashboard("dune-bursts", "Dune - Bursts and maps",
+                     "Single-thread bursts per game map on dune-prod (meta#99, fork#1352). Data from process-exporter and node-exporter at 5 s.",
+                     p, ["dune", "rubberbanding"])
+
+
+def hostvm():
+    p = []
+    p += [
+        stat("Host core clock, average", "Average of all 80 host CPUs.",
+             'avg(node_cpu_scaling_frequency_hertz{source="r740-host"})', 0, 0, unit="hertz", decimals=2),
+        stat("Host core clock, fastest", "Fastest host CPU. Turbo limit is 3.9 GHz.",
+             'max(node_cpu_scaling_frequency_hertz{source="r740-host"})', 4, 0, unit="hertz", decimals=2),
+        stat("Host hottest sensor", "Hottest host temperature sensor.",
+             'max(node_hwmon_temp_celsius{source="r740-host"})', 8, 0, unit="celsius", decimals=0),
+        stat("Guest memory used", "Share of dune-prod memory in use.",
+             '1 - node_memory_MemAvailable_bytes{job="dune-node"}/node_memory_MemTotal_bytes{job="dune-node"}',
+             12, 0, unit="percentunit", decimals=0),
+        stat("Guest vCPU busy, average", "Average busy share across dune-prod's 60 vCPUs.",
+             "avg(dune:vcpu_busy:ratio)", 16, 0, unit="percentunit", decimals=1),
+        stat("Prometheus series", "Active series in dune-prod's Prometheus.",
+             "prometheus_tsdb_head_series", 20, 0, decimals=0),
+    ]
+    p.append(ts("Host core clock",
+                "Average, fastest and slowest host CPU. After the BIOS change busy cores should reach about 3.8-3.9 GHz (earlier they peaked near 3.2-3.3 GHz).",
+                [target('avg(node_cpu_scaling_frequency_hertz{source="r740-host"})', "average", "A"),
+                 target('max(node_cpu_scaling_frequency_hertz{source="r740-host"})', "fastest", "B"),
+                 target('min(node_cpu_scaling_frequency_hertz{source="r740-host"})', "slowest", "C")],
+                0, 4, 12, 9, unit="hertz", mn=0, overrides=color_overrides(
+                    {"average": BLUE, "fastest": ORANGE, "slowest": AQUA})))
+    p.append(ts("Host temperatures",
+                "Hottest and average host temperature sensor.",
+                [target('max(node_hwmon_temp_celsius{source="r740-host"})', "hottest", "A"),
+                 target('avg(node_hwmon_temp_celsius{source="r740-host"})', "average", "B")],
+                12, 4, 12, 9, unit="celsius", mn=0, overrides=color_overrides({"hottest": ORANGE, "average": BLUE})))
+    p.append(ts("Host NUMA misses per second",
+                "Memory pages placed on a remote node (numa_miss), skipped (numa_foreign) or allocated for another node (numa_other). Remote access is about 2x slower.",
+                [target('rate(node_vmstat_numa_miss{source="r740-host"}[1m])', "numa_miss", "A"),
+                 target('rate(node_vmstat_numa_foreign{source="r740-host"}[1m])', "numa_foreign", "B"),
+                 target('rate(node_vmstat_numa_other{source="r740-host"}[1m])', "numa_other", "C")],
+                0, 13, 12, 8, overrides=color_overrides({"numa_miss": ORANGE, "numa_foreign": BLUE, "numa_other": AQUA}),
+                decimals=0))
+    p.append(ts("Guest vCPU busy",
+                "Average and busiest vCPU of dune-prod over a 15 s window.",
+                [target("avg(dune:vcpu_busy:ratio)", "average", "A"),
+                 target("dune:vcpu_busy_max:ratio", "busiest", "B")],
+                12, 13, 12, 8, unit="percentunit", mn=0, mx=1,
+                overrides=color_overrides({"average": BLUE, "busiest": ORANGE})))
+    p.append(ts("Service CPU (cores)",
+                "Director, RabbitMQ (beam.smp), Postgres, Docker and monitoring, from process-exporter.",
+                [target('sum by (groupname)(rate(namedprocess_namegroup_cpu_seconds_total{groupname!~".+_p[0-9]+"}[30s]))', "{{groupname}}")],
+                0, 21, 12, 8, overrides=color_overrides(SVC_COLORS), decimals=2))
+    p.append(ts("Guest memory",
+                "Used share of dune-prod memory.",
+                [target('1 - node_memory_MemAvailable_bytes{job="dune-node"}/node_memory_MemTotal_bytes{job="dune-node"}', "used")],
+                12, 21, 12, 8, unit="percentunit", mn=0, mx=1, fixed=BLUE))
+    return dashboard("dune-host", "Dune - Host, VM and services",
+                     "R740 host clocks, temperatures and NUMA, dune-prod guest load, and supporting services (meta#99).",
+                     p, ["dune", "host"])
+
+
+def main():
+    out = Path(sys.argv[1])
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "dune-bursts.json").write_text(json.dumps(bursts(), indent=2) + "\n")
+    (out / "dune-host.json").write_text(json.dumps(hostvm(), indent=2) + "\n")
+    print("wrote", sorted(f.name for f in out.glob("*.json")))
+
+
+if __name__ == "__main__":
+    main()

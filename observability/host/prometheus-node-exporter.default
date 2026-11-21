@@ -1,0 +1,2 @@
+# Bound to localhost only; samples are pushed to dune-prod by the Prometheus agent (meta#99).
+ARGS="--web.listen-address=127.0.0.1:9100 --collector.vmstat.fields=^(oom_kill|pgpg|pswp|pg.*fault|numa_.*|pgmigrate.*).*"

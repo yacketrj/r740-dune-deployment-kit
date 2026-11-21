@@ -1,0 +1,12 @@
+# Agent mode on the R740 host (meta#99): scrapes local exporters only and pushes to
+# dune-prod's Prometheus. No local TSDB, no inbound connections.
+global:
+  scrape_interval: 5s
+  external_labels:
+    source: r740-host
+scrape_configs:
+  - job_name: host-node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+remote_write:
+  - url: http://192.168.20.10:9091/api/v1/write  # REPLACE with the dune-prod VLAN IP

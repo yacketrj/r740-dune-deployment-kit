@@ -1,0 +1,24 @@
+# Burst tracking for the single-thread-bound game maps (meta#99, fork#1352).
+# Source: node-exporter in the prod guest, scraped every 5 s.
+groups:
+  - name: dune-bursts
+    interval: 5s
+    rules:
+      - record: dune:vcpu_busy:ratio
+        expr: 1 - avg by (cpu) (rate(node_cpu_seconds_total{job="dune-node",mode="idle"}[15s]))
+      - record: dune:vcpu_busy_max:ratio
+        expr: max(dune:vcpu_busy:ratio)
+      - record: dune:vcpu_hot:count
+        expr: count(dune:vcpu_busy:ratio > 0.9) or vector(0)
+      - record: dune:cpu_steal:ratio
+        expr: avg(rate(node_cpu_seconds_total{job="dune-node",mode="steal"}[15s]))
+      - record: dune:cpu_pressure_waiting:ratio
+        expr: rate(node_pressure_cpu_waiting_seconds_total{job="dune-node"}[15s])
+      # Per-map game main thread (the single-thread bottleneck) and whole-process CPU.
+      - record: dune:map_main_thread:cores
+        expr: sum by (groupname) (rate(namedprocess_namegroup_thread_cpu_seconds_total{threadname="DuneSandboxServ"}[15s]))
+      - record: dune:map_process:cores
+        expr: sum by (groupname) (rate(namedprocess_namegroup_cpu_seconds_total{groupname=~".+_p[0-9]+"}[15s]))
+      # 1 while a map main thread is effectively saturated (>= 0.9 core); changes() of this = bursts.
+      - record: dune:map_main_thread_hot
+        expr: dune:map_main_thread:cores > bool 0.9
