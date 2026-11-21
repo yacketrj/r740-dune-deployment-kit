@@ -134,7 +134,7 @@ revoke or regenerate it if it leaks. Consider a Cloudflare rate limit on
 - **cAdvisor shows no per-container data.** Docker 29 uses the containerd image
   store, and cAdvisor v0.52.1 cannot find the legacy layer metadata it reads
   (`failed to identify the read-write layer ID`), so only the root cgroup is exported.
-  Sharing the host cgroup namespace (`cgroup: host`) did not help. Per-map process
+  Sharing the host cgroup namespace (`cgroup: host`) did not help and was reverted. Per-map process
   data from process-exporter replaces it for this purpose.
 - Core's `dune metrics start` no longer starts Grafana (its compose file has no
   Grafana service). The Grafana in `observability/` replaces it.
