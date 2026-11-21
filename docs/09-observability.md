@@ -129,6 +129,25 @@ revoke or regenerate it if it leaks. Consider a Cloudflare rate limit on
   method, one path and one source address.
 - Do not print `.env` lines or the Grafana password file into logs or chat.
 
+### Credentials: one token per purpose
+
+Never reuse a token for a second job, and never widen one to save creating another.
+Keep each secret in a root-only file (mode 600) outside any repo; record its path,
+never its value, in notes and docs. A token for a one-time job is deleted afterwards.
+
+| System | Token | Scope | Used by |
+|---|---|---|---|
+| Cloudflare | DDNS | Zone DNS edit and Zone read, one zone | the DDNS service only |
+| Cloudflare | Rate limit (create when needed) | Zone WAF/Rulesets edit, one zone | one-time setup of the `/api/public/*` rule, then delete |
+| Proxmox | `metrics@pve!exporter` | `PVEAuditor` only, privilege separation on | the pve-exporter only; a new consumer gets its own token |
+| Grafana | per-purpose service-account tokens | read-only role | scripts; the admin password is for the operator only |
+| iDRAC | a dedicated read-only Redfish user | read-only | the Redfish exporter, never `root` |
+
+A token that fails a read-only probe of the permission you expect (for example a
+403 on `GET /zones/<id>/rulesets`) lacks it; check with a probe before relying on it,
+passing the token through a shell variable so it is never printed. Two copies of the
+same secret in two files count as one credential with two places to rotate; keep one.
+
 ## 7. Known limitations
 
 - **cAdvisor shows no per-container data.** Docker 29 uses the containerd image
