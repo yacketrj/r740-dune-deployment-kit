@@ -72,16 +72,29 @@ pool_max="${BK_GUARD_POOL_MAX:-85}"
 warming_grace="${BK_GUARD_WARMING_GRACE_S:-0}"
 [[ "$warming_grace" =~ ^[0-9]+$ ]] && [ "$warming_grace" -le 1800 ] || { echo "BK_GUARD_WARMING_GRACE_S must be 0-1800 seconds" >&2; exit 2; }
 
+# `dune status` says WARMING when the Director's declarations to Funcom (FLS) are waiting, even though every map is READY
+# (Funcom's API answering HTTP 500 did this for days). That is outside this host and says nothing about the load the backup
+# adds, so accept it: Overall WARMING, at least one map row, every map row READY, and the gateway DB monitor OK. Anything
+# less (no map table in the output, a map warming or in error, ISSUE, STOPPED) is still not READY.
+fls_only_warming() {
+  printf '%s\n' "$1" | awk '
+    /^Overall:/ { overall = $2 }
+    /^=== / { sect = $0; next }
+    sect == "=== Game servers ===" && NF >= 3 && $1 != "MAP" && $1 !~ /^Note:/ { rows++; if ($2 != "READY") bad = 1 }
+    sect == "=== Funcom/FLS summary ===" && /^Gateway DB monitoring:/ { gw = $NF }
+    END { exit !(overall == "WARMING" && rows > 0 && !bad && gw == "OK") }'
+}
+
 gt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
 # Print the reason(s) the system looks unhealthy, or nothing when it looks fine.
 sample() {
   local reasons="" st io mem util line pool
   if [ -n "$game_ssh" ]; then
-    st="$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=6 -- "$game_ssh" 'cd ~/dune-awakening-selfhost-docker && dune status 2>&1 | sed -n 1,8p' 2>/dev/null)" || st=""
+    st="$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=6 -- "$game_ssh" 'cd ~/dune-awakening-selfhost-docker && dune status 2>&1 | sed -n 1,90p' 2>/dev/null)" || st=""
     if [ -z "$st" ]; then
       reasons="$reasons the game host did not answer;"
-    elif ! printf '%s\n' "$st" | grep -q 'Overall: *READY'; then
+    elif ! printf '%s\n' "$st" | grep -q 'Overall: *READY' && ! fls_only_warming "$st"; then
       reasons="$reasons the game is not READY ($(printf '%s\n' "$st" | sed -n 's/^Overall: *//p' | head -n 1));"
     fi
   fi
