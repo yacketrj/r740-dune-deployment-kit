@@ -17,5 +17,10 @@ scrape_configs:
       node: ['1']
     static_configs:
       - targets: ['127.0.0.1:9221']
+  - job_name: host-ipmi
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ['127.0.0.1:9290']
 remote_write:
   - url: http://192.168.20.10:9091/api/v1/write  # REPLACE with the dune-prod VLAN IP

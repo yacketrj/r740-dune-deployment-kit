@@ -225,6 +225,21 @@ def hostvm():
                 "From the Proxmox API, per VM, as seen by the hypervisor.",
                 [target('pve_memory_usage_bytes{id=~"qemu/.*"} / pve_memory_size_bytes{id=~"qemu/.*"} * on(id) group_left(name) pve_guest_info', "{{name}}")],
                 12, 29, 12, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(vm_colors)))
+    temp_q = ('label_replace(label_replace(ipmi_temperature_celsius{source="r740-host"},'
+              '"name","CPU1","id","1"),"name","CPU2","id","2")')
+    p.append(ts("Board temperatures (IPMI)",
+                "CPU packages, air inlet (case intake) and exhaust, from the board's sensors via in-band IPMI (15 s).",
+                [target(temp_q, "{{name}}")],
+                0, 37, 12, 8, unit="celsius", mn=0,
+                overrides=color_overrides({"CPU1": BLUE, "CPU2": ORANGE, "Inlet Temp": AQUA, "Exhaust Temp": YELLOW})))
+    p.append(ts("Fan speed (IPMI)",
+                "Six chassis fans. A fan dropping or stopping shows here before temperatures rise.",
+                [target('ipmi_fan_speed_rpm{source="r740-host"}', "{{name}}")],
+                12, 37, 6, 8, unit="rotrpm", mn=0, decimals=0))
+    p.append(ts("Server power draw (IPMI)",
+                "Whole-server power in watts (DCMI).",
+                [target('ipmi_dcmi_power_consumption_watts{source="r740-host"}', "power")],
+                18, 37, 6, 8, unit="watt", mn=0, fixed=MAGENTA, decimals=0))
     return dashboard("dune-host", "Dune - Host, VM and services",
                      "R740 host clocks, temperatures and NUMA, dune-prod guest load, and supporting services (meta#99).",
                      p, ["dune", "host"])

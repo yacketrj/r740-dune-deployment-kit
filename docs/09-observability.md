@@ -20,8 +20,13 @@ Retention is 30 days or 8 GB on dune-prod (Core's default is 7 days / 2 GB).
 Per-VM CPU and memory come from the Proxmox API through `prometheus-pve-exporter`
 with a read-only token (15 s; job `host-pve`, pushed by the host agent).
 
-Not collected yet: iDRAC temperatures, fans and power (a Redfish exporter; change
-the iDRAC factory password first, and use a dedicated read-only Redfish user).
+Board temperatures (CPU packages, inlet, exhaust), fan speeds and server power draw
+come from the board's sensors through in-band IPMI (`prometheus-ipmi-exporter` on
+the host, 15 s; job `host-ipmi`). It needs no iDRAC login.
+
+Not collected yet: per-DIMM and per-PSU readings (they need the iDRAC's Redfish
+interface: change the iDRAC factory password first, and use a dedicated read-only
+Redfish user).
 
 ## 2. How it fits together
 
@@ -117,6 +122,29 @@ request without `cluster` and `node` returns only partial data. Undo:
 `systemctl disable --now prometheus-pve-exporter`, `pveum user delete metrics@pve`
 (removes its token and ACLs), `rm -r /opt/pve-exporter /etc/prometheus-pve-exporter`.
 
+### Board sensors (in-band IPMI)
+
+`/dev/ipmi0` exists on the host, so the sensors can be read locally with no network
+path and no credentials. Debian package, same no-auto-start trick as above:
+
+```bash
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d
+apt-get install -y --no-install-recommends prometheus-ipmi-exporter
+rm -f /usr/sbin/policy-rc.d
+install -m 644 observability/host/ipmi_local_inband.yml /etc/prometheus/
+install -m 644 observability/host/prometheus-ipmi-exporter.default /etc/default/prometheus-ipmi-exporter
+install -D -m 644 observability/host/prometheus-ipmi-exporter.override.conf /etc/systemd/system/prometheus-ipmi-exporter.service.d/override.conf
+systemctl daemon-reload && systemctl enable --now prometheus-ipmi-exporter
+systemctl reload prometheus      # after adding the host-ipmi job from prometheus-agent.yml
+```
+
+`/dev/ipmi0` is root-only, so the drop-in runs the exporter as root with
+confinement (`ProtectSystem=strict`, no new privileges, restricted address
+families); it listens on `127.0.0.1:9290` only. A scrape takes about 1.2 s, so keep
+the interval at 15 s or more. Undo: `systemctl disable --now
+prometheus-ipmi-exporter`, remove the drop-in, `apt-get remove` the package, and
+delete the `host-ipmi` job.
+
 ## 5. Dashboards and burst tracking
 
 Two dashboards, provisioned in the folder "Dune":
@@ -126,7 +154,8 @@ Two dashboards, provisioned in the folder "Dune":
   CPU pressure.
 - **Dune - Host, VM and services:** host core clocks, temperatures, NUMA misses,
   guest load and memory, service CPU, and per-VM CPU and memory from the Proxmox
-  API. (The hypervisor's memory view of a VM includes the guest's file cache, so
+  API, board temperatures (CPU, inlet, exhaust), fan speeds and power draw from
+  IPMI. (The hypervisor's memory view of a VM includes the guest's file cache, so
   a VM can read near 100% without the game using that much.)
 
 The recording rules in `prometheus/rules-extra/dune-bursts.yml` define a burst as a
