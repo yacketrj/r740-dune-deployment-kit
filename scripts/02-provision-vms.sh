@@ -16,6 +16,12 @@
 #           - Ubuntu Server 26.04 LTS ISO uploaded to Proxmox local storage
 #             (Datacenter -> local storage -> ISO Images -> Upload)
 #
+# NOTE (2026-11-20): the sizing below is the original plan and no longer matches
+# the live host (dune-prod is now 60 vCPU / 192 GB across both NUMA nodes,
+# dune-dev 8 vCPU / 26 GB). See docs/07-live-tuning-2026-11.md. For a rebuilt
+# VM also use `--vga std` (QXL wedged the guest shutdown) and install
+# scripts/guest/dune-game-pin.service in the guest.
+#
 # SIZING RATIONALE (2026-08-07 revision — 2x Sietch @40p + 4x DD + dynamics):
 #   dune-prod: 152 GB RAM, 40 vCPU, pinned to ALL of NUMA node 0's logical
 #              CPUs (40 logical CPUs = all 20 physical cores' worth of
