@@ -61,6 +61,18 @@ def fmt_network(rx_bits, tx_bits):
     return "\u2193 %.2f \u00b7 \u2191 %.2f Mbit/s" % (rx_bits / 1e6, tx_bits / 1e6)
 
 
+PLAN_MBIT = float(os.environ.get("INTERNET_PLAN_MBIT", "2000"))  # the fibre plan, Mbit/s each way
+
+
+def fmt_internet(rx_bits, tx_bits):
+    """The internet port as the gateway sees it: down, up, and the busier direction as a share of the plan."""
+    if rx_bits is None or tx_bits is None:
+        return None
+    share = max(rx_bits, tx_bits) / (PLAN_MBIT * 1e6) * 100
+    plan = "%g Gbit/s" % (PLAN_MBIT / 1000) if PLAN_MBIT >= 1000 else "%g Mbit/s" % PLAN_MBIT
+    return "\u2193 %.2f \u00b7 \u2191 %.2f Mbit/s (%s of %s)" % (rx_bits / 1e6, tx_bits / 1e6, "<0.01%" if share < 0.01 else "%.2f%%" % share, plan)
+
+
 def build():
     up = q("dune_api_up")
     ready = q("dune_server_ready")
@@ -75,6 +87,8 @@ def build():
              '/node_filesystem_size_bytes{job="dune-node",device=~"/dev/mapper/.*"}')
     rx = q('sum(rate(node_network_receive_bytes_total{job="dune-node",device="eth0"}[1m]))*8')
     tx = q('sum(rate(node_network_transmit_bytes_total{job="dune-node",device="eth0"}[1m]))*8')
+    wan_rx = q("sum(rate(unifi_wan_receive_bytes_total[1m]))*8")
+    wan_tx = q("sum(rate(unifi_wan_transmit_bytes_total[1m]))*8")
     main = q("max(max_over_time(dune:map_main_thread:cores[5m]))")
     spikes = q("sum(changes(dune:map_main_thread_hot[1h]))/2")
     steal = q("max_over_time(dune:cpu_steal:ratio[5m])")
@@ -120,7 +134,7 @@ def build():
         f("Server CPU", fmt_pct(cpu)),
         f("Memory", fmt_pct(mem)),
         f("Disk", fmt_pct(disk)),
-        f("Network", fmt_network(rx, tx)),
+        f("Internet", fmt_internet(wan_rx, wan_tx)) if fmt_internet(wan_rx, wan_tx) else f("Network", fmt_network(rx, tx)),
         f("Server uptime", fmt_dur(uptime)),
     ]
     if steal is not None and steal > 0.10:

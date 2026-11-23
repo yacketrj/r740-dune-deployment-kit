@@ -220,6 +220,26 @@ the always-on maps because story-map partitions are dormant by design. Undo:
 `docker compose -f docker-compose.alertmanager.yml down`, delete the webhook in
 Discord, remove the `alerting:` block.
 
+### Internet link (UniFi gateway)
+
+Bandwidth that can affect players is the internet link, which neither the VM nor the host's network card sees.
+`prometheus-unifi-exporter` (`observability/host/unifi-exporter/`) reads ONE read-only endpoint on the
+gateway (`stat/device`; `stat/health` takes about 15 s and is not used) every 15 s and exposes the internet
+port's counters, latency, availability and the gateway's last speed test as `unifi_wan_*`, scraped by the host agent
+(`host-unifi` job). It listens on 127.0.0.1:9291 only, runs as a throwaway unprivileged user (systemd
+`DynamicUser`), and gets the API token as a systemd credential (`LoadCredential`), so the service never has access
+to the token's home directory. GET only (tested). A failed read reports `unifi_exporter_scrape_success 0` and logs only
+the error class, never the token or address (tested). Install: copy the script to `/usr/local/lib/unifi-exporter/`,
+the unit to `/etc/systemd/system/`, point `LoadCredential` at your token file, `systemctl enable --now`,
+and add a `host-unifi` job for `127.0.0.1:9291` to the host agent's `prometheus.yml`. Undo: `systemctl disable --now
+prometheus-unifi-exporter`, remove the unit and the job.
+
+Shown as an "Internet" row on the host dashboard (traffic, share of the plan, latency and port drops), six tiles on the
+Overview, and an `Internet: ↓ x · ↑ y Mbit/s (z% of 2 Gbit/s)` field on the status message (it falls back to the VM's network
+if the gateway data is missing). The plan speed is `INTERNET_PLAN_MBIT` (status job) and `INTERNET_PLAN_MBIT` in
+`gen_dashboards.py`; the first reading (2026-11-23): port 2.5 GbE, 3 ms, no errors or drops, last speed test 1,792 down
+and 2,112 up Mbit/s on a 2 Gbit/s plan, traffic under 0.1% of the plan.
+
 ### Player-facing status message (Discord)
 
 `obs-status-post` (`docker-compose.status-post.yml`, `status-post/status_post.py`)

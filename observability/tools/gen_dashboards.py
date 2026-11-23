@@ -14,6 +14,7 @@ import dune_theme as theme
 DS = {"type": "prometheus", "uid": "prometheus"}
 BLUE, ORANGE, AQUA, YELLOW, MAGENTA, GREEN = "#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#0ca30c"
 RED = "#e66767"
+INTERNET_PLAN_MBIT = 2000  # the operator's fibre plan, Mbit/s each way; used for the share-of-plan panels
 VIOLET, MUTED = "#9085e9", "#898781"
 MAP_COLORS = {
     "Survival_1_p1": BLUE,
@@ -151,7 +152,7 @@ TITLE_COLORS = {
     "Host core clock": {"slowest": AQUA},
 }
 # a flat zero line should still get a readable axis: soft maximum per panel title
-SOFT_MAX = {"Host network link use": 0.05, "Bursts per interval, by map": 4, "Guest vCPUs above 90% busy": 4, "Players online": 5, "Bursts alongside players": 5,
+SOFT_MAX = {"Host network link use": 0.05, "Internet use (share of the plan)": 0.01, "Bursts per interval, by map": 4, "Guest vCPUs above 90% busy": 4, "Players online": 5, "Bursts alongside players": 5,
             "Messages waiting": 10, "Unacknowledged messages": 10, "Swap used by map containers": 1048576,
             "Swap activity": 1048576, "Network errors and drops": 1, "Connections": 20}
 
@@ -332,6 +333,22 @@ def hostvm():
                 "Whole-server power in watts (DCMI).",
                 [target('ipmi_dcmi_power_consumption_watts{source="r740-host"}', "power")],
                 18, 37, 6, 8, unit="watt", mn=0, fixed=MAGENTA, decimals=0))
+    wan_in = "rate(unifi_wan_receive_bytes_total[1m]) * 8"
+    wan_out = "rate(unifi_wan_transmit_bytes_total[1m]) * 8"
+    p.append(ts("Internet traffic",
+                "What crosses the gateway's internet port, in and out (1 min), from the gateway's own counters. This is the link that can limit players.",
+                [target(wan_in, "in (download)"), target(wan_out, "out (upload)")],
+                0, 53, 8, 8, unit="bps", mn=0, overrides=color_overrides({"in (download)": BLUE, "out (upload)": ORANGE})))
+    p.append(ts("Internet use (share of the plan)",
+                "The same traffic as a share of the %d Mbit/s plan. Near zero is normal; sustained high values mean the internet link is the limit." % INTERNET_PLAN_MBIT,
+                [target("%s / (%d * 1e6)" % (wan_in, INTERNET_PLAN_MBIT), "in (download)"),
+                 target("%s / (%d * 1e6)" % (wan_out, INTERNET_PLAN_MBIT), "out (upload)")],
+                8, 53, 8, 8, unit="percentunit", mn=0, decimals=2, overrides=color_overrides({"in (download)": BLUE, "out (upload)": ORANGE})))
+    p.append(ts("Internet latency and port drops",
+                "Latency from the gateway to the internet as the gateway measures it (ms), and packets the internet port dropped or errored per second. Both share one axis; the second should sit at zero and the first stay low and flat.",
+                [target("unifi_wan_latency_ms", "latency (ms)"),
+                 target("rate(unifi_wan_receive_dropped_total[5m]) + rate(unifi_wan_transmit_dropped_total[5m]) + rate(unifi_wan_receive_errors_total[5m]) + rate(unifi_wan_transmit_errors_total[5m])", "drops and errors per second")],
+                16, 53, 8, 8, mn=0, decimals=1, overrides=color_overrides({"latency (ms)": AQUA, "drops and errors per second": RED})))
     g, h = 'job="dune-node"', 'job="host-node"'
     nicsel = 'job="host-node",device="nic0"'
     p.append(ts("Host network link use",
@@ -353,18 +370,18 @@ def hostvm():
                 "Packets the NIC reported as errored or dropped, per second: guest eth0 and host nic0, in and out. Should sit at zero; steady non-zero values point at a cable, switch port, driver or full queue.",
                 [target(bad(g, "eth0", "receive"), "guest in"), target(bad(g, "eth0", "transmit"), "guest out"),
                  target(bad(h, "nic0", "receive"), "host in"), target(bad(h, "nic0", "transmit"), "host out")],
-                0, 53, 12, 8, mn=0, decimals=2, overrides=color_overrides(nic)))
+                0, 61, 12, 8, mn=0, decimals=2, overrides=color_overrides(nic)))
     p.append(ts("TCP retransmits",
                 "Share of outgoing TCP segments that had to be sent again (5 min). Rises with packet loss or a congested path; a few tenths of a percent is normal.",
                 [target('rate(node_netstat_Tcp_RetransSegs{%s}[5m]) / rate(node_netstat_Tcp_OutSegs{%s}[5m])' % (g, g), "guest"),
                  target('rate(node_netstat_Tcp_RetransSegs{%s}[5m]) / rate(node_netstat_Tcp_OutSegs{%s}[5m])' % (h, h), "host")],
-                12, 53, 12, 8, unit="percentunit", mn=0, overrides=color_overrides({"guest": BLUE, "host": AQUA})))
+                12, 61, 12, 8, unit="percentunit", mn=0, overrides=color_overrides({"guest": BLUE, "host": AQUA})))
     dsk = {"guest": BLUE, "host": AQUA}
     p.append(ts("Disk busy",
                 "Share of time the system disk had I/O in flight (5 min): guest sda and host sda. Near 100% means the disk is the limit.",
                 [target('rate(node_disk_io_time_seconds_total{%s,device="sda"}[5m])' % g, "guest"),
                  target('rate(node_disk_io_time_seconds_total{%s,device="sda"}[5m])' % h, "host")],
-                0, 61, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
+                0, 69, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
     lat = {"guest read": BLUE, "guest write": ORANGE, "host read": AQUA, "host write": YELLOW}
     def lt(side, dev, kind):
         return ('rate(node_disk_%s_time_seconds_total{%s,device="%s"}[5m]) / rate(node_disk_%ss_completed_total{%s,device="%s"}[5m])'
@@ -373,29 +390,29 @@ def hostvm():
                 "Average time per completed read and write (5 min). Gaps mean no I/O in the window. Sustained tens of milliseconds is a slow disk.",
                 [target(lt(g, "sda", "read"), "guest read"), target(lt(g, "sda", "write"), "guest write"),
                  target(lt(h, "sda", "read"), "host read"), target(lt(h, "sda", "write"), "host write")],
-                8, 61, 8, 8, unit="s", mn=0, overrides=color_overrides(lat)))
+                8, 69, 8, 8, unit="s", mn=0, overrides=color_overrides(lat)))
     p.append(ts("Disk I/O pressure",
                 "Share of time tasks were waiting on disk I/O (Linux pressure stall, 1 min). Zero is healthy.",
                 [target('rate(node_pressure_io_waiting_seconds_total{%s}[1m])' % g, "guest"),
                  target('rate(node_pressure_io_waiting_seconds_total{%s}[1m])' % h, "host")],
-                16, 61, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
+                16, 69, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
     p.append(ts("Host storage used",
                 "Share used of the Proxmox thin pool that holds the VM disks (local-lvm) and of the host's root storage (local). A full thin pool freezes every VM on it.",
                 [target('pve_disk_usage_bytes{id="storage/DA-1/local-lvm"} / pve_disk_size_bytes{id="storage/DA-1/local-lvm"}', "thin pool (local-lvm)"),
                  target('pve_disk_usage_bytes{id="storage/DA-1/local"} / pve_disk_size_bytes{id="storage/DA-1/local"}', "host root (local)")],
-                0, 69, 12, 8, unit="percentunit", mn=0, mx=1,
+                0, 77, 12, 8, unit="percentunit", mn=0, mx=1,
                 overrides=color_overrides({"thin pool (local-lvm)": BLUE, "host root (local)": ORANGE})))
     sw = {"guest in": BLUE, "guest out": ORANGE, "host in": AQUA, "host out": YELLOW}
     p.append(ts("Swap activity",
                 "Memory moved to and from swap, bytes per second (5 min). In is a page read back from swap, out is a page written. Should be zero; sustained activity means memory pressure.",
                 [target('rate(node_vmstat_pswpin{%s}[5m]) * 4096' % g, "guest in"), target('rate(node_vmstat_pswpout{%s}[5m]) * 4096' % g, "guest out"),
                  target('rate(node_vmstat_pswpin{%s}[5m]) * 4096' % h, "host in"), target('rate(node_vmstat_pswpout{%s}[5m]) * 4096' % h, "host out")],
-                12, 69, 12, 8, unit="Bps", mn=0, overrides=color_overrides(sw)))
+                12, 77, 12, 8, unit="Bps", mn=0, overrides=color_overrides(sw)))
     return dashboard("dune-host", "Arrakis \u00b7 Host and VMs",
                      "R740 host clocks, temperatures and NUMA, dune-prod guest load, and supporting services (meta#99).",
                      p, ["dune", "host"], banner=("ARRAKIS", "The R740, its VMs and services"),
                      rows=[(0, "At a glance"), (4, "CPU, clocks and temperature"), (21, "Services and VMs"),
-                           (37, "Board sensors (IPMI)"), (45, "Network traffic"), (53, "Network health"), (61, "Disks"), (69, "Storage and swap")])
+                           (37, "Board sensors (IPMI)"), (45, "Network traffic"), (53, "Internet (the gateway's port)"), (61, "Network health"), (69, "Disks"), (77, "Storage and swap")])
 
 
 def game():
@@ -569,21 +586,38 @@ def overview():
         stat("Queue backlog", "Messages waiting in RabbitMQ across both brokers. Zero is healthy.",
              "sum(rabbitmq_queue_messages)", 20, 4, decimals=0, warn_at=100, red_at=1000),
     ]
+    # the busier direction, max(a, b) = (a + b + |a - b|) / 2, as a share of the plan (one series each, same labels)
+    a, b = "rate(unifi_wan_receive_bytes_total[1m])", "rate(unifi_wan_transmit_bytes_total[1m])"
+    share = "((%s + %s + abs(%s - %s)) / 2) * 8 / (%d * 1e6)" % (a, b, a, b, INTERNET_PLAN_MBIT)
+    p += [
+        stat("Internet down", "Download traffic through the gateway's internet port now (1 min).",
+             "sum(rate(unifi_wan_receive_bytes_total[1m])) * 8 / 1e6", 0, 8, unit="suffix: Mbit/s", decimals=2),
+        stat("Internet up", "Upload traffic through the gateway's internet port now (1 min). This is the direction game traffic to players uses.",
+             "sum(rate(unifi_wan_transmit_bytes_total[1m])) * 8 / 1e6", 4, 8, unit="suffix: Mbit/s", decimals=2),
+        stat("Internet use", "The busier direction as a share of the %d Mbit/s plan." % INTERNET_PLAN_MBIT,
+             share, 8, 8, unit="percentunit", decimals=2, warn_at=0.5, red_at=0.8),
+        stat("Internet latency", "Latency from the gateway to the internet, as the gateway measures it.",
+             "unifi_wan_latency_ms", 12, 8, unit="suffix: ms", decimals=0, warn_at=30, red_at=80),
+        stat("Internet port", "Whether the gateway's internet port is up.", "unifi_wan_up", 16, 8, decimals=0,
+             words=up_words()),
+        stat("Last speed test", "Download speed of the gateway's most recent speed test (Mbit/s); the upload result is on the host dashboard's Internet row.",
+             "unifi_wan_speedtest_download_mbps", 20, 8, unit="suffix: Mbit/s", decimals=0),
+    ]
     tick_colors = {"survival-1": BLUE, "survival-1-37": ORANGE, "deepdesert-1-8": AQUA, "deepdesert-1-36": YELLOW, "overmap": MAGENTA}
     p.append(ts("Server tick rate per map",
                 "Ticks per second of each map server, from the game's own log. The target is 20.",
                 [target("dune:game_tick_rate:hz", "{{server}}")],
-                0, 8, 12, 8, unit="hertz", mn=10, mx=22, overrides=color_overrides(tick_colors), decimals=1))
+                0, 12, 12, 8, unit="hertz", mn=10, mx=22, overrides=color_overrides(tick_colors), decimals=1))
     p.append(ts("Players online", "Players online now, from the console API.",
-                [target("dune_players_online", "players online")], 12, 8, 12, 8, decimals=0, fixed=BLUE))
+                [target("dune_players_online", "players online")], 12, 12, 12, 8, decimals=0, fixed=BLUE))
     p.append(ts("Main thread CPU per map",
                 "The game's main thread per map is single-threaded, so this is the limit. 1.0 means one core saturated; the red line is the 0.9 burst threshold.",
                 [target("dune:map_main_thread:cores", "{{groupname}}")],
-                0, 16, 12, 8, mn=0, mx=1.2, overrides=color_overrides(MAP_COLORS), threshold=0.9, decimals=2))
+                0, 20, 12, 8, mn=0, mx=1.2, overrides=color_overrides(MAP_COLORS), threshold=0.9, decimals=2))
     p.append(ts("Host temperatures", "Hottest and average host temperature sensor.",
                 [target('max(node_hwmon_temp_celsius{source="r740-host"})', "hottest"),
                  target('avg(node_hwmon_temp_celsius{source="r740-host"})', "average")],
-                12, 16, 12, 8, unit="celsius", mn=0, overrides=color_overrides({"hottest": ORANGE, "average": BLUE})))
+                12, 20, 12, 8, unit="celsius", mn=0, overrides=color_overrides({"hottest": ORANGE, "average": BLUE})))
     links = [("dune-bursts", "Performance", "Main thread, bursts, tick rate"),
              ("dune-game", "Game state", "Players, readiness, memory"),
              ("dune-host", "Host and VMs", "Clocks, temperatures, network, disks"),
@@ -594,13 +628,13 @@ def overview():
         f'<span style="color:{theme.GOLD};font-size:15px;letter-spacing:.06em;text-transform:uppercase">{t}</span><br>'
         f'<span style="color:{theme.DIM};font-size:12px">{d}</span></a>' for u, t, d in links)
     p.append({"id": nid(), "type": "text", "title": "", "transparent": True,
-              "gridPos": {"x": 0, "y": 24, "w": 24, "h": 3},
+              "gridPos": {"x": 0, "y": 28, "w": 24, "h": 3},
               "options": {"mode": "html", "content": f'<div style="display:flex;flex-wrap:wrap">{cells}</div>',
                           "code": {"language": "plaintext", "showLineNumbers": False, "showMiniMap": False}}})
     return dashboard("dune-overview", "Arrakis \u00b7 Overview",
                      "The whole server at a glance: state, players, tick rate, load, temperature, storage and alerts (meta#99). Private.",
                      p, ["dune", "overview"], banner=("ARRAKIS", "The server at a glance"),
-                     rows=[(0, "Right now"), (8, "Last 6 hours"), (24, "Dashboards")])
+                     rows=[(0, "Right now"), (8, "Internet"), (12, "Last 6 hours"), (28, "Dashboards")])
 
 
 def main():
