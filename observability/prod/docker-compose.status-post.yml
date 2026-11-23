@@ -21,9 +21,13 @@ services:
       STATUS_TITLE: "Server status"
       STATUS_USERNAME: "Server Status"
       STATUS_INTERVAL: "300"
+      # Set RELAY_URL (in .env next to this file) to push to the Mentat bot instead of a webhook; unset = webhook mode.
+      RELAY_URL: "${RELAY_URL:-}"
+      RELAY_TOKEN_FILE: /run/secrets/status-relay-token
     volumes:
       - ./status-post/status_post.py:/app/status_post.py:ro
       - ./alertmanager/discord-webhook.url:/run/secrets/discord-webhook:ro
+      - ./status-post/status-relay-token:/run/secrets/status-relay-token:ro
       - ./status-post/state:/state
     networks: [dune-net]
 networks:
