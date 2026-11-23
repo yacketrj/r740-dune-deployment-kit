@@ -178,6 +178,21 @@ the always-on maps because story-map partitions are dormant by design. Undo:
 `docker compose -f docker-compose.alertmanager.yml down`, delete the webhook in
 Discord, remove the `alerting:` block.
 
+### Player-facing status message (Discord)
+
+`obs-status-post` (`docker-compose.status-post.yml`, `status-post/status_post.py`)
+keeps one message in a Discord channel up to date, editing it in place every 5
+minutes so the channel is not spammed. It shows status, players, maps online, a
+game-performance rating (Smooth under 0.6 of a core on the busiest map main thread,
+Busy to 0.9, Heavy load above) with lag spikes in the last hour, server CPU, memory,
+disk, network in and out, and uptime. It is written for players: no addresses, host
+names, temperatures or player names. It reads from Prometheus and uses the same
+webhook file as alerting (a second webhook is better if you want a different name
+or channel). The first run posts the message and stores its id in `status-post/state`;
+if the message is deleted it posts a new one. Preview without sending:
+`python status_post.py --dry-run`. Undo: `docker compose -f
+docker-compose.status-post.yml down`, then delete the message in Discord.
+
 ### Board sensors (in-band IPMI)
 
 `/dev/ipmi0` exists on the host, so the sensors can be read locally with no network

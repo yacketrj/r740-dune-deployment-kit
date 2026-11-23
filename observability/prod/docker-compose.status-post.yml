@@ -1,0 +1,30 @@
+# Live status message for a Discord channel (meta#99).
+# Start: COMPOSE_IGNORE_ORPHANS=true docker compose -f docker-compose.status-post.yml up -d
+name: obs
+services:
+  obs-status-post:
+    image: python:3.12-alpine
+    container_name: obs-status-post
+    command: ["python", "-u", "/app/status_post.py"]
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cpus: 0.25
+    mem_limit: 64m
+    environment:
+      PROM_URL: http://dune-prometheus:9090
+      WEBHOOK_FILE: /run/secrets/discord-webhook
+      STATE_FILE: /state/message.json
+      STATUS_TITLE: "Server status"
+      STATUS_USERNAME: "Server Status"
+      STATUS_INTERVAL: "300"
+    volumes:
+      - ./status-post/status_post.py:/app/status_post.py:ro
+      - ./alertmanager/discord-webhook.url:/run/secrets/discord-webhook:ro
+      - ./status-post/state:/state
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true
