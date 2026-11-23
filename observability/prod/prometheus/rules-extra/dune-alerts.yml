@@ -1,0 +1,102 @@
+# Alert rules for the Dune stack (meta#99). Symptom-based; each fires only after "for".
+# Dormant story-map partitions read ready=0 by design, so readiness alerts are limited
+# to the always-on maps (Survival_1, Overmap).
+groups:
+  - name: dune-alerts
+    interval: 15s
+    rules:
+      - alert: DuneConsoleApiDown
+        expr: dune_api_up == 0
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Console API unreachable from the monitoring adapter"
+          description: "The adapter cannot read the console API (or its key was revoked). Player and map-state panels are blind."
+
+      - alert: DuneServerNotReady
+        expr: dune_server_ready == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Game server is not READY"
+          description: "Console reports overall status {{ $labels.overall }} for over 3 minutes."
+
+      - alert: DunePartitionDown
+        expr: dune_partition_ready{map=~"Survival_1|Overmap"} == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.map }} partition {{ $labels.partition }} ({{ $labels.label }}) is not ready"
+          description: "An always-on partition has been not ready for over 3 minutes."
+
+      - alert: DuneFlsCheckFailing
+        expr: dune_fls_ok == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Funcom FLS check failing: {{ $labels.check }}"
+          description: "The FLS declaration check {{ $labels.check }} has not been OK for 5 minutes (Funcom outage or token problem)."
+
+      - alert: DuneBurstRateHigh
+        expr: sum(changes(dune:map_main_thread_hot[10m])) / 2 >= 4
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} map main-thread bursts in 10 minutes"
+          description: "Map main threads hit 0.9 core at least four times in 10 minutes (baseline before the BIOS change was about 1.2 events per hour). See the Bursts dashboard."
+
+      - alert: DuneMapMemoryHigh
+        expr: dune_map_memory_used_bytes / dune_map_memory_limit_bytes > 0.92
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.container }} memory above 92% of its limit"
+          description: "A map container has been above 92% of its 16 GiB limit for 10 minutes."
+
+      - alert: DuneMapSwapUsed
+        expr: dune_map_swap_used_bytes > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.container }} is using swap"
+          description: "Swap use by a game container should stay at zero."
+
+      - alert: DuneGuestCpuSteal
+        expr: dune:cpu_steal:ratio > 0.10
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Guest CPU steal above 10%"
+          description: "The hypervisor is taking more than 10% of the guest's CPU time for 5 minutes (host contention)."
+
+      - alert: R740CpuHot
+        expr: max(ipmi_temperature_celsius{name=~"Temp"}) > 80
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "R740 CPU temperature {{ $value | printf \"%.0f\" }} C"
+          description: "A CPU package has been above 80 C for 5 minutes (normal under load is below 60 C)."
+
+      - alert: R740InletWarm
+        expr: max(ipmi_temperature_celsius{name="Inlet Temp"}) > 35
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "R740 inlet air {{ $value | printf \"%.0f\" }} C"
+          description: "Air entering the chassis is above 35 C for 10 minutes. Check room cooling."
+
+      - alert: R740FanFailing
+        expr: ipmi_fan_speed_rpm{source="r740-host"} < 1000
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "R740 {{ $labels.name }} is at {{ $value | printf \"%.0f\" }} RPM"
+          description: "A chassis fan has stopped or is far below its normal 5,500 to 6,000 RPM."
+
+      - alert: R740HostMetricsMissing
+        expr: absent(node_cpu_scaling_frequency_hertz{source="r740-host"})
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Host metrics stopped arriving from the R740"
+          description: "The host agent has not pushed for 3 minutes (agent stopped, write proxy down, or network)."

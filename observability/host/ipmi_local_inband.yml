@@ -1,0 +1,9 @@
+# In-band IPMI only (/dev/ipmi0), no iDRAC credentials. meta#99.
+modules:
+  default:
+    collectors:
+      - ipmi
+      - dcmi
+      - chassis
+      - sel
+    exclude_sensor_ids: []

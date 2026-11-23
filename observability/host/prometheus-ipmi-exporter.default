@@ -1,0 +1,1 @@
+ARGS="--config.file=/etc/prometheus/ipmi_local_inband.yml --web.listen-address=127.0.0.1:9290"

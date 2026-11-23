@@ -1,0 +1,27 @@
+# Alertmanager (meta#99).
+# Start: COMPOSE_IGNORE_ORPHANS=true docker compose -f docker-compose.alertmanager.yml up -d
+name: obs
+services:
+  obs-alertmanager:
+    image: quay.io/prometheus/alertmanager:v0.28.0
+    container_name: obs-alertmanager
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cpus: 0.25
+    mem_limit: 128m
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=:9093
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/discord-webhook-bot.url:/run/secrets/discord-webhook:ro
+      - ./alertmanager/data:/alertmanager
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true
