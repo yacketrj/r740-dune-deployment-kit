@@ -85,7 +85,8 @@ def ts(title, desc, targets, x, y, w, h, unit="none", mn=0, mx=None, overrides=N
                        "calcs": ["max", "lastNotNull"] if len(targets) > 1 else []},
             "tooltip": {"mode": "multi", "sort": "desc"},
         },
-        "targets": targets,
+        # Grafana rejects duplicate refIds in one panel, so give each target its own letter.
+        "targets": [dict(t, refId=chr(65 + i)) for i, t in enumerate(targets)],
     }
 
 

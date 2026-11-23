@@ -1619,7 +1619,7 @@
           },
           "expr": "sum(rate(node_network_transmit_errs_total{job=\"dune-node\",device=\"eth0\"}[5m]) + rate(node_network_transmit_drop_total{job=\"dune-node\",device=\"eth0\"}[5m]))",
           "legendFormat": "guest out",
-          "refId": "A"
+          "refId": "B"
         },
         {
           "datasource": {
@@ -1628,7 +1628,7 @@
           },
           "expr": "sum(rate(node_network_receive_errs_total{job=\"host-node\",device=\"nic0\"}[5m]) + rate(node_network_receive_drop_total{job=\"host-node\",device=\"nic0\"}[5m]))",
           "legendFormat": "host in",
-          "refId": "A"
+          "refId": "C"
         },
         {
           "datasource": {
@@ -1637,7 +1637,7 @@
           },
           "expr": "sum(rate(node_network_transmit_errs_total{job=\"host-node\",device=\"nic0\"}[5m]) + rate(node_network_transmit_drop_total{job=\"host-node\",device=\"nic0\"}[5m]))",
           "legendFormat": "host out",
-          "refId": "A"
+          "refId": "D"
         }
       ]
     },
@@ -1741,7 +1741,7 @@
           },
           "expr": "rate(node_netstat_Tcp_RetransSegs{job=\"host-node\"}[5m]) / rate(node_netstat_Tcp_OutSegs{job=\"host-node\"}[5m])",
           "legendFormat": "host",
-          "refId": "A"
+          "refId": "B"
         }
       ]
     },
@@ -1846,7 +1846,7 @@
           },
           "expr": "rate(node_disk_io_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m])",
           "legendFormat": "host",
-          "refId": "A"
+          "refId": "B"
         }
       ]
     },
@@ -1980,7 +1980,7 @@
           },
           "expr": "rate(node_disk_write_time_seconds_total{job=\"dune-node\",device=\"sda\"}[5m]) / rate(node_disk_writes_completed_total{job=\"dune-node\",device=\"sda\"}[5m])",
           "legendFormat": "guest write",
-          "refId": "A"
+          "refId": "B"
         },
         {
           "datasource": {
@@ -1989,7 +1989,7 @@
           },
           "expr": "rate(node_disk_read_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m]) / rate(node_disk_reads_completed_total{job=\"host-node\",device=\"sda\"}[5m])",
           "legendFormat": "host read",
-          "refId": "A"
+          "refId": "C"
         },
         {
           "datasource": {
@@ -1998,7 +1998,7 @@
           },
           "expr": "rate(node_disk_write_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m]) / rate(node_disk_writes_completed_total{job=\"host-node\",device=\"sda\"}[5m])",
           "legendFormat": "host write",
-          "refId": "A"
+          "refId": "D"
         }
       ]
     },
@@ -2103,7 +2103,7 @@
           },
           "expr": "rate(node_pressure_io_waiting_seconds_total{job=\"host-node\"}[1m])",
           "legendFormat": "host",
-          "refId": "A"
+          "refId": "B"
         }
       ]
     },
@@ -2208,7 +2208,7 @@
           },
           "expr": "pve_disk_usage_bytes{id=\"storage/DA-1/local\"} / pve_disk_size_bytes{id=\"storage/DA-1/local\"}",
           "legendFormat": "host root (local)",
-          "refId": "A"
+          "refId": "B"
         }
       ]
     },
@@ -2342,7 +2342,7 @@
           },
           "expr": "rate(node_vmstat_pswpout{job=\"dune-node\"}[5m]) * 4096",
           "legendFormat": "guest out",
-          "refId": "A"
+          "refId": "B"
         },
         {
           "datasource": {
@@ -2351,7 +2351,7 @@
           },
           "expr": "rate(node_vmstat_pswpin{job=\"host-node\"}[5m]) * 4096",
           "legendFormat": "host in",
-          "refId": "A"
+          "refId": "C"
         },
         {
           "datasource": {
@@ -2360,7 +2360,7 @@
           },
           "expr": "rate(node_vmstat_pswpout{job=\"host-node\"}[5m]) * 4096",
           "legendFormat": "host out",
-          "refId": "A"
+          "refId": "D"
         }
       ]
     }
