@@ -250,6 +250,53 @@ def hostvm():
                 "Whole-server power in watts (DCMI).",
                 [target('ipmi_dcmi_power_consumption_watts{source="r740-host"}', "power")],
                 18, 37, 6, 8, unit="watt", mn=0, fixed=MAGENTA, decimals=0))
+    g, h = 'job="dune-node"', 'job="host-node"'
+    nic = {"guest in": BLUE, "guest out": ORANGE, "host in": AQUA, "host out": YELLOW}
+    def bad(side, dev, d):
+        return ('sum(rate(node_network_%s_errs_total{%s,device="%s"}[5m]) + rate(node_network_%s_drop_total{%s,device="%s"}[5m]))'
+                % (d, side, dev, d, side, dev))
+    p.append(ts("Network errors and drops",
+                "Packets the NIC reported as errored or dropped, per second: guest eth0 and host nic0, in and out. Should sit at zero; steady non-zero values point at a cable, switch port, driver or full queue.",
+                [target(bad(g, "eth0", "receive"), "guest in"), target(bad(g, "eth0", "transmit"), "guest out"),
+                 target(bad(h, "nic0", "receive"), "host in"), target(bad(h, "nic0", "transmit"), "host out")],
+                0, 45, 12, 8, mn=0, decimals=2, overrides=color_overrides(nic)))
+    p.append(ts("TCP retransmits",
+                "Share of outgoing TCP segments that had to be sent again (5 min). Rises with packet loss or a congested path; a few tenths of a percent is normal.",
+                [target('rate(node_netstat_Tcp_RetransSegs{%s}[5m]) / rate(node_netstat_Tcp_OutSegs{%s}[5m])' % (g, g), "guest"),
+                 target('rate(node_netstat_Tcp_RetransSegs{%s}[5m]) / rate(node_netstat_Tcp_OutSegs{%s}[5m])' % (h, h), "host")],
+                12, 45, 12, 8, unit="percentunit", mn=0, overrides=color_overrides({"guest": BLUE, "host": AQUA})))
+    dsk = {"guest": BLUE, "host": AQUA}
+    p.append(ts("Disk busy",
+                "Share of time the system disk had I/O in flight (5 min): guest sda and host sda. Near 100% means the disk is the limit.",
+                [target('rate(node_disk_io_time_seconds_total{%s,device="sda"}[5m])' % g, "guest"),
+                 target('rate(node_disk_io_time_seconds_total{%s,device="sda"}[5m])' % h, "host")],
+                0, 53, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
+    lat = {"guest read": BLUE, "guest write": ORANGE, "host read": AQUA, "host write": YELLOW}
+    def lt(side, dev, kind):
+        return ('rate(node_disk_%s_time_seconds_total{%s,device="%s"}[5m]) / rate(node_disk_%ss_completed_total{%s,device="%s"}[5m])'
+                % (kind, side, dev, kind, side, dev))
+    p.append(ts("Disk latency",
+                "Average time per completed read and write (5 min). Gaps mean no I/O in the window. Sustained tens of milliseconds is a slow disk.",
+                [target(lt(g, "sda", "read"), "guest read"), target(lt(g, "sda", "write"), "guest write"),
+                 target(lt(h, "sda", "read"), "host read"), target(lt(h, "sda", "write"), "host write")],
+                8, 53, 8, 8, unit="s", mn=0, overrides=color_overrides(lat)))
+    p.append(ts("Disk I/O pressure",
+                "Share of time tasks were waiting on disk I/O (Linux pressure stall, 1 min). Zero is healthy.",
+                [target('rate(node_pressure_io_waiting_seconds_total{%s}[1m])' % g, "guest"),
+                 target('rate(node_pressure_io_waiting_seconds_total{%s}[1m])' % h, "host")],
+                16, 53, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(dsk)))
+    p.append(ts("Host storage used",
+                "Share used of the Proxmox thin pool that holds the VM disks (local-lvm) and of the host's root storage (local). A full thin pool freezes every VM on it.",
+                [target('pve_disk_usage_bytes{id="storage/DA-1/local-lvm"} / pve_disk_size_bytes{id="storage/DA-1/local-lvm"}', "thin pool (local-lvm)"),
+                 target('pve_disk_usage_bytes{id="storage/DA-1/local"} / pve_disk_size_bytes{id="storage/DA-1/local"}', "host root (local)")],
+                0, 61, 12, 8, unit="percentunit", mn=0, mx=1,
+                overrides=color_overrides({"thin pool (local-lvm)": BLUE, "host root (local)": ORANGE})))
+    sw = {"guest in": BLUE, "guest out": ORANGE, "host in": AQUA, "host out": YELLOW}
+    p.append(ts("Swap activity",
+                "Memory moved to and from swap, bytes per second (5 min). In is a page read back from swap, out is a page written. Should be zero; sustained activity means memory pressure.",
+                [target('rate(node_vmstat_pswpin{%s}[5m]) * 4096' % g, "guest in"), target('rate(node_vmstat_pswpout{%s}[5m]) * 4096' % g, "guest out"),
+                 target('rate(node_vmstat_pswpin{%s}[5m]) * 4096' % h, "host in"), target('rate(node_vmstat_pswpout{%s}[5m]) * 4096' % h, "host out")],
+                12, 61, 12, 8, unit="Bps", mn=0, overrides=color_overrides(sw)))
     return dashboard("dune-host", "Dune - Host, VM and services",
                      "R740 host clocks, temperatures and NUMA, dune-prod guest load, and supporting services (meta#99).",
                      p, ["dune", "host"])

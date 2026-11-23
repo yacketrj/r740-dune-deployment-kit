@@ -44,7 +44,7 @@
   "links": [],
   "panels": [
     {
-      "id": 13,
+      "id": 15,
       "type": "stat",
       "title": "Host core clock, average",
       "description": "Average of all 80 host CPUs.",
@@ -94,7 +94,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "stat",
       "title": "Host core clock, fastest",
       "description": "Fastest host CPU. Turbo limit is 3.9 GHz.",
@@ -144,7 +144,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "stat",
       "title": "Host hottest sensor",
       "description": "Hottest host temperature sensor.",
@@ -194,7 +194,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 18,
       "type": "stat",
       "title": "Guest memory used",
       "description": "Share of dune-prod memory in use.",
@@ -244,7 +244,7 @@
       ]
     },
     {
-      "id": 17,
+      "id": 19,
       "type": "stat",
       "title": "Guest vCPU busy, average",
       "description": "Average busy share across dune-prod's 60 vCPUs.",
@@ -294,7 +294,7 @@
       ]
     },
     {
-      "id": 18,
+      "id": 20,
       "type": "stat",
       "title": "Prometheus series",
       "description": "Active series in dune-prod's Prometheus.",
@@ -344,7 +344,7 @@
       ]
     },
     {
-      "id": 19,
+      "id": 21,
       "type": "timeseries",
       "title": "Host core clock",
       "description": "Average, fastest and slowest host CPU. After the BIOS change busy cores should reach about 3.8-3.9 GHz (earlier they peaked near 3.2-3.3 GHz).",
@@ -472,7 +472,7 @@
       ]
     },
     {
-      "id": 20,
+      "id": 22,
       "type": "timeseries",
       "title": "Host temperatures",
       "description": "Hottest and average host temperature sensor.",
@@ -576,7 +576,7 @@
       ]
     },
     {
-      "id": 21,
+      "id": 23,
       "type": "timeseries",
       "title": "Host NUMA misses per second",
       "description": "Memory pages placed on a remote node (numa_miss), skipped (numa_foreign) or allocated for another node (numa_other). Remote access is about 2x slower.",
@@ -705,7 +705,7 @@
       ]
     },
     {
-      "id": 22,
+      "id": 24,
       "type": "timeseries",
       "title": "Guest vCPU busy",
       "description": "Average and busiest vCPU of dune-prod over a 15 s window.",
@@ -810,7 +810,7 @@
       ]
     },
     {
-      "id": 23,
+      "id": 25,
       "type": "timeseries",
       "title": "Service CPU (cores)",
       "description": "Director, RabbitMQ (beam.smp), Postgres, Docker and monitoring, from process-exporter.",
@@ -963,7 +963,7 @@
       ]
     },
     {
-      "id": 24,
+      "id": 26,
       "type": "timeseries",
       "title": "Guest memory",
       "description": "Used share of dune-prod memory.",
@@ -1026,7 +1026,7 @@
       ]
     },
     {
-      "id": 25,
+      "id": 27,
       "type": "timeseries",
       "title": "VM CPU use (share of each VM's vCPUs)",
       "description": "From the Proxmox API (read-only token), per VM. 1.0 means every vCPU of that VM is fully busy.",
@@ -1134,7 +1134,7 @@
       ]
     },
     {
-      "id": 26,
+      "id": 28,
       "type": "timeseries",
       "title": "VM memory used (share of each VM's RAM)",
       "description": "From the Proxmox API, per VM, as seen by the hypervisor.",
@@ -1242,7 +1242,7 @@
       ]
     },
     {
-      "id": 27,
+      "id": 29,
       "type": "timeseries",
       "title": "Board temperatures (IPMI)",
       "description": "CPU packages, air inlet (case intake) and exhaust, from the board's sensors via in-band IPMI (15 s).",
@@ -1364,7 +1364,7 @@
       ]
     },
     {
-      "id": 28,
+      "id": 30,
       "type": "timeseries",
       "title": "Fan speed (IPMI)",
       "description": "Six chassis fans. A fan dropping or stopping shows here before temperatures rise.",
@@ -1426,7 +1426,7 @@
       ]
     },
     {
-      "id": 29,
+      "id": 31,
       "type": "timeseries",
       "title": "Server power draw (IPMI)",
       "description": "Whole-server power in watts (DCMI).",
@@ -1484,6 +1484,882 @@
           },
           "expr": "ipmi_dcmi_power_consumption_watts{source=\"r740-host\"}",
           "legendFormat": "power",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Network errors and drops",
+      "description": "Packets the NIC reported as errored or dropped, per second: guest eth0 and host nic0, in and out. Should sit at zero; steady non-zero values point at a cable, switch port, driver or full queue.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest in"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host in"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#c98500"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(node_network_receive_errs_total{job=\"dune-node\",device=\"eth0\"}[5m]) + rate(node_network_receive_drop_total{job=\"dune-node\",device=\"eth0\"}[5m]))",
+          "legendFormat": "guest in",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(node_network_transmit_errs_total{job=\"dune-node\",device=\"eth0\"}[5m]) + rate(node_network_transmit_drop_total{job=\"dune-node\",device=\"eth0\"}[5m]))",
+          "legendFormat": "guest out",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(node_network_receive_errs_total{job=\"host-node\",device=\"nic0\"}[5m]) + rate(node_network_receive_drop_total{job=\"host-node\",device=\"nic0\"}[5m]))",
+          "legendFormat": "host in",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(node_network_transmit_errs_total{job=\"host-node\",device=\"nic0\"}[5m]) + rate(node_network_transmit_drop_total{job=\"host-node\",device=\"nic0\"}[5m]))",
+          "legendFormat": "host out",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "TCP retransmits",
+      "description": "Share of outgoing TCP segments that had to be sent again (5 min). Rises with packet loss or a congested path; a few tenths of a percent is normal.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_netstat_Tcp_RetransSegs{job=\"dune-node\"}[5m]) / rate(node_netstat_Tcp_OutSegs{job=\"dune-node\"}[5m])",
+          "legendFormat": "guest",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_netstat_Tcp_RetransSegs{job=\"host-node\"}[5m]) / rate(node_netstat_Tcp_OutSegs{job=\"host-node\"}[5m])",
+          "legendFormat": "host",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Disk busy",
+      "description": "Share of time the system disk had I/O in flight (5 min): guest sda and host sda. Near 100% means the disk is the limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_io_time_seconds_total{job=\"dune-node\",device=\"sda\"}[5m])",
+          "legendFormat": "guest",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_io_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m])",
+          "legendFormat": "host",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Disk latency",
+      "description": "Average time per completed read and write (5 min). Gaps mean no I/O in the window. Sustained tens of milliseconds is a slow disk.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 53,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest read"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest write"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host read"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host write"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#c98500"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_read_time_seconds_total{job=\"dune-node\",device=\"sda\"}[5m]) / rate(node_disk_reads_completed_total{job=\"dune-node\",device=\"sda\"}[5m])",
+          "legendFormat": "guest read",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_write_time_seconds_total{job=\"dune-node\",device=\"sda\"}[5m]) / rate(node_disk_writes_completed_total{job=\"dune-node\",device=\"sda\"}[5m])",
+          "legendFormat": "guest write",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_read_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m]) / rate(node_disk_reads_completed_total{job=\"host-node\",device=\"sda\"}[5m])",
+          "legendFormat": "host read",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_disk_write_time_seconds_total{job=\"host-node\",device=\"sda\"}[5m]) / rate(node_disk_writes_completed_total{job=\"host-node\",device=\"sda\"}[5m])",
+          "legendFormat": "host write",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Disk I/O pressure",
+      "description": "Share of time tasks were waiting on disk I/O (Linux pressure stall, 1 min). Zero is healthy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 53,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_pressure_io_waiting_seconds_total{job=\"dune-node\"}[1m])",
+          "legendFormat": "guest",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_pressure_io_waiting_seconds_total{job=\"host-node\"}[1m])",
+          "legendFormat": "host",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "Host storage used",
+      "description": "Share used of the Proxmox thin pool that holds the VM disks (local-lvm) and of the host's root storage (local). A full thin pool freezes every VM on it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "thin pool (local-lvm)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host root (local)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pve_disk_usage_bytes{id=\"storage/DA-1/local-lvm\"} / pve_disk_size_bytes{id=\"storage/DA-1/local-lvm\"}",
+          "legendFormat": "thin pool (local-lvm)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pve_disk_usage_bytes{id=\"storage/DA-1/local\"} / pve_disk_size_bytes{id=\"storage/DA-1/local\"}",
+          "legendFormat": "host root (local)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "Swap activity",
+      "description": "Memory moved to and from swap, bytes per second (5 min). In is a page read back from swap, out is a page written. Should be zero; sustained activity means memory pressure.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest in"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guest out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host in"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "host out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#c98500"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_vmstat_pswpin{job=\"dune-node\"}[5m]) * 4096",
+          "legendFormat": "guest in",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_vmstat_pswpout{job=\"dune-node\"}[5m]) * 4096",
+          "legendFormat": "guest out",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_vmstat_pswpin{job=\"host-node\"}[5m]) * 4096",
+          "legendFormat": "host in",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_vmstat_pswpout{job=\"host-node\"}[5m]) * 4096",
+          "legendFormat": "host out",
           "refId": "A"
         }
       ]

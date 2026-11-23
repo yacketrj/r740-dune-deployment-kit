@@ -253,6 +253,12 @@ console API and is private):
   API, board temperatures (CPU, inlet, exhaust), fan speeds and power draw from
   IPMI. (The hypervisor's memory view of a VM includes the guest's file cache, so
   a VM can read near 100% without the game using that much.)
+  A lower block covers the network and disks: NIC errors and drops (guest eth0, host
+  nic0), TCP retransmit share, disk busy time, read and write latency, disk I/O
+  pressure, Proxmox storage used (thin pool `local-lvm` and root `local`; a full thin
+  pool freezes every VM on it), and swap activity. All of it is zero or near zero when
+  healthy, so a steady non-zero line is the signal. Baseline on 2026-11-23: host NIC in
+  drops about 0.03 per second, thin pool about 27% used, host root storage about 64%.
 
 The recording rules in `prometheus/rules-extra/dune-bursts.yml` define a burst as a
 map's main thread at or above 0.9 core (`dune:map_main_thread_hot`); `changes()` of
