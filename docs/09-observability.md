@@ -241,7 +241,9 @@ delete the `host-ipmi` job.
 
 ## 5. Dashboards and burst tracking
 
-Four dashboards, provisioned in the folder "Dune" (**Dune - Game state and players**
+Five dashboards, provisioned in the folder "Dune" and sharing one Dune look (below). **Arrakis - Overview**
+is the home page: state, players, tick rate, load, temperature, storage, alerts and queue backlog
+as tiles, four charts, and links to the others. (**Dune - Game state and players**
 shows population, map readiness, map memory, FLS health and tick rate from the console
 API and the game log; **Dune - Database and queues** shows Postgres connections,
 transactions, cache hit ratio, size and RabbitMQ backlog, rates, connections and
@@ -289,6 +291,34 @@ read-only link, no data source access). The operator made only the bursts dashbo
 public; the host dashboard stays private. Treat the link as the access control and
 revoke or regenerate it if it leaks. Consider a Cloudflare rate limit on
 `/api/public/*`.
+
+### The Dune look
+
+Every dashboard has a banner (dune ridges, two moons, the heading in Dune Rise), section rows, and a
+bar of links to the others. Grafana 11.1 OSS cannot be re-themed, so the look is drawn inside the
+dashboards:
+
+- **Colours** are the Awakening look of the public MIT design tokens in
+  `Project-Arrakis/tabr-tau` (`design/assets/tokens-awakening.css`): warm charcoal, bone text, spice orange,
+  gold headings, bronze rules and its status colours. They are used for chrome and for tile states
+  (`observability/tools/dune_theme.py`).
+- **Chart series keep the validated palette** (`gen_dashboards.py`; blue, orange, aqua, yellow,
+  magenta, violet, checked with the dataviz validator against Grafana's panel colour), assigned by
+  name so a map or broker keeps its colour on every dashboard. The theme's spice orange is too light for
+  the validated lightness band, so it is not used for series.
+- **State tiles show a word** (READY, UP, OK, NOT READY) as well as a colour, and threshold tiles turn
+  amber or red at set values, so colour never carries meaning alone.
+- **The heading typeface** is Dune Rise (SIL Open Font License 1.1, unmodified; licence text in
+  `observability/tools/fonts/`), embedded in the banner image so it needs no font install.
+- The banner is an image inside a text panel. Grafana strips some CSS from text panels and clips
+  them to the panel, so the banner is an inset card, not edge to edge. Public dashboards follow the
+  viewer's own light or dark setting; the banner is dark either way.
+- Set the home page and dark default once (the home dashboard is an org setting, not a file):
+  `PUT /api/org/preferences` with `{"homeDashboardUID":"dune-overview","theme":"dark"}`.
+
+Check any change by rendering it: load the dashboard in a headless browser and look at the
+screenshot, and run each panel's queries through Grafana's own `/api/ds/query`, because queries
+that work against Prometheus directly can still fail in Grafana (duplicate query ids did).
 
 ## 6. Security notes
 
