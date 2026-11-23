@@ -296,6 +296,16 @@ def game():
                 "1 = OK for each Funcom FLS declaration check. Funcom outages show here.",
                 [target("dune_fls_ok", "{{check}}")],
                 12, 20, 12, 8, mn=0, mx=1.2, decimals=0))
+    tick_colors = {"survival-1": BLUE, "survival-1-37": ORANGE,
+                   "deepdesert-1-8": AQUA, "deepdesert-1-36": YELLOW}
+    p.append(ts("Server tick rate per map",
+                "Ticks per second of each map server, from the frame counter in the game's own log. The target is 20; sustained dips below about 18 are what players feel as rubberbanding. Maps with no log activity show no line.",
+                [target("dune:game_tick_rate:hz", "{{server}}")],
+                0, 28, 16, 8, unit="hertz", mn=10, mx=22, overrides=color_overrides(tick_colors), decimals=1))
+    p.append(ts("Time spent below 18 ticks per second",
+                "Share of time each map server ran below 18 ticks per second (1 minute window).",
+                [target("dune:game_slow_share:ratio", "{{server}}")],
+                16, 28, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(tick_colors)))
     return dashboard("dune-game", "Dune - Game state and players",
                      "Population, map readiness, memory and FLS health from the console API (meta#99). Private.",
                      p, ["dune", "game"])

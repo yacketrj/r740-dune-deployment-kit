@@ -18,7 +18,7 @@ services:
       - --web.listen-address=:9093
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - ./alertmanager/discord-webhook.url:/run/secrets/discord-webhook:ro
+      - ./alertmanager/discord-webhook-bot.url:/run/secrets/discord-webhook:ro
       - ./alertmanager/data:/alertmanager
     networks: [dune-net]
 networks:

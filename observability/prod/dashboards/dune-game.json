@@ -44,7 +44,7 @@
   "links": [],
   "panels": [
     {
-      "id": 30,
+      "id": 32,
       "type": "stat",
       "title": "Server state",
       "description": "1 = overall READY according to the console API.",
@@ -94,7 +94,7 @@
       ]
     },
     {
-      "id": 31,
+      "id": 33,
       "type": "stat",
       "title": "Players online",
       "description": "Players online now (console API).",
@@ -144,7 +144,7 @@
       ]
     },
     {
-      "id": 32,
+      "id": 34,
       "type": "stat",
       "title": "Capacity",
       "description": "Declared population capacity.",
@@ -194,7 +194,7 @@
       ]
     },
     {
-      "id": 33,
+      "id": 35,
       "type": "stat",
       "title": "FLS checks failing",
       "description": "Funcom FLS declaration checks that are not OK (0 is healthy).",
@@ -256,7 +256,7 @@
       ]
     },
     {
-      "id": 34,
+      "id": 36,
       "type": "stat",
       "title": "Maps not ready",
       "description": "Game-server rows not READY (dynamic Deep Desert may be stopped on purpose).",
@@ -306,7 +306,7 @@
       ]
     },
     {
-      "id": 35,
+      "id": 37,
       "type": "stat",
       "title": "Console API reachable",
       "description": "1 when the adapter can read the console API.",
@@ -356,7 +356,7 @@
       ]
     },
     {
-      "id": 36,
+      "id": 38,
       "type": "timeseries",
       "title": "Players online",
       "description": "Compare with bursts: the main-thread load should rise with players. Population from the console API (10 s).",
@@ -419,7 +419,7 @@
       ]
     },
     {
-      "id": 37,
+      "id": 39,
       "type": "timeseries",
       "title": "Bursts alongside players",
       "description": "Bursts per interval (all maps) next to players online, to see whether load or something else drives them.",
@@ -524,7 +524,7 @@
       ]
     },
     {
-      "id": 38,
+      "id": 40,
       "type": "timeseries",
       "title": "Map memory used (share of limit)",
       "description": "Per game-server container, from the console API. The limit is 16 GiB per partition.",
@@ -586,7 +586,7 @@
       ]
     },
     {
-      "id": 39,
+      "id": 41,
       "type": "timeseries",
       "title": "Swap used by map containers",
       "description": "Swap use by game-server containers. Should stay at zero.",
@@ -647,7 +647,7 @@
       ]
     },
     {
-      "id": 40,
+      "id": 42,
       "type": "timeseries",
       "title": "Always-on partitions ready",
       "description": "Survival, Overmap and Deep Desert partitions: 1 = ready, 0 = not (dynamic Deep Desert may be stopped on purpose).",
@@ -710,7 +710,7 @@
       ]
     },
     {
-      "id": 41,
+      "id": 43,
       "type": "timeseries",
       "title": "FLS checks",
       "description": "1 = OK for each Funcom FLS declaration check. Funcom outages show here.",
@@ -768,6 +768,253 @@
           },
           "expr": "dune_fls_ok",
           "legendFormat": "{{check}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Server tick rate per map",
+      "description": "Ticks per second of each map server, from the frame counter in the game's own log. The target is 20; sustained dips below about 18 are what players feel as rubberbanding. Maps with no log activity show no line.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 16,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "hertz",
+          "min": 10,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 22,
+          "decimals": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "survival-1"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "survival-1-37"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deepdesert-1-8"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deepdesert-1-36"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#c98500"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dune:game_tick_rate:hz",
+          "legendFormat": "{{server}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Time spent below 18 ticks per second",
+      "description": "Share of time each map server ran below 18 ticks per second (1 minute window).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "survival-1"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "survival-1-37"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deepdesert-1-8"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deepdesert-1-36"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#c98500"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dune:game_slow_share:ratio",
+          "legendFormat": "{{server}}",
           "refId": "A"
         }
       ]

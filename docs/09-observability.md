@@ -182,8 +182,10 @@ channel.
 
 1. Create a webhook for the target channel in Discord (Edit Channel, Integrations).
    A webhook can only post to that channel; it is the only credential this needs.
-2. Save the URL at `/home/dune/observability/alertmanager/discord-webhook.url`, mode
-   600, directory mode 700, outside any repo. Never paste it into chat or notes;
+2. Save the URL at `/home/dune/observability/alertmanager/discord-webhook-bot.url`
+   (the compose file mounts this one), mode 600, directory mode 700, outside any repo.
+   Use a separate channel from the status message: firing and resolved posts bury a
+   single edited status message if they share a channel. Never paste it into chat or notes;
    anyone holding it can post to the channel.
 3. `docker compose -f docker-compose.alertmanager.yml up -d` (container runs as the
    file owner, read-only, no capabilities), then add the `alerting:` block from
@@ -208,8 +210,8 @@ game-performance rating (Smooth under 0.6 of a core on the busiest map main thre
 Busy to 0.9, Heavy load above) with lag spikes in the last hour, server CPU, memory,
 disk, network in and out, and uptime. It is written for players: no addresses, host
 names, temperatures or player names. It reads from Prometheus and uses the same
-webhook file as alerting (a second webhook is better if you want a different name
-or channel). The first run posts the message and stores its id in `status-post/state`;
+webhook file as the status message channel (`discord-webhook.url`), which is
+deliberately a different webhook from alerting so the status message stays visible. The first run posts the message and stores its id in `status-post/state`;
 if the message is deleted it posts a new one. Preview without sending:
 `python status_post.py --dry-run`. Undo: `docker compose -f
 docker-compose.status-post.yml down`, then delete the message in Discord.
