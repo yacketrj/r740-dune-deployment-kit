@@ -20,6 +20,11 @@ Retention is 30 days or 8 GB on dune-prod (Core's default is 7 days / 2 GB).
 Per-VM CPU and memory come from the Proxmox API through `prometheus-pve-exporter`
 with a read-only token (15 s; job `host-pve`, pushed by the host agent).
 
+Players online, per-partition readiness, per-map memory and the Funcom FLS health
+checks come from the console's HTTP API through a small adapter (`obs-dune-api`,
+10 s; job `dune-api`). The console has no Prometheus endpoint, so the adapter polls
+four read-only JSON endpoints and serves `/metrics`.
+
 Board temperatures (CPU packages, inlet, exhaust), fan speeds and server power draw
 come from the board's sensors through in-band IPMI (`prometheus-ipmi-exporter` on
 the host, 15 s; job `host-ipmi`). It needs no iDRAC login.
@@ -122,6 +127,30 @@ request without `cluster` and `node` returns only partial data. Undo:
 `systemctl disable --now prometheus-pve-exporter`, `pveum user delete metrics@pve`
 (removes its token and ACLs), `rm -r /opt/pve-exporter /etc/prometheus-pve-exporter`.
 
+### Console API adapter (prod VM)
+
+1. In the console, create one API key just for monitoring with **read** scope only
+   (server status, map status, map memory, online players). Never reuse another key.
+2. Save it on the VM at `/home/dune/observability/console-api-monitor.key`, mode 600,
+   outside any repo. Do not paste it into chat or notes.
+3. Copy `observability/prod/dune-api-exporter/` and `docker-compose.dune-api.yml`
+   next to the other files, then
+   `COMPOSE_IGNORE_ORPHANS=true docker compose -f docker-compose.dune-api.yml up -d`.
+   The container runs as the file owner's uid (so it can read the key), read-only,
+   no capabilities, 0.25 CPU / 64 MB.
+4. Add the `dune-api` job from `prometheus/prometheus.yml` and reload Prometheus
+   (`POST /-/reload`).
+
+Series: `dune_players_online`, `dune_population_capacity`, `dune_server_ready`,
+`dune_partition_ready` / `_alive` (per partition), `dune_gameserver_ready`,
+`dune_fls_ok{check}`, `dune_map_memory_used_bytes` / `_limit_bytes`,
+`dune_map_swap_used_bytes`, `dune_api_up`. Many partitions (story maps) are dormant
+and read 0 by design; any alert on readiness must be limited to the always-on maps
+(Survival, Overmap, Deep Desert). The third dashboard, "Dune - Game state and
+players", is private; population is deliberately not on the public bursts dashboard.
+Undo: `docker compose -f docker-compose.dune-api.yml down`, delete the key in the
+console and the key file, remove the job.
+
 ### Board sensors (in-band IPMI)
 
 `/dev/ipmi0` exists on the host, so the sensors can be read locally with no network
@@ -147,7 +176,9 @@ delete the `host-ipmi` job.
 
 ## 5. Dashboards and burst tracking
 
-Two dashboards, provisioned in the folder "Dune":
+Three dashboards, provisioned in the folder "Dune" (the third, **Dune - Game state and
+players**, shows population, map readiness, map memory and FLS health from the
+console API and is private):
 
 - **Dune - Bursts and maps:** main-thread CPU per map with a 0.9-core burst line,
   bursts per interval by map, whole-process CPU, guest vCPUs above 90%, steal and

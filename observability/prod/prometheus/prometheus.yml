@@ -61,3 +61,11 @@ scrape_configs:
           - obs-process-exporter:9256
         labels:
           service: process-exporter
+  - job_name: dune-api
+    scrape_interval: 10s
+    scrape_timeout: 8s
+    static_configs:
+      - targets:
+          - obs-dune-api:9300
+        labels:
+          service: console-api

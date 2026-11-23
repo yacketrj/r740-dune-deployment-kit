@@ -1,0 +1,28 @@
+# Prometheus adapter for the Dune console HTTP API (meta#99).
+# Start: COMPOSE_IGNORE_ORPHANS=true docker compose -f docker-compose.dune-api.yml up -d
+name: obs
+services:
+  obs-dune-api:
+    image: python:3.12-alpine
+    container_name: obs-dune-api
+    command: ["python", "-u", "/app/exporter.py"]
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cpus: 0.25
+    mem_limit: 64m
+    environment:
+      CONSOLE_URL: http://host.docker.internal:8088
+      KEY_FILE: /run/secrets/console-api-key
+      POLL_SECONDS: "10"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./dune-api-exporter/exporter.py:/app/exporter.py:ro
+      - ./console-api-monitor.key:/run/secrets/console-api-key:ro
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true

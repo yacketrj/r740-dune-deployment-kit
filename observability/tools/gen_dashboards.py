@@ -245,11 +245,58 @@ def hostvm():
                      p, ["dune", "host"])
 
 
+def game():
+    p = []
+    always = 'map=~"Survival_1|Overmap|DeepDesert_1"'
+    p += [
+        stat("Server state", "1 = overall READY according to the console API.",
+             "dune_server_ready", 0, 0, decimals=0),
+        stat("Players online", "Players online now (console API).", "dune_players_online", 4, 0, decimals=0),
+        stat("Capacity", "Declared population capacity.", "dune_population_capacity", 8, 0, decimals=0),
+        stat("FLS checks failing", "Funcom FLS declaration checks that are not OK (0 is healthy).",
+             "count(dune_fls_ok == 0) or vector(0)", 12, 0, red_at=1, decimals=0),
+        stat("Maps not ready", "Game-server rows not READY (dynamic Deep Desert may be stopped on purpose).",
+             "count(dune_gameserver_ready == 0) or vector(0)", 16, 0, decimals=0),
+        stat("Console API reachable", "1 when the adapter can read the console API.",
+             "dune_api_up", 20, 0, decimals=0),
+    ]
+    p.append(ts("Players online",
+                "Compare with bursts: the main-thread load should rise with players. Population from the console API (10 s).",
+                [target("dune_players_online", "players online", "A")],
+                0, 4, 12, 8, decimals=0, fixed=BLUE))
+    p.append(ts("Bursts alongside players",
+                "Bursts per interval (all maps) next to players online, to see whether load or something else drives them.",
+                [target("sum(changes(dune:map_main_thread_hot[$__interval]))/2", "bursts", "A"),
+                 target("dune_players_online", "players online", "B")],
+                12, 4, 12, 8, decimals=0,
+                overrides=color_overrides({"bursts": ORANGE, "players online": BLUE})))
+    p.append(ts("Map memory used (share of limit)",
+                "Per game-server container, from the console API. The limit is 16 GiB per partition.",
+                [target("dune_map_memory_used_bytes / dune_map_memory_limit_bytes", "{{container}}")],
+                0, 12, 12, 8, unit="percentunit", mn=0, mx=1))
+    p.append(ts("Swap used by map containers",
+                "Swap use by game-server containers. Should stay at zero.",
+                [target("dune_map_swap_used_bytes", "{{container}}")],
+                12, 12, 12, 8, unit="bytes", mn=0))
+    p.append(ts("Always-on partitions ready",
+                "Survival, Overmap and Deep Desert partitions: 1 = ready, 0 = not (dynamic Deep Desert may be stopped on purpose).",
+                [target("dune_partition_ready{%s}" % always, "{{map}} p{{partition}} {{label}}")],
+                0, 20, 12, 8, mn=0, mx=1.2, decimals=0))
+    p.append(ts("FLS checks",
+                "1 = OK for each Funcom FLS declaration check. Funcom outages show here.",
+                [target("dune_fls_ok", "{{check}}")],
+                12, 20, 12, 8, mn=0, mx=1.2, decimals=0))
+    return dashboard("dune-game", "Dune - Game state and players",
+                     "Population, map readiness, memory and FLS health from the console API (meta#99). Private.",
+                     p, ["dune", "game"])
+
+
 def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     (out / "dune-bursts.json").write_text(json.dumps(bursts(), indent=2) + "\n")
     (out / "dune-host.json").write_text(json.dumps(hostvm(), indent=2) + "\n")
+    (out / "dune-game.json").write_text(json.dumps(game(), indent=2) + "\n")
     print("wrote", sorted(f.name for f in out.glob("*.json")))
 
 
