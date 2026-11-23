@@ -1,14 +1,15 @@
-# Alertmanager for the Dune stack (meta#99). One receiver: a Discord channel webhook,
-# read from a mode-600 file (never written in this config).
+# Alertmanager for the Dune stack (meta#99). Alerts go to the Mentat bot's relay (mentat#469), which posts
+# them as the bot in Sahir Venn's voice; the bearer token is read from a mode-600 file, never written here.
+# The `discord` receiver (a channel webhook) stays defined as a one-line rollback: point the route at it.
 route:
-  receiver: discord
+  receiver: mentat
   group_by: [alertname]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
   routes:
     - matchers: [severity="critical"]
-      receiver: discord
+      receiver: mentat
       repeat_interval: 1h
 
 inhibit_rules:
@@ -17,6 +18,16 @@ inhibit_rules:
     target_matchers: [alertname="DunePartitionDown"]
 
 receivers:
+  - name: mentat
+    webhook_configs:
+      # REPLACE with the bot's alert relay URL (https://<bot host>/api/alerts/relay).
+      - url: https://bot.example.com/api/alerts/relay
+        send_resolved: true
+        max_alerts: 10
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alert-relay-token
   - name: discord
     discord_configs:
       - webhook_url_file: /run/secrets/discord-webhook
