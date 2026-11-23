@@ -151,6 +151,33 @@ players", is private; population is deliberately not on the public bursts dashbo
 Undo: `docker compose -f docker-compose.dune-api.yml down`, delete the key in the
 console and the key file, remove the job.
 
+### Alerting (Alertmanager and Discord)
+
+Alert rules in `prometheus/rules-extra/dune-alerts.yml` (server or an always-on
+partition not ready, FLS check failing, burst rate, map memory and swap, CPU steal,
+CPU/inlet temperature, fan failure, host metrics missing) go to Alertmanager
+(`obs-alertmanager`, `docker-compose.alertmanager.yml`) and from there to one Discord
+channel.
+
+1. Create a webhook for the target channel in Discord (Edit Channel, Integrations).
+   A webhook can only post to that channel; it is the only credential this needs.
+2. Save the URL at `/home/dune/observability/alertmanager/discord-webhook.url`, mode
+   600, directory mode 700, outside any repo. Never paste it into chat or notes;
+   anyone holding it can post to the channel.
+3. `docker compose -f docker-compose.alertmanager.yml up -d` (container runs as the
+   file owner, read-only, no capabilities), then add the `alerting:` block from
+   `prometheus/prometheus.yml` and reload Prometheus.
+
+Alerts are grouped by name, first sent after 30 s, repeated every 4 h (critical 1 h),
+and a resolved message is sent. **Check which channel before enabling:** Prometheus
+also evaluates Core's own rules, so connecting Alertmanager immediately sends
+anything already firing (here: RabbitMQ unroutable messages, and
+`DuneContainerMissing`, a false positive from the cAdvisor limitation in section 7,
+which is silenced for 30 days with `amtool silence add`). Readiness rules only cover
+the always-on maps because story-map partitions are dormant by design. Undo:
+`docker compose -f docker-compose.alertmanager.yml down`, delete the webhook in
+Discord, remove the `alerting:` block.
+
 ### Board sensors (in-band IPMI)
 
 `/dev/ipmi0` exists on the host, so the sensors can be read locally with no network

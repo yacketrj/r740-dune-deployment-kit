@@ -69,3 +69,7 @@ scrape_configs:
           - obs-dune-api:9300
         labels:
           service: console-api
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["obs-alertmanager:9093"]
