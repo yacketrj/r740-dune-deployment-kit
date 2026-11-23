@@ -104,3 +104,115 @@ EOF
   bk_announce start
   [ "$BK_ANNOUNCE_LAST_RC" -eq 1 ]
 }
+
+# --- retries and the post-run audit (2026-11-23: the 05:00 game restart made the first warning fail) ---
+
+ann_cfg_env() {
+  source "$REPO_ROOT/scripts/backup-common.sh"
+  BK_ANNOUNCE_URL=http://console.test:8088 BK_ANNOUNCE_KEY_FILE="$T/annkey"
+}
+
+@test "a failed announcement is retried and the log says it took more than one attempt" {
+  ann_cfg_env
+  BK_ANNOUNCE_RETRY_BUDGET_S=5 BK_ANNOUNCE_RETRY_S=0
+  stub curl 'cat >/dev/null; n=$(cat "$BATS_TEST_TMPDIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" >"$BATS_TEST_TMPDIR/n"; if [ "$n" -lt 3 ]; then echo "curl: (22) The requested URL returned error: 409"; exit 22; fi; exit 0'
+  bk_announce lead 30 >"$T/out" 2>&1
+  [ "$BK_ANNOUNCE_LAST_RC" -eq 0 ]
+  [ "$BK_ANN_SENT" -eq 1 ] && [ "$BK_ANN_FAILED" -eq 0 ]
+  grep -q "announce retry: lead (attempt 1 failed: curl: (22) The requested URL returned error: 409)" "$T/out"
+  grep -q "announced in game: lead (The Mentats Prepare the Great Record) after 3 attempts" "$T/out"
+  ! grep -q "announce FAILED" "$T/out"
+}
+
+@test "when every retry fails the log names the attempts and the reason, the counters record it, and the caller still gets 0" {
+  ann_cfg_env
+  BK_ANNOUNCE_RETRY_BUDGET_S=1 BK_ANNOUNCE_RETRY_S=1
+  stub curl 'cat >/dev/null; echo "{\"error\":\"broadcast blocked while the game restarts\"}"; exit 22'
+  run bk_announce lead 30
+  [ "$status" -eq 0 ]
+  bk_announce lead 30 >"$T/out" 2>&1
+  [ "$BK_ANNOUNCE_LAST_RC" -eq 1 ]
+  [ "$BK_ANN_SENT" -eq 0 ] && [ "$BK_ANN_FAILED" -eq 1 ]
+  grep -q "announce FAILED: lead after 2 attempt(s): .*broadcast blocked while the game restarts" "$T/out"
+  grep -q "the backup is not affected" "$T/out"
+}
+
+@test "a budget of 0 means one try and no retry, as before" {
+  ann_cfg_env
+  BK_ANNOUNCE_RETRY_BUDGET_S=0
+  stub curl 'cat >/dev/null; echo "curl: (22) boom"; exit 22'
+  bk_announce start >"$T/out" 2>&1
+  grep -q "announce FAILED: start after 1 attempt(s): curl: (22) boom" "$T/out"
+  ! grep -q "announce retry" "$T/out"
+}
+
+@test "the API key never appears in the announcement log, even when the console echoes an error" {
+  ann_cfg_env
+  BK_ANNOUNCE_RETRY_BUDGET_S=0
+  stub curl 'cat >/dev/null; echo "curl: (22) The requested URL returned error: 401"; exit 22'
+  bk_announce start >"$T/out" 2>&1
+  ! grep -q "dak_testkey123" "$T/out"
+}
+
+audit_history() { # lines... (tab-separated console history), written as the guest agent would return them
+  jq -nc --arg d "$(printf '%s\n' "$@")" '{exitcode:0, "out-data":$d}' >"$T/qm.out"
+  stub qm 'cat "$BATS_TEST_TMPDIR/qm.out"'
+}
+hist() { printf '%s\twebb\tall\t%s\trmq:heartbeats/notifications\t%s\t{}' "$1" "$2" "$3" | sed 's/webb/web-broadcast/'; }
+
+@test "audit: matching counts are reported OK, and history from before this run or for other messages is ignored" {
+  ann_cfg_env
+  BK_ANNOUNCE_AUDIT=1 BK_ANNOUNCE_AUDIT_SETTLE_S=0 BK_RUN_START_ISO="2026-11-24T13:00:00" BK_ANN_SENT=2 BK_ANN_FAILED=0
+  audit_history "$(hist 2026-11-17T13:17:00.8Z 'The Mentats Prepare the Great Record' published)" \
+    "$(hist 2026-11-24T13:17:00.8Z 'The Mentats Prepare the Great Record' published)" \
+    "$(hist 2026-11-24T13:32:10.9Z 'The Recording of Arrakis Begins' published)" \
+    "$(hist 2026-11-24T13:40:00.0Z 'Some other broadcast' published)"
+  bk_announce_audit >"$T/out" 2>&1
+  grep -q "announce audit: script sent 2 ok / 0 failed; console history: 2 published, 0 blocked or other attempt(s): OK" "$T/out"
+}
+
+@test "audit: blocked attempts (the failed tries of a retried announcement) are reported but not counted as a mismatch" {
+  ann_cfg_env
+  BK_ANNOUNCE_AUDIT=1 BK_ANNOUNCE_AUDIT_SETTLE_S=0 BK_RUN_START_ISO="2026-11-24T13:00:00" BK_ANN_SENT=2 BK_ANN_FAILED=0
+  audit_history "$(hist 2026-11-24T13:01:59.3Z 'The Mentats Prepare the Great Record' blocked)" \
+    "$(hist 2026-11-24T13:02:59.3Z 'The Mentats Prepare the Great Record' blocked)" \
+    "$(hist 2026-11-24T13:03:59.3Z 'The Mentats Prepare the Great Record' published)" \
+    "$(hist 2026-11-24T13:32:10.9Z 'The Recording of Arrakis Begins' published)"
+  bk_announce_audit >"$T/out" 2>&1
+  grep -q "console history: 2 published, 2 blocked or other attempt(s): OK" "$T/out"
+}
+
+@test "audit: a different published count than the script counted is flagged MISMATCH" {
+  ann_cfg_env
+  BK_ANNOUNCE_AUDIT=1 BK_ANNOUNCE_AUDIT_SETTLE_S=0 BK_RUN_START_ISO="2026-11-24T13:00:00" BK_ANN_SENT=3 BK_ANN_FAILED=0
+  audit_history "$(hist 2026-11-24T13:17:00.8Z 'The Mentats Prepare the Great Record' published)" \
+    "$(hist 2026-11-24T13:32:10.9Z 'The Recording of Arrakis Begins' published)"
+  bk_announce_audit >"$T/out" 2>&1
+  grep -q "MISMATCH (the console published 2, the script counted 3 as sent)" "$T/out"
+}
+
+@test "audit: an unreadable console history is logged and ignored, never fatal" {
+  ann_cfg_env
+  BK_ANNOUNCE_AUDIT=1 BK_ANNOUNCE_AUDIT_SETTLE_S=0 BK_RUN_START_ISO="2026-11-24T13:00:00" BK_ANN_SENT=1 BK_ANN_FAILED=0
+  stub qm 'exit 1'
+  run bk_announce_audit
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"announce audit: could not read the console history on guest 101 (ignored)"* ]]
+}
+
+@test "audit: nothing announced, or BK_ANNOUNCE_AUDIT=0, means no audit and no guest-agent call" {
+  ann_cfg_env
+  stub qm 'echo called >>"$BATS_TEST_TMPDIR/qm.called"'
+  BK_ANNOUNCE_AUDIT=1 BK_ANN_SENT=0 BK_ANN_FAILED=0
+  run bk_announce_audit
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  BK_ANNOUNCE_AUDIT=0 BK_ANN_SENT=3
+  run bk_announce_audit
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ ! -e "$T/qm.called" ]
+}
+
+@test "the weekly job runs the audit right after its closing announcement" {
+  run grep -n -A3 "closing message sent" "$REPO_ROOT/scripts/backup-weekly.sh"
+  [[ "$output" == *"bk_announce_audit"* ]]
+}
