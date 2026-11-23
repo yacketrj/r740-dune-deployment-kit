@@ -54,10 +54,11 @@ def fmt_dur(sec):
     return ("%dd %dh" % (d, h)) if d else ("%dh %dm" % (h, m))
 
 
-def fmt_rate(bits):
-    if bits is None:
+def fmt_network(rx_bits, tx_bits):
+    """One field, one unit: the game server VM's traffic in Mbit/s (down = to the server, up = from it)."""
+    if rx_bits is None or tx_bits is None:
         return "n/a"
-    return "%.1f Mbit/s" % (bits / 1e6) if bits >= 1e5 else "%.0f kbit/s" % (bits / 1e3)
+    return "\u2193 %.2f \u00b7 \u2191 %.2f Mbit/s" % (rx_bits / 1e6, tx_bits / 1e6)
 
 
 def build():
@@ -119,8 +120,7 @@ def build():
         f("Server CPU", fmt_pct(cpu)),
         f("Memory", fmt_pct(mem)),
         f("Disk", fmt_pct(disk)),
-        f("Network in", fmt_rate(rx)),
-        f("Network out", fmt_rate(tx)),
+        f("Network", fmt_network(rx, tx)),
         f("Server uptime", fmt_dur(uptime)),
     ]
     if steal is not None and steal > 0.10:
