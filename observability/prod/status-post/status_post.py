@@ -81,6 +81,7 @@ def build():
     else:
         state, color, icon = "Online", GREEN, "\U0001F7E2"
 
+    tick = q("min(avg_over_time(dune:game_tick_rate:hz[5m]))")
     if main is None:
         perf = "n/a"
     elif main < 0.6:
@@ -89,9 +90,16 @@ def build():
         perf = "Busy"
     else:
         perf = "Heavy load"
+    if tick is not None:  # a low tick rate overrides the CPU-based rating
+        if tick < 18:
+            perf = "Heavy load"
+        elif tick < 19.5 and perf == "Smooth":
+            perf = "Busy"
     perf_extra = ""
+    if tick is not None:
+        perf_extra += "\nServer tick: **%.1f Hz** (target 20)" % tick
     if spikes is not None:
-        perf_extra = "\nLag spikes in the last hour: **%d**" % round(spikes)
+        perf_extra += "\nLag spikes in the last hour: **%d**" % round(spikes)
 
     def f(name, value, inline=True):
         return {"name": name, "value": value, "inline": inline}

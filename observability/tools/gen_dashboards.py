@@ -161,6 +161,16 @@ def bursts():
                 "Share of time tasks waited for a CPU in the guest (PSI).",
                 [target("dune:cpu_pressure_waiting:ratio", "waiting")],
                 16, 21, 8, 7, unit="percentunit", fixed=AQUA))
+    tick_colors = {"survival-1": BLUE, "survival-1-37": ORANGE,
+                   "deepdesert-1-8": AQUA, "deepdesert-1-36": YELLOW}
+    p.append(ts("Server tick rate per map",
+                "Ticks per second of each map server, from the frame counter in the game's own log. The target is 20; sustained dips below about 18 are what players feel as rubberbanding. Maps with no log activity show no line.",
+                [target("dune:game_tick_rate:hz", "{{server}}")],
+                0, 28, 16, 8, unit="hertz", mn=10, mx=22, overrides=color_overrides(tick_colors), decimals=1))
+    p.append(ts("Time spent below 18 ticks per second",
+                "Share of time each map server ran below 18 ticks per second (1 minute window).",
+                [target("dune:game_slow_share:ratio", "{{server}}")],
+                16, 28, 8, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(tick_colors)))
     return dashboard("dune-bursts", "Dune - Bursts and maps",
                      "Single-thread bursts per game map on dune-prod (meta#99, fork#1352). Data from process-exporter and node-exporter at 5 s.",
                      p, ["dune", "rubberbanding"])

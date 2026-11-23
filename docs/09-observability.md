@@ -151,6 +151,27 @@ players", is private; population is deliberately not on the public bursts dashbo
 Undo: `docker compose -f docker-compose.dune-api.yml down`, delete the key in the
 console and the key file, remove the job.
 
+### Server tick rate (from the game's own log)
+
+The game does not log frame times, but every Unreal log line begins with
+`[timestamp][frame counter mod 1000]`. For two lines 1 to 25 s apart, the frame
+difference (mod 1000) divided by the time difference is the **server tick rate**.
+Measured on the live log: median exactly 20.0 Hz (the target), p1 17.4 Hz, so dips
+are visible. `obs-game-log` (`docker-compose.game-log.yml`,
+`game-log-exporter/game_log_exporter.py`) follows the live log of each map (only
+files written in the last 10 minutes), reads only the line prefix (game logs can
+contain tokens; nothing from a line body is stored or printed), and exports counters
+(`dune_game_frames_total`, `dune_game_frame_seconds_total`,
+`dune_game_slow_seconds_total`, `dune_game_physics_throttled_total`, per `server`).
+`rules-extra/dune-tick.yml` records `dune:game_tick_rate:hz` and alerts when a map
+stays below 18 Hz for 2 minutes. The container mounts the stack's `runtime/game`
+directory read-only; set `GAME_RUNTIME_DIR` if yours differs.
+
+Limits: a map that logs nothing has no tick data (Overmap was silent when this was
+built), history starts when the exporter starts, and a gap over 25 s is skipped
+rather than guessed. Undo: `docker compose -f docker-compose.game-log.yml down`,
+remove the job and rule file.
+
 ### Alerting (Alertmanager and Discord)
 
 Alert rules in `prometheus/rules-extra/dune-alerts.yml` (server or an always-on

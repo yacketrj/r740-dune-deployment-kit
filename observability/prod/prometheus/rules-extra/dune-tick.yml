@@ -1,0 +1,16 @@
+# Server tick rate (meta#99). Source: frame counters in the game's own logs; target 20 Hz.
+groups:
+  - name: dune-tick
+    interval: 10s
+    rules:
+      - record: dune:game_tick_rate:hz
+        expr: rate(dune_game_frames_total[1m]) / rate(dune_game_frame_seconds_total[1m])
+      - record: dune:game_slow_share:ratio
+        expr: rate(dune_game_slow_seconds_total[1m]) / rate(dune_game_frame_seconds_total[1m])
+      - alert: DuneTickRateLow
+        expr: dune:game_tick_rate:hz < 18
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.server }} server tick rate {{ $value | printf \"%.1f\" }} Hz (target 20)"
+          description: "The map server has run below 18 ticks per second for 2 minutes. Players will see rubberbanding."

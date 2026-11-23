@@ -69,6 +69,14 @@ scrape_configs:
           - obs-dune-api:9300
         labels:
           service: console-api
+  - job_name: dune-game-log
+    scrape_interval: 10s
+    scrape_timeout: 8s
+    static_configs:
+      - targets:
+          - obs-game-log:9301
+        labels:
+          service: game-log
 alerting:
   alertmanagers:
     - static_configs:

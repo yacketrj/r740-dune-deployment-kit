@@ -1,0 +1,27 @@
+# Server tick rate from the game's own logs (meta#99).
+# Start: COMPOSE_IGNORE_ORPHANS=true docker compose -f docker-compose.game-log.yml up -d
+# GAME_RUNTIME_DIR: the stack's runtime/game directory (read-only mount).
+name: obs
+services:
+  obs-game-log:
+    image: python:3.12-alpine
+    container_name: obs-game-log
+    command: ["python", "-u", "/app/game_log_exporter.py"]
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cpus: 0.25
+    mem_limit: 96m
+    environment:
+      GAME_ROOT: /game
+      ACTIVE_S: "600"
+      SLOW_HZ: "18"
+    volumes:
+      - ./game-log-exporter/game_log_exporter.py:/app/game_log_exporter.py:ro
+      - ${GAME_RUNTIME_DIR:-/home/dune/dune-awakening-selfhost-docker/runtime/game}:/game:ro
+    networks: [dune-net]
+networks:
+  dune-net:
+    external: true
