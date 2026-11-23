@@ -124,6 +124,7 @@ def build():
         "embeds": [{
             "title": TITLE,
             "color": color,
+            "description": "Last updated <t:%d:R> (<t:%d:t>)" % (int(time.time()), int(time.time())),
             "fields": fields,
             "footer": {"text": "Updates every %d minutes" % round(INTERVAL / 60)},
             "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -196,7 +196,7 @@ and a resolved message is sent. **Check which channel before enabling:** Prometh
 also evaluates Core's own rules, so connecting Alertmanager immediately sends
 anything already firing (here: RabbitMQ unroutable messages, and
 `DuneContainerMissing`, a false positive from the cAdvisor limitation in section 7,
-which is silenced for 30 days with `amtool silence add`). Readiness rules only cover
+which is silenced for 30 days with `amtool silence add`). `DuneRabbitMQUnroutableMessages` is silenced for a year: the brokers drop a steady ~75 messages/s from the unbound `heartbeats` exchange, so the stock rule never clears (fork issue #1356). Readiness rules only cover
 the always-on maps because story-map partitions are dormant by design. Undo:
 `docker compose -f docker-compose.alertmanager.yml down`, delete the webhook in
 Discord, remove the `alerting:` block.
