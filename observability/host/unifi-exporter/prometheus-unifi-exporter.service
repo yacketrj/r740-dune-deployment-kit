@@ -1,0 +1,32 @@
+# UniFi gateway WAN exporter (meta#99). Read-only; listens on 127.0.0.1:9291.
+# The API token is a systemd CREDENTIAL: systemd (as root) reads the file and hands the unprivileged, throwaway
+# service user a private copy, so the service never needs access to /root. Adjust the path to wherever the
+# token file lives on your host (mode 600, one line).
+[Unit]
+Description=UniFi gateway WAN exporter (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/lib/unifi-exporter/unifi_exporter.py
+Environment=LISTEN=127.0.0.1:9291
+LoadCredential=unifi-token:/root/.config/UCG-MAX/ucg-max-auth.txt
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+MemoryMax=64M
+CPUQuota=10%
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
