@@ -5,6 +5,7 @@ services:
   obs-dune-api:
     image: python:3.12-alpine
     container_name: obs-dune-api
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     command: ["python", "-u", "/app/exporter.py"]
     restart: unless-stopped
     user: "1000:1000"

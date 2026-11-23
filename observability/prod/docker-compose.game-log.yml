@@ -6,6 +6,7 @@ services:
   obs-game-log:
     image: python:3.12-alpine
     container_name: obs-game-log
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     command: ["python", "-u", "/app/game_log_exporter.py"]
     restart: unless-stopped
     user: "1000:1000"

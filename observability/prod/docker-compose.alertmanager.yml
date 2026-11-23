@@ -5,6 +5,7 @@ services:
   obs-alertmanager:
     image: quay.io/prometheus/alertmanager:v0.28.0
     container_name: obs-alertmanager
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     restart: unless-stopped
     user: "1000:1000"
     read_only: true

@@ -5,6 +5,7 @@ services:
   obs-grafana:
     image: grafana/grafana:11.1.0
     container_name: obs-grafana
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     restart: unless-stopped
     user: "472"
     ports:

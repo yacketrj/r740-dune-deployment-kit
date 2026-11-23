@@ -3,6 +3,7 @@ services:
   obs-process-exporter:
     image: ncabatoff/process-exporter:0.8.7
     container_name: obs-process-exporter
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     restart: unless-stopped
     command:
       - --procfs=/host/proc
@@ -17,6 +18,7 @@ services:
   obs-write-proxy:
     image: nginx:1.27-alpine
     container_name: obs-write-proxy
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     restart: unless-stopped
     ports:
       - "192.168.20.10:9091:9091"

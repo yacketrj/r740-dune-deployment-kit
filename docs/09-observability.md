@@ -57,6 +57,17 @@ with the guest's `node_*` series, so every rule and panel must filter on `job` o
 `source`. The burst rules use `job="dune-node"`; an unfiltered rule mixes the host's
 80 CPUs with the guest's 60.
 
+### CPU placement
+
+The map servers are pinned to guest CPUs 0-39 (the guest's first NUMA node) by `dune-game-pin`. Every monitoring
+container is pinned to CPUs 40-59 with `cpuset: "40-59"` in its compose file (Core's own Prometheus,
+cAdvisor and exporters through `docker-compose.metrics.override.yml`), so a scrape, a Grafana query or a
+database compaction can never run on a core a map's main thread is using. Measured cost on 2026-11-23: Prometheus
+about 0.03 of a core and 240 MB, Grafana under 0.1% of a core, the whole stack well under 0.1 core and about 600 MB of
+the VM's 60 vCPUs and 192 GB; over 24 hours no tick-rate dip came within a minute of a Prometheus compaction.
+Postgres, RabbitMQ and the game are not moved. Live change without a restart: `docker update --cpuset-cpus 40-59
+<container>`. Undo: `docker update --cpuset-cpus ""` and remove the `cpuset` lines.
+
 ## 3. Install on the prod VM
 
 Everything lives outside Core's managed checkout (`/home/dune/observability/`), so a

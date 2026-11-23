@@ -5,6 +5,7 @@ services:
   obs-status-post:
     image: python:3.12-alpine
     container_name: obs-status-post
+    cpuset: "40-59"  # monitoring stays off the game map CPUs (0-39); meta#99
     command: ["python", "-u", "/app/status_post.py"]
     restart: unless-stopped
     user: "1000:1000"
