@@ -227,7 +227,7 @@ keeps one message in a Discord channel up to date, editing it in place every 5
 minutes so the channel is not spammed. It shows status, players, maps online, a
 game-performance rating (Smooth under 0.6 of a core on the busiest map main thread,
 Busy to 0.9, Heavy load above) with lag spikes in the last hour, server CPU, memory,
-disk, network in and out, and uptime. It is written for players: no addresses, host
+disk, network (one field, Mbit/s: `↓ down · ↑ up`, the game server VM's own traffic) and uptime. It is written for players: no addresses, host
 names, temperatures or player names. It reads from Prometheus and uses the same
 webhook file as the status message channel (`discord-webhook.url`), which is
 deliberately a different webhook from alerting so the status message stays visible. The first run posts the message and stores its id in `status-post/state`;
@@ -295,7 +295,10 @@ memory from Core's own exporters; both are private):
   nic0), TCP retransmit share, disk busy time, read and write latency, disk I/O
   pressure, Proxmox storage used (thin pool `local-lvm` and root `local`; a full thin
   pool freezes every VM on it), and swap activity. All of it is zero or near zero when
-  healthy, so a steady non-zero line is the signal. Baseline on 2026-11-23: host NIC in
+  healthy, so a steady non-zero line is the signal. A "Network traffic" row shows the host's
+  physical network card as a share of its 1 Gbit/s speed and what each VM sends out. That is the local link:
+  the internet upload is the router's port and is not measured here (a future step: the gateway's counters
+  through a read-only UniFi account). Baseline on 2026-11-23: host NIC in
   drops about 0.03 per second, thin pool about 27% used, host root storage about 64%.
 
 The recording rules in `prometheus/rules-extra/dune-bursts.yml` define a burst as a

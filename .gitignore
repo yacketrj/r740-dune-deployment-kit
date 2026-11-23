@@ -33,3 +33,7 @@ gitleaks-report.json
 
 # Node (in case pre-commit or other tooling ever adds a package.json here)
 node_modules/
+
+# compiled Python
+__pycache__/
+*.pyc
