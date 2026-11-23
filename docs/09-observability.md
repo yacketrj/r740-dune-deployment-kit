@@ -241,13 +241,23 @@ delete the `host-ipmi` job.
 
 ## 5. Dashboards and burst tracking
 
-Three dashboards, provisioned in the folder "Dune" (the third, **Dune - Game state and
-players**, shows population, map readiness, map memory and FLS health from the
-console API and is private):
+Four dashboards, provisioned in the folder "Dune" (**Dune - Game state and players**
+shows population, map readiness, map memory, FLS health and tick rate from the console
+API and the game log; **Dune - Database and queues** shows Postgres connections,
+transactions, cache hit ratio, size and RabbitMQ backlog, rates, connections and
+memory from Core's own exporters; both are private):
 
 - **Dune - Bursts and maps:** main-thread CPU per map with a 0.9-core burst line,
   bursts per interval by map, whole-process CPU, guest vCPUs above 90%, steal and
   CPU pressure.
+- **Dune - Database and queues:** six tiles (Postgres up, connections, limit, database
+  size, deadlocks in 24 h, messages waiting) and panels for connections by state,
+  transactions, cache hit ratio, rows changed, rollback share, and per broker (admin and
+  game) messages waiting, unacknowledged, connections, publish and deliver rates,
+  unroutable drops, memory against limit and consumers. On a healthy stack the admin
+  broker publishes about 81 messages/s and delivers about 10, and drops about 75 as
+  unroutable (the unbound heartbeats exchange, fork issue #1356): published minus
+  delivered matches the drops, which is why that alert is silenced.
 - **Dune - Host, VM and services:** host core clocks, temperatures, NUMA misses,
   guest load and memory, service CPU, and per-VM CPU and memory from the Proxmox
   API, board temperatures (CPU, inlet, exhaust), fan speeds and power draw from

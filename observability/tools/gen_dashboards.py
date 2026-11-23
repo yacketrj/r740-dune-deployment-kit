@@ -359,12 +359,92 @@ def game():
                      p, ["dune", "game"])
 
 
+def data():
+    p = []
+    dbq = 'datname="dune"'
+    p += [
+        stat("Postgres up", "1 = the database answers the exporter.", "pg_up", 0, 0, decimals=0),
+        stat("Connections in use", "Open connections to Postgres (all states).", "sum(pg_stat_activity_count)", 4, 0, decimals=0),
+        stat("Connection limit", "max_connections setting.", "max(pg_settings_max_connections)", 8, 0, decimals=0),
+        stat("Game database size", "Size of the dune database.", "pg_database_size_bytes{%s}" % dbq, 12, 0, unit="bytes", decimals=2),
+        stat("Deadlocks, last 24 h", "Deadlocks Postgres had to break (0 is healthy).",
+             "sum(increase(pg_stat_database_deadlocks[24h]))", 16, 0, red_at=1, decimals=0),
+        stat("Messages waiting in queues", "Ready plus unacknowledged messages across both RabbitMQ brokers (0 is healthy).",
+             "sum(rabbitmq_queue_messages)", 20, 0, red_at=1000, decimals=0),
+    ]
+    p.append(ts("Connections in use and limit",
+                "Open Postgres connections against max_connections. Running out of connections stalls the game's saves and the console.",
+                [target("sum(pg_stat_activity_count)", "in use"), target("max(pg_settings_max_connections)", "limit")],
+                0, 4, 12, 8, decimals=0, overrides=color_overrides({"in use": BLUE, "limit": RED})))
+    p.append(ts("Connections by state",
+                "idle in transaction for long periods holds locks and blocks cleanup; active is work happening now.",
+                [target("sum by (state)(pg_stat_activity_count)", "{{state}}")],
+                12, 4, 12, 8, decimals=0, stack=True))
+    p.append(ts("Transactions per second",
+                "Commits and rollbacks across all databases (1 min).",
+                [target("sum(rate(pg_stat_database_xact_commit[1m]))", "commits"),
+                 target("sum(rate(pg_stat_database_xact_rollback[1m]))", "rollbacks")],
+                0, 12, 8, 8, decimals=1, overrides=color_overrides({"commits": BLUE, "rollbacks": ORANGE})))
+    p.append(ts("Cache hit ratio",
+                "Share of block reads served from memory instead of disk (5 min). The game database should stay near 100%.",
+                [target("sum(rate(pg_stat_database_blks_hit[5m])) / (sum(rate(pg_stat_database_blks_hit[5m])) + sum(rate(pg_stat_database_blks_read[5m])))", "hit ratio")],
+                8, 12, 8, 8, unit="percentunit", mn=0.9, mx=1, fixed=BLUE))
+    p.append(ts("Rows changed per second",
+                "Rows inserted, updated and deleted (1 min). Shows how busy the game's writes are.",
+                [target("sum(rate(pg_stat_database_tup_inserted[1m]))", "inserted"),
+                 target("sum(rate(pg_stat_database_tup_updated[1m]))", "updated"),
+                 target("sum(rate(pg_stat_database_tup_deleted[1m]))", "deleted")],
+                16, 12, 8, 8, decimals=1,
+                overrides=color_overrides({"inserted": BLUE, "updated": ORANGE, "deleted": AQUA})))
+    p.append(ts("Game database size",
+                "Size of the dune database over time. Growth should be steady; a sudden jump is worth a look.",
+                [target("pg_database_size_bytes{%s}" % dbq, "dune")],
+                0, 20, 12, 8, unit="bytes", fixed=BLUE))
+    p.append(ts("Rollback share",
+                "Share of transactions that rolled back (5 min). Occasional rollbacks are normal; a sustained rise points at failing writes.",
+                [target("sum(rate(pg_stat_database_xact_rollback[5m])) / (sum(rate(pg_stat_database_xact_commit[5m])) + sum(rate(pg_stat_database_xact_rollback[5m])))", "rollbacks")],
+                12, 20, 12, 8, unit="percentunit", mn=0, fixed=ORANGE))
+    br = {"admin": BLUE, "game": ORANGE}
+    def rmq(expr):
+        return [target(expr % 'job="dune-rabbitmq-admin"', "admin"), target(expr % 'job="dune-rabbitmq-game"', "game")]
+    p.append(ts("Messages waiting",
+                "Ready messages in queues, per broker. Should sit at or near zero; a growing line means a consumer is stuck or gone.",
+                rmq("sum(rabbitmq_queue_messages_ready{%s})"), 0, 28, 8, 8, decimals=0, overrides=color_overrides(br)))
+    p.append(ts("Unacknowledged messages",
+                "Delivered but not yet acknowledged, per broker. A steady climb means a consumer takes messages and does not finish them.",
+                rmq("sum(rabbitmq_queue_messages_unacked{%s})"), 8, 28, 8, 8, decimals=0, overrides=color_overrides(br)))
+    p.append(ts("Connections",
+                "Open client connections per broker (game servers, gateway, director).",
+                rmq("sum(rabbitmq_connections{%s})"), 16, 28, 8, 8, decimals=0, overrides=color_overrides(br)))
+    p.append(ts("Messages published per second",
+                "Rate of messages published into each broker (1 min).",
+                rmq("sum(rate(rabbitmq_channel_messages_published_total{%s}[1m]))"), 0, 36, 8, 8, decimals=1, overrides=color_overrides(br)))
+    p.append(ts("Messages delivered per second",
+                "Rate of messages delivered to consumers (1 min). Compare with published: delivered well below published means a backlog is forming.",
+                rmq("sum(rate(rabbitmq_global_messages_delivered_total{%s}[1m]))"), 8, 36, 8, 8, decimals=1, overrides=color_overrides(br)))
+    p.append(ts("Messages dropped as unroutable",
+                "Messages published to an exchange with no matching queue, per second (5 min). The admin broker runs at a steady ~75 per second on a healthy stack (the unbound heartbeats exchange); the alert for this is silenced for that reason (fork issue #1356). A change from that baseline is what matters.",
+                rmq("sum(rate(rabbitmq_global_messages_unroutable_dropped_total{%s}[5m]))"), 16, 36, 8, 8, decimals=1, overrides=color_overrides(br)))
+    p.append(ts("Broker memory used (share of limit)",
+                "Resident memory of each broker against its limit. RabbitMQ blocks publishers when it reaches the limit.",
+                [target('rabbitmq_process_resident_memory_bytes{job="dune-rabbitmq-admin"} / rabbitmq_resident_memory_limit_bytes{job="dune-rabbitmq-admin"}', "admin"),
+                 target('rabbitmq_process_resident_memory_bytes{job="dune-rabbitmq-game"} / rabbitmq_resident_memory_limit_bytes{job="dune-rabbitmq-game"}', "game")],
+                0, 44, 12, 8, unit="percentunit", mn=0, mx=1, overrides=color_overrides(br)))
+    p.append(ts("Consumers",
+                "Consumers attached to queues, per broker. A drop to zero means the services that read the queues are gone.",
+                rmq("sum(rabbitmq_consumers{%s})"), 12, 44, 12, 8, decimals=0, overrides=color_overrides(br)))
+    return dashboard("dune-data", "Dune - Database and queues",
+                     "Postgres and RabbitMQ health from Core's own exporters (meta#99). Private.",
+                     p, ["dune", "data"])
+
+
 def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     (out / "dune-bursts.json").write_text(json.dumps(bursts(), indent=2) + "\n")
     (out / "dune-host.json").write_text(json.dumps(hostvm(), indent=2) + "\n")
     (out / "dune-game.json").write_text(json.dumps(game(), indent=2) + "\n")
+    (out / "dune-data.json").write_text(json.dumps(data(), indent=2) + "\n")
     print("wrote", sorted(f.name for f in out.glob("*.json")))
 
 
