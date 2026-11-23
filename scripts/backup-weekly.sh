@@ -130,6 +130,7 @@ announce_close() { # done|halted
   else bk_announce postponed
   fi
   plog "announce: closing message sent (${1}${announce_started:+, started=$announce_started})" >/dev/null
+  bk_announce_audit || true
 }
 wait_until() { # epoch: sleep (interruptibly) until then
   local target="$1" now left chunk

@@ -32,6 +32,8 @@ setup_env() {
   export BK_STAGE_DIR="$BATS_TEST_TMPDIR/stage"
   mkdir -p "$BK_STATE_DIR" "$BK_CONFIG_DIR" "$BK_STAGE_DIR" "$BATS_TEST_TMPDIR/bin"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  # announcements: one try and no audit unless a test opts in (retries sleep; the audit needs the guest agent)
+  export BK_ANNOUNCE_RETRY_BUDGET_S=0 BK_ANNOUNCE_AUDIT=0 BK_ANNOUNCE_AUDIT_SETTLE_S=0
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
   export REPO_ROOT
 }

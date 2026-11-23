@@ -31,6 +31,7 @@ bk_redact() {
     -e 's#(Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#Ig'
 }
 
+BK_RUN_START_ISO="$(date -u +%Y-%m-%dT%H:%M:%S)"   # when this run began; the announce audit only looks at later history
 bk_log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | bk_redact
 }
@@ -169,9 +170,18 @@ bk_announce_configured() {
 
 # Send the announcement for KEY. Sets BK_ANNOUNCE_LAST_RC: 0 sent, 1 failed, 2 not configured.
 # Never returns non-zero.
+#
+# Retries (2026-11-23): the daily 05:00 game restart takes the console's broadcast down for a few minutes, and
+# the weekly job's first warning (30 minutes before the start) fires at 05:01, so it failed on 2026-11-17 (the
+# console answered "blocked") while the later warnings went out. A failed announcement is now retried every
+# BK_ANNOUNCE_RETRY_S seconds (default 30) until BK_ANNOUNCE_RETRY_BUDGET_S has passed: 480 for a "lead" warning
+# (well inside the 15 minutes before the next one; the warnings are timed against fixed clock times, so a late
+# one never delays the rest), 120 for everything else. 0 = one try, no retries. The failure log says WHY.
 export BK_ANNOUNCE_LAST_RC=2
+BK_ANN_SENT=0      # announcements this run that the console accepted
+BK_ANN_FAILED=0    # announcements this run that failed after every retry
 bk_announce() { # key [n]
-  local key="${1:?key}" n="${2:-0}" k payload
+  local key="${1:?key}" n="${2:-0}" k payload budget gap t0 attempt=0 out="" why
   BK_ANNOUNCE_LAST_RC=2
   bk_announce_text "$key" "$n" || { bk_log "announce: unknown message '$key' (ignored)"; return 0; }
   if ! bk_announce_configured; then
@@ -180,14 +190,67 @@ bk_announce() { # key [n]
   fi
   k="$(tr -d '[:space:]' <"$BK_ANNOUNCE_KEY_FILE")"
   payload="$(jq -nc --arg t "$BK_ANN_TITLE" --arg b "$BK_ANN_BODY" --argjson d "${BK_ANNOUNCE_DURATION_S:-40}" '{title:$t, body:$b, durationSec:$d}')" || return 0
+  budget="${BK_ANNOUNCE_RETRY_BUDGET_S:-}"
+  if [ -z "$budget" ]; then case "$key" in lead) budget=480 ;; *) budget=120 ;; esac; fi
+  gap="${BK_ANNOUNCE_RETRY_S:-30}"
   BK_ANNOUNCE_LAST_RC=1
-  if printf 'url = "%s/api/admin/broadcast"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${BK_ANNOUNCE_URL%/}" "$k" \
-    | curl -fsS -m 15 -X POST -d "$payload" -K - >/dev/null 2>&1; then
-    BK_ANNOUNCE_LAST_RC=0
-    bk_log "announced in game: $key ($BK_ANN_TITLE)"
-  else
-    bk_log "announce FAILED: $key (ignored; the backup is not affected)"
+  t0=$SECONDS
+  while :; do
+    attempt=$((attempt + 1))
+    # stderr and the failing response body are captured (never the key: it is on curl's stdin, not in argv)
+    if out="$(printf 'url = "%s/api/admin/broadcast"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${BK_ANNOUNCE_URL%/}" "$k" \
+      | curl -sS --fail-with-body -m 15 -X POST -d "$payload" -K - 2>&1)"; then
+      BK_ANNOUNCE_LAST_RC=0
+      BK_ANN_SENT=$((BK_ANN_SENT + 1))
+      if [ "$attempt" -gt 1 ]; then
+        bk_log "announced in game: $key ($BK_ANN_TITLE) after $attempt attempts"
+      else
+        bk_log "announced in game: $key ($BK_ANN_TITLE)"
+      fi
+      return 0
+    fi
+    why="$(printf '%s' "$out" | tr '\n\t' '  ' | tr -s ' ' | cut -c1-160)"
+    [ $((SECONDS - t0 + gap)) -le "$budget" ] || break
+    bk_log "announce retry: $key (attempt $attempt failed: ${why:-no detail})"
+    sleep "$gap"
+  done
+  BK_ANN_FAILED=$((BK_ANN_FAILED + 1))
+  bk_log "announce FAILED: $key after $attempt attempt(s): ${why:-no detail} (ignored; the backup is not affected)"
+  return 0
+}
+
+# After the closing message: compare what THIS run sent with the console's own command history (read through
+# the guest agent; the announce key only has admin:broadcast, so it cannot read history itself). One log line:
+#   announce audit: script sent 8 ok / 1 failed; console history: 8 published, 1 blocked attempt(s): OK
+# MISMATCH when the console published a different number than the script counted as sent. A "blocked" entry is
+# one failed attempt (a retried announcement leaves several), so it is reported, not compared. Best effort,
+# never fatal, and skipped when nothing was announced or BK_ANNOUNCE_AUDIT=0.
+bk_announce_audit() {
+  [ "${BK_ANNOUNCE_AUDIT:-1}" = "1" ] || return 0
+  [ $((BK_ANN_SENT + BK_ANN_FAILED)) -gt 0 ] || return 0
+  local LC_ALL=C guest file raw titles spec key n ts kind title status pub=0 blk=0 other=0 verdict
+  guest="${BK_ANNOUNCE_AUDIT_GUEST:-${BK_ANNOUNCE_GUESTS:-101}}"; guest="${guest%% *}"
+  file="${BK_ANNOUNCE_HISTORY_FILE:-/home/dune/dune-awakening-selfhost-docker/runtime/generated/admin-command-history.tsv}"
+  sleep "${BK_ANNOUNCE_AUDIT_SETTLE_S:-3}"
+  raw="$(timeout 40 qm guest exec "$guest" -- tail -n "${BK_ANNOUNCE_AUDIT_LINES:-800}" "$file" 2>/dev/null | jq -r '."out-data" // empty' 2>/dev/null)" || raw=""
+  if [ -z "$raw" ]; then
+    bk_log "announce audit: could not read the console history on guest $guest (ignored)"
+    return 0
   fi
+  titles=""
+  for spec in "lead 30" "start 0" "ongoing 30" "done 0" "halted 0" "postponed 0"; do
+    read -r key n <<<"$spec"
+    bk_announce_text "$key" "$n" && titles+="$BK_ANN_TITLE"$'\n'
+  done
+  while IFS=$'\t' read -r ts kind _ title _ status _; do
+    [ "$kind" = "web-broadcast" ] || continue
+    [[ "$ts" > "${BK_RUN_START_ISO:-0}" ]] || continue
+    grep -qxF -- "$title" <<<"$titles" || continue
+    case "$status" in published) pub=$((pub + 1)) ;; blocked) blk=$((blk + 1)) ;; *) other=$((other + 1)) ;; esac
+  done <<<"$raw"
+  verdict=OK
+  [ "$pub" -eq "$BK_ANN_SENT" ] || verdict="MISMATCH (the console published $pub, the script counted $BK_ANN_SENT as sent)"
+  bk_log "announce audit: script sent $BK_ANN_SENT ok / $BK_ANN_FAILED failed; console history: $pub published, $((blk + other)) blocked or other attempt(s): $verdict"
   return 0
 }
 
