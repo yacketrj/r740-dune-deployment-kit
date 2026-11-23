@@ -191,6 +191,14 @@ CPU/inlet temperature, fan failure, host metrics missing) go to Alertmanager
 (`obs-alertmanager`, `docker-compose.alertmanager.yml`) and from there to one Discord
 channel.
 
+**Posting through the Mentat bot (mentat#469).** Alertmanager does not post to Discord itself. Its `mentat`
+receiver (`webhook_configs`) sends to the bot's `/api/alerts/relay` with a bearer token read from
+`alertmanager/alert-relay-token` (mode 600), and the bot posts as itself: **Sahir Venn · Mentat**, in the Mentat
+voice, with the persona footer and a random signed quote, one embed per alert. The bot needs
+`DUNE_ALERT_RELAY_CHANNEL_ID` and the same token in `DUNE_ALERT_RELAY_TOKEN_FILE` (it answers 503 until the token is set,
+so an open relay cannot be used to post as Mentat). The old Discord webhook receiver stays defined in
+`alertmanager.yml` as a rollback: point `route.receiver` and the critical sub-route back at `discord`.
+
 1. Create a webhook for the target channel in Discord (Edit Channel, Integrations).
    A webhook can only post to that channel; it is the only credential this needs.
 2. Save the URL at `/home/dune/observability/alertmanager/discord-webhook-bot.url`
@@ -226,6 +234,13 @@ deliberately a different webhook from alerting so the status message stays visib
 if the message is deleted it posts a new one. Preview without sending:
 `python status_post.py --dry-run`. Undo: `docker compose -f
 docker-compose.status-post.yml down`, then delete the message in Discord.
+
+**Posting through the Mentat bot (mentat#469).** With `RELAY_URL` set (in `.env` next to the compose file), the job does not
+use a webhook: it pushes `{state, headline, fields}` to the bot's `/api/status/relay` with the token in
+`status-post/status-relay-token` (mode 600), and the bot writes the post in the Mentat voice (persona footer, a
+random signed quote, a "Last updated" time) and edits ONE message as itself. The bot needs `DUNE_STATUS_CHANNEL_ID` and
+`DUNE_STATUS_RELAY_TOKEN_FILE`. Unset `RELAY_URL` to go back to webhook mode. If the job stops, the message keeps its
+last state with an ageing "Last updated" time (mentat#471 tracks marking it stale).
 
 ### Board sensors (in-band IPMI)
 
