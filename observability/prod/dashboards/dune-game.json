@@ -47,7 +47,7 @@
       "id": 32,
       "type": "stat",
       "title": "Server state",
-      "description": "1 = overall READY according to the console API.",
+      "description": "1 = overall READY according to the console API, 0 = starting or has an issue.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -87,7 +87,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "dune_server_ready",
+          "expr": "max(dune_server_ready)",
           "legendFormat": "",
           "refId": "A"
         }

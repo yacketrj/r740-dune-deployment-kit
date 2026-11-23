@@ -259,8 +259,8 @@ def game():
     p = []
     always = 'map=~"Survival_1|Overmap|DeepDesert_1"'
     p += [
-        stat("Server state", "1 = overall READY according to the console API.",
-             "dune_server_ready", 0, 0, decimals=0),
+        stat("Server state", "1 = overall READY according to the console API, 0 = starting or has an issue.",
+             "max(dune_server_ready)", 0, 0, decimals=0),
         stat("Players online", "Players online now (console API).", "dune_players_online", 4, 0, decimals=0),
         stat("Capacity", "Declared population capacity.", "dune_population_capacity", 8, 0, decimals=0),
         stat("FLS checks failing", "Funcom FLS declaration checks that are not OK (0 is healthy).",
