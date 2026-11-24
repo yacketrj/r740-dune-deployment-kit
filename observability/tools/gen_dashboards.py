@@ -133,6 +133,25 @@ def up_words(up_text="UP", down_text="DOWN"):
     return {1: (up_text, theme.OK), 0: (down_text, theme.BAD)}
 
 
+def _event(name, color, expr, title):
+    return {"datasource": DS, "enable": True, "name": name, "iconColor": color, "expr": expr,
+            "step": "5m", "titleFormat": title, "textFormat": "", "tagKeys": "", "useValueForTime": False}
+
+
+# Lines drawn over every time graph, so a stall can be matched with what happened at that moment.
+EVENT_ANNOTATIONS = [
+    _event("Map restarts", theme.SPICE,
+           'max(changes(namedprocess_namegroup_oldest_start_time_seconds{groupname=~"(Survival_1|Overmap|DeepDesert_1)_p[0-9]+"}[5m])) > 0',
+           "Game maps restarted"),
+    _event("Backups", theme.SKY,
+           'max(changes(node_systemd_timer_last_trigger_seconds{name=~"r740-backup-(weekly|daily).timer"}[5m])) > 0',
+           "Backup started"),
+    _event("Guest reboots", theme.BAD, 'changes(node_boot_time_seconds{job="dune-node"}[5m]) > 0', "dune-prod rebooted"),
+]
+
+ALWAYS_PARTS = 'partition=~"1|2|8|36|37"'  # Abbir, Overland, PvE, PvP, Alraab: the maps that are running all the time
+
+
 NAV_LINKS = [{"type": "dashboards", "tags": ["dune"], "asDropdown": False, "includeVars": False, "keepTime": True,
               "icon": "dashboard", "title": "Arrakis dashboards", "tooltip": "", "targetBlank": False, "url": ""}]
 
@@ -198,7 +217,7 @@ def dashboard(uid, title, desc, panels, tags, banner=None, rows=None):
             "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": True,
             "iconColor": theme.SPICE, "name": "Changes",
             "target": {"type": "tags", "tags": ["change"], "limit": 100, "matchAny": False, "queryType": "tags"},
-        }]},
+        }] + EVENT_ANNOTATIONS},
         "templating": {"list": []}, "links": NAV_LINKS, "panels": panels,
     }
 
@@ -618,7 +637,8 @@ def overview():
                 [target('max(node_hwmon_temp_celsius{source="r740-host"})', "hottest"),
                  target('avg(node_hwmon_temp_celsius{source="r740-host"})', "average")],
                 12, 20, 12, 8, unit="celsius", mn=0, overrides=color_overrides({"hottest": ORANGE, "average": BLUE})))
-    links = [("dune-bursts", "Performance", "Main thread, bursts, tick rate"),
+    links = [("dune-wall", "Wall", "One screen: verdict, maps, the day"),
+             ("dune-bursts", "Performance", "Main thread, bursts, tick rate"),
              ("dune-game", "Game state", "Players, readiness, memory"),
              ("dune-host", "Host and VMs", "Clocks, temperatures, network, disks"),
              ("dune-data", "Database and queues", "Postgres and RabbitMQ")]
@@ -637,6 +657,148 @@ def overview():
                      rows=[(0, "Right now"), (8, "Internet"), (12, "Last 6 hours"), (28, "Dashboards")])
 
 
+def tiles(title, desc, expr, legend, x, y, w, h, unit="none", decimals=None, steps=None, words=None, graph=False,
+          show_text=True, solid=False, value_size=None):
+    """One tile per series (a stat panel with a coloured background), optionally with a sparkline."""
+    defaults = {"unit": unit, "color": {"mode": "thresholds"},
+                "thresholds": {"mode": "absolute", "steps": [{"color": c, "value": v} for v, c in steps]}}
+    if decimals is not None:
+        defaults["decimals"] = decimals
+    if words:
+        defaults["mappings"] = [{"type": "value", "options": {
+            str(k): {"text": t, "color": c, "index": i} for i, (k, (t, c)) in enumerate(words.items())}}]
+    opts = {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+            "colorMode": "background_solid" if solid else "background", "graphMode": "area" if graph else "none",
+            "textMode": ("value_and_name" if legend else "value") if show_text else "none", "justifyMode": "center", "orientation": "auto",
+            "wideLayout": True}
+    if value_size:
+        opts["text"] = {"valueSize": value_size, "titleSize": 13}
+    return {"id": nid(), "type": "stat", "title": title, "description": desc, "datasource": DS,
+            "gridPos": {"x": x, "y": y, "w": w, "h": h},
+            "fieldConfig": {"defaults": defaults, "overrides": []}, "options": opts,
+            "targets": [target(expr, legend)]}
+
+
+def ring(title, desc, expr, x, y, w, h, unit="percentunit", mx=1, decimals=0, warn=None, red=None):
+    """An arc gauge: the value against its limit, with the warning and critical marks drawn on the arc."""
+    steps = [{"color": theme.OK, "value": None}]
+    if warn is not None:
+        steps.append({"color": theme.WARN, "value": warn})
+    if red is not None:
+        steps.append({"color": theme.BAD, "value": red})
+    return {"id": nid(), "type": "gauge", "title": title, "description": desc, "datasource": DS,
+            "gridPos": {"x": x, "y": y, "w": w, "h": h},
+            "fieldConfig": {"defaults": {"unit": unit, "min": 0, "max": mx, "decimals": decimals,
+                                         "color": {"mode": "thresholds"},
+                                         "thresholds": {"mode": "absolute", "steps": steps}}, "overrides": []},
+            "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+                        "showThresholdMarkers": True, "showThresholdLabels": False, "orientation": "auto",
+                        "text": {"valueSize": 34, "titleSize": 13}},
+            "targets": [target(expr)]}
+
+
+def lanes(kind, title, desc, targets, x, y, w, h, steps, mappings=None, unit="none", decimals=None, interval=None):
+    """state-timeline (changes of state over time) or status-history (a coloured cell per interval)."""
+    defaults = {"unit": unit, "color": {"mode": "thresholds"},
+                "thresholds": {"mode": "absolute", "steps": [{"color": c, "value": v} for v, c in steps]},
+                "custom": {"fillOpacity": 85, "lineWidth": 0, "hideFrom": {"legend": False, "tooltip": False, "viz": False}}}
+    if decimals is not None:
+        defaults["decimals"] = decimals
+    if mappings:
+        defaults["mappings"] = [{"type": "value", "options": {
+            str(k): {"text": t, "color": c, "index": i} for i, (k, (t, c)) in enumerate(mappings.items())}}]
+    defaults.setdefault("mappings", []).append({"type": "special", "options": {
+        "match": "null+nan", "result": {"text": "No data", "color": "#2a2217", "index": 99}}})
+    opts = {"showValue": "never", "rowHeight": 0.85, "legend": {"showLegend": False, "displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single", "sort": "none"}}
+    if kind == "state-timeline":
+        opts.update({"mergeValues": True, "alignValue": "left"})
+    else:
+        opts.update({"colWidth": 0.96})
+    ts_ = [dict(t, refId=chr(65 + i)) for i, t in enumerate(targets)]
+    if interval:
+        for t in ts_:
+            t["interval"] = interval
+    return {"id": nid(), "type": kind, "title": title, "description": desc, "datasource": DS,
+            "gridPos": {"x": x, "y": y, "w": w, "h": h},
+            "fieldConfig": {"defaults": defaults, "overrides": []}, "options": opts, "targets": ts_}
+
+
+def wall():
+    """One screen for a TV or a phone: a verdict, the maps as tiles, pressure rings, the day as lanes, the cores as a grid."""
+    p = []
+    parts = "dune_partition_ready{%s}" % ALWAYS_PARTS
+    # 0 steady, 1 watch (slow ticks), 2 trouble (a map or the server is down, or the API is silent)
+    verdict = ("clamp_max(2 * clamp_max(((1 - min(%s)) or vector(1)) + ((1 - max(dune_server_ready)) or vector(1)), 1)"
+               " + ((max(dune:game_slow_share:ratio) > bool 0.25) or vector(0)), 2)" % parts)
+    p.append(tiles("Verdict", "Steady: every always-on map is ready and ticks are healthy. Watch: a map spent over a quarter of the last minute below 18 ticks per second. Trouble: a map or the server is not ready, or the console API is silent.",
+                   verdict, "", 0, 0, 8, 7, decimals=0, graph=False, show_text=True, value_size=64,
+                   steps=[(None, theme.OK)],
+                   words={0: ("STEADY", theme.OK), 1: ("WATCH", theme.WARN), 2: ("TROUBLE", theme.BAD)}))
+    p[-1]["fieldConfig"]["defaults"]["thresholds"]["steps"] = [
+        {"color": theme.OK, "value": None}, {"color": theme.WARN, "value": 1}, {"color": theme.BAD, "value": 2}]
+    p[-1]["options"]["textMode"] = "value"
+    p.append(tiles("Players online", "Players online now (console API).", "dune_players_online", "", 8, 0, 4, 7,
+                   decimals=0, steps=[(None, "#2a2217")], value_size=56))
+    p.append(tiles("Tick rate", "Slowest map server over 5 minutes, ticks per second. The target is 20; below 18 players feel rubberbanding.",
+                   "min(avg_over_time(dune:game_tick_rate:hz[5m]))", "", 12, 0, 4, 7, unit="hertz", decimals=1,
+                   steps=[(None, theme.BAD), (18, theme.WARN), (19.5, "#2a2217")], value_size=56))
+    p.append(tiles("Internet use", "The busier direction of the internet link as a share of the %d Mbit/s plan." % INTERNET_PLAN_MBIT,
+                   "((rate(unifi_wan_receive_bytes_total[1m]) + rate(unifi_wan_transmit_bytes_total[1m]) + abs(rate(unifi_wan_receive_bytes_total[1m]) - rate(unifi_wan_transmit_bytes_total[1m]))) / 2) * 8 / (%d * 1e6)" % INTERNET_PLAN_MBIT,
+                   "", 16, 0, 4, 7, unit="percentunit", decimals=1,
+                   steps=[(None, "#2a2217"), (0.6, theme.WARN), (0.85, theme.BAD)], value_size=56))
+    p.append(tiles("Hottest sensor", "Hottest host temperature sensor.", 'max(node_hwmon_temp_celsius{source="r740-host"})', "",
+                   20, 0, 4, 7, unit="celsius", decimals=0,
+                   steps=[(None, "#2a2217"), (75, theme.WARN), (85, theme.BAD)], value_size=56))
+    p.append(tiles("The world", "Each always-on map: Sietches (Survival_1), the Overmap and the Deep Deserts.",
+                   parts, "{{label}} \u00b7 {{map}}", 0, 7, 24, 5, decimals=0, graph=False,
+                   steps=[(None, theme.BAD), (1, theme.OK)], words={1: ("READY", theme.OK), 0: ("DOWN", theme.BAD)}, value_size=30))
+    p.append(tiles("Tick rate by map", "Ticks per second of each map server with its last 6 hours behind it. Target 20; below 18 is rubberbanding. A map that is idle writes nothing to its log and shows no tile.",
+                   "dune:game_tick_rate:hz > 0", "{{server}}", 0, 12, 24, 6, unit="hertz", decimals=1,
+                   steps=[(None, theme.BAD), (18, theme.WARN), (19.5, "#2a2217")], value_size=30))
+    p.append(ring("Guest CPU", "Average busy share across the game server VM's 60 vCPUs.",
+                  "avg(dune:vcpu_busy:ratio)", 0, 18, 6, 6, warn=0.6, red=0.85))
+    p.append(ring("Guest memory", "Share of the game server VM's memory in use.",
+                  '1 - node_memory_MemAvailable_bytes{job="dune-node"}/node_memory_MemTotal_bytes{job="dune-node"}',
+                  6, 18, 6, 6, warn=0.8, red=0.92))
+    p.append(ring("Busiest map thread", "Highest main-thread CPU of any map (1.0 = one core). Above 0.9 is a burst.",
+                  "max(dune:map_main_thread:cores)", 12, 18, 6, 6, unit="none", decimals=2, warn=0.6, red=0.9))
+    p.append(ring("VM disk pool", "Share used of the Proxmox thin pool that holds the VM disks. A full pool freezes every VM on it.",
+                  'pve_disk_usage_bytes{id="storage/DA-1/local-lvm"} / pve_disk_size_bytes{id="storage/DA-1/local-lvm"}',
+                  18, 18, 6, 6, warn=0.8, red=0.9))
+    p.append(lanes("state-timeline", "Map state over time", "Green while the map is ready, red while it is down. Orange lines mark map restarts and blue lines backups on every graph.",
+                   [target(parts, "{{label}} \u00b7 {{map}}")], 0, 24, 24, 7,
+                   steps=[(None, theme.BAD), (1, theme.OK)], mappings={1: ("Ready", theme.OK), 0: ("Down", theme.BAD)}))
+    p.append(lanes("status-history", "Tick rate through the day",
+                   "One row per map, one cell per 10 minutes: green is a healthy 19.5 ticks per second or more, amber 18 to 19.5, red below 18, grey no data (an idle map writes nothing to its log, so grey is not a fault). Set the time range to 24 hours or 7 days to see when stalls cluster.",
+                   [target("avg_over_time(dune:game_tick_rate:hz[10m]) > 0", "{{server}}")], 0, 31, 24, 8,
+                   steps=[(None, theme.BAD), (18, theme.WARN), (19.5, theme.OK)], unit="hertz", decimals=1, interval="10m"))
+    backup_w = 'time() - node_systemd_timer_last_trigger_seconds{name="r740-backup-weekly.timer"}'
+    backup_d = 'time() - node_systemd_timer_last_trigger_seconds{name="r740-backup-daily.timer"}'
+    up = 'time() - max(namedprocess_namegroup_oldest_start_time_seconds{groupname=~"(Survival_1|Overmap|DeepDesert_1)_p(1|2|8|36|37)"})'
+    p.append(tiles("Maps running for", "Time since the game maps last started. They restart daily at 05:00 Pacific.", up, "", 0, 39, 8, 4,
+                   unit="dtdurations", graph=False, steps=[(None, "#2a2217")], value_size=34))
+    p.append(tiles("Since the weekly backup", "Time since the weekly backup last started. Amber after 8 days, red after 10.", backup_w, "", 8, 39, 8, 4,
+                   unit="dtdurations", graph=False, steps=[(None, "#2a2217"), (8 * 86400, theme.WARN), (10 * 86400, theme.BAD)], value_size=34))
+    p.append(tiles("Since the daily backup", "Time since the daily backup last started. Amber after 26 hours, red after 50.", backup_d, "", 16, 39, 8, 4,
+                   unit="dtdurations", graph=False, steps=[(None, "#2a2217"), (26 * 3600, theme.WARN), (50 * 3600, theme.BAD)], value_size=34))
+    pad = 'label_replace(%s, "cpu", "0$1", "cpu", "([0-9])")'
+    heat = [(None, "#2a2217"), (0.1, "#4a3b28"), (0.3, "#8a6a3a"), (0.55, theme.SPICE), (0.8, theme.WARN), (0.92, theme.BAD)]
+    p.append(tiles("Game cores (0-39)", "The vCPUs the game maps are pinned to, one tile each in order from 00. Darker is idle, orange busy, red saturated.",
+                   pad % 'dune:vcpu_busy:ratio{cpu=~"[0-9]|[1-3][0-9]"}', "{{cpu}}", 0, 43, 16, 6, unit="percentunit", decimals=0,
+                   steps=heat, graph=False, show_text=False, solid=True))
+    p.append(tiles("Monitoring cores (40-59)", "The vCPUs left for monitoring and the rest of the system.",
+                   pad % 'dune:vcpu_busy:ratio{cpu=~"[4-5][0-9]"}', "{{cpu}}", 16, 43, 8, 6, unit="percentunit", decimals=0,
+                   steps=heat, graph=False, show_text=False, solid=True))
+    d = dashboard("dune-wall", "Arrakis \u00b7 Wall",
+                  "One screen for a TV or a phone: verdict, maps, pressure, the day and the cores (meta#99). Private.",
+                  p, ["dune", "wall"], banner=("ARRAKIS", "I compute; I do not guess. \u2014 Sahir Venn"),
+                  rows=[(0, "Right now"), (7, "The world"), (18, "Pressure"), (24, "The day"), (39, "Clocks"), (43, "Cores")])
+    d["refresh"] = "30s"
+    d["time"] = {"from": "now-24h", "to": "now"}
+    return d
+
+
 def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
@@ -644,6 +806,7 @@ def main():
     (out / "dune-host.json").write_text(json.dumps(hostvm(), indent=2) + "\n")
     (out / "dune-game.json").write_text(json.dumps(game(), indent=2) + "\n")
     (out / "dune-data.json").write_text(json.dumps(data(), indent=2) + "\n")
+    (out / "dune-wall.json").write_text(json.dumps(wall(), indent=2) + "\n")
     (out / "dune-overview.json").write_text(json.dumps(overview(), indent=2) + "\n")
     print("wrote", sorted(f.name for f in out.glob("*.json")))
 

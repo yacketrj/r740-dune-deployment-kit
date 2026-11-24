@@ -35,6 +35,51 @@
           "matchAny": false,
           "queryType": "tags"
         }
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Map restarts",
+        "iconColor": "#f0912f",
+        "expr": "max(changes(namedprocess_namegroup_oldest_start_time_seconds{groupname=~\"(Survival_1|Overmap|DeepDesert_1)_p[0-9]+\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Game maps restarted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Backups",
+        "iconColor": "#86a9c4",
+        "expr": "max(changes(node_systemd_timer_last_trigger_seconds{name=~\"r740-backup-(weekly|daily).timer\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Backup started",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Guest reboots",
+        "iconColor": "#ec7058",
+        "expr": "changes(node_boot_time_seconds{job=\"dune-node\"}[5m]) > 0",
+        "step": "5m",
+        "titleFormat": "dune-prod rebooted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
       }
     ]
   },
@@ -59,7 +104,7 @@
   ],
   "panels": [
     {
-      "id": 66,
+      "id": 73,
       "type": "text",
       "title": "",
       "transparent": true,
@@ -80,7 +125,7 @@
       }
     },
     {
-      "id": 67,
+      "id": 74,
       "type": "row",
       "title": "Right now",
       "collapsed": false,
@@ -93,7 +138,7 @@
       }
     },
     {
-      "id": 52,
+      "id": 59,
       "type": "stat",
       "title": "Server state",
       "description": "1 = overall READY according to the console API, 0 = starting or has an issue.",
@@ -160,7 +205,7 @@
       ]
     },
     {
-      "id": 53,
+      "id": 60,
       "type": "stat",
       "title": "Players online",
       "description": "Players online now (console API).",
@@ -210,7 +255,7 @@
       ]
     },
     {
-      "id": 54,
+      "id": 61,
       "type": "stat",
       "title": "Capacity",
       "description": "Declared population capacity.",
@@ -260,7 +305,7 @@
       ]
     },
     {
-      "id": 55,
+      "id": 62,
       "type": "stat",
       "title": "FLS checks failing",
       "description": "Funcom FLS declaration checks that are not OK (0 is healthy).",
@@ -322,7 +367,7 @@
       ]
     },
     {
-      "id": 56,
+      "id": 63,
       "type": "stat",
       "title": "Maps not ready",
       "description": "Game-server rows not READY (dynamic Deep Desert may be stopped on purpose).",
@@ -372,7 +417,7 @@
       ]
     },
     {
-      "id": 57,
+      "id": 64,
       "type": "stat",
       "title": "Console API reachable",
       "description": "1 when the adapter can read the console API.",
@@ -439,7 +484,7 @@
       ]
     },
     {
-      "id": 68,
+      "id": 75,
       "type": "row",
       "title": "Players and load",
       "collapsed": false,
@@ -452,7 +497,7 @@
       }
     },
     {
-      "id": 58,
+      "id": 65,
       "type": "timeseries",
       "title": "Players online",
       "description": "Compare with bursts: the main-thread load should rise with players. Population from the console API (10 s).",
@@ -516,7 +561,7 @@
       ]
     },
     {
-      "id": 59,
+      "id": 66,
       "type": "timeseries",
       "title": "Bursts alongside players",
       "description": "Bursts per interval (all maps) next to players online, to see whether load or something else drives them.",
@@ -622,7 +667,7 @@
       ]
     },
     {
-      "id": 69,
+      "id": 76,
       "type": "row",
       "title": "Memory",
       "collapsed": false,
@@ -635,7 +680,7 @@
       }
     },
     {
-      "id": 60,
+      "id": 67,
       "type": "timeseries",
       "title": "Map memory used (share of limit)",
       "description": "Per game-server container, from the console API. The limit is 16 GiB per partition.",
@@ -788,7 +833,7 @@
       ]
     },
     {
-      "id": 61,
+      "id": 68,
       "type": "timeseries",
       "title": "Swap used by map containers",
       "description": "Swap use by game-server containers. Should stay at zero.",
@@ -941,7 +986,7 @@
       ]
     },
     {
-      "id": 70,
+      "id": 77,
       "type": "row",
       "title": "Readiness",
       "collapsed": false,
@@ -954,7 +999,7 @@
       }
     },
     {
-      "id": 62,
+      "id": 69,
       "type": "timeseries",
       "title": "Always-on partitions ready",
       "description": "Survival, Overmap and Deep Desert partitions: 1 = ready, 0 = not (dynamic Deep Desert may be stopped on purpose).",
@@ -1093,7 +1138,7 @@
       ]
     },
     {
-      "id": 63,
+      "id": 70,
       "type": "timeseries",
       "title": "FLS checks",
       "description": "1 = OK for each Funcom FLS declaration check. Funcom outages show here.",
@@ -1217,7 +1262,7 @@
       ]
     },
     {
-      "id": 71,
+      "id": 78,
       "type": "row",
       "title": "Server tick rate",
       "collapsed": false,
@@ -1230,7 +1275,7 @@
       }
     },
     {
-      "id": 64,
+      "id": 71,
       "type": "timeseries",
       "title": "Server tick rate per map",
       "description": "Ticks per second of each map server, from the frame counter in the game's own log. The target is 20; sustained dips below about 18 are what players feel as rubberbanding. Maps with no log activity show no line.",
@@ -1369,7 +1414,7 @@
       ]
     },
     {
-      "id": 65,
+      "id": 72,
       "type": "timeseries",
       "title": "Time spent below 18 ticks per second",
       "description": "Share of time each map server ran below 18 ticks per second (1 minute window).",

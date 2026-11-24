@@ -35,6 +35,51 @@
           "matchAny": false,
           "queryType": "tags"
         }
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Map restarts",
+        "iconColor": "#f0912f",
+        "expr": "max(changes(namedprocess_namegroup_oldest_start_time_seconds{groupname=~\"(Survival_1|Overmap|DeepDesert_1)_p[0-9]+\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Game maps restarted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Backups",
+        "iconColor": "#86a9c4",
+        "expr": "max(changes(node_systemd_timer_last_trigger_seconds{name=~\"r740-backup-(weekly|daily).timer\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Backup started",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Guest reboots",
+        "iconColor": "#ec7058",
+        "expr": "changes(node_boot_time_seconds{job=\"dune-node\"}[5m]) > 0",
+        "step": "5m",
+        "titleFormat": "dune-prod rebooted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
       }
     ]
   },

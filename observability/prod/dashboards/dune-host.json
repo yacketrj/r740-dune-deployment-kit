@@ -35,6 +35,51 @@
           "matchAny": false,
           "queryType": "tags"
         }
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Map restarts",
+        "iconColor": "#f0912f",
+        "expr": "max(changes(namedprocess_namegroup_oldest_start_time_seconds{groupname=~\"(Survival_1|Overmap|DeepDesert_1)_p[0-9]+\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Game maps restarted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Backups",
+        "iconColor": "#86a9c4",
+        "expr": "max(changes(node_systemd_timer_last_trigger_seconds{name=~\"r740-backup-(weekly|daily).timer\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Backup started",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Guest reboots",
+        "iconColor": "#ec7058",
+        "expr": "changes(node_boot_time_seconds{job=\"dune-node\"}[5m]) > 0",
+        "step": "5m",
+        "titleFormat": "dune-prod rebooted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
       }
     ]
   },
@@ -59,7 +104,7 @@
   ],
   "panels": [
     {
-      "id": 44,
+      "id": 49,
       "type": "text",
       "title": "",
       "transparent": true,
@@ -80,7 +125,7 @@
       }
     },
     {
-      "id": 45,
+      "id": 50,
       "type": "row",
       "title": "At a glance",
       "collapsed": false,
@@ -393,7 +438,7 @@
       ]
     },
     {
-      "id": 46,
+      "id": 51,
       "type": "row",
       "title": "CPU, clocks and temperature",
       "collapsed": false,
@@ -872,7 +917,7 @@
       ]
     },
     {
-      "id": 47,
+      "id": 52,
       "type": "row",
       "title": "Services and VMs",
       "collapsed": false,
@@ -1317,7 +1362,7 @@
       ]
     },
     {
-      "id": 48,
+      "id": 53,
       "type": "row",
       "title": "Board sensors (IPMI)",
       "collapsed": false,
@@ -1668,9 +1713,9 @@
       ]
     },
     {
-      "id": 49,
+      "id": 54,
       "type": "row",
-      "title": "Network",
+      "title": "Network traffic",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -1681,7 +1726,561 @@
       }
     },
     {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Host network link use",
+      "description": "Traffic on the host's physical network card as a share of its speed (1 Gbit/s), in and out (1 min). This is the local link, not your internet connection: if it ever runs high, the local network is the limit. The internet upload is the router's port and is not measured here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none",
+            "axisSoftMax": 0.05
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "in"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_network_receive_bytes_total{job=\"host-node\",device=\"nic0\"}[1m]) / node_network_speed_bytes{job=\"host-node\",device=\"nic0\"}",
+          "legendFormat": "in",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_network_transmit_bytes_total{job=\"host-node\",device=\"nic0\"}[1m]) / node_network_speed_bytes{job=\"host-node\",device=\"nic0\"}",
+          "legendFormat": "out",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Traffic sent by each VM",
+      "description": "What each VM sends out, in bits per second (1 min), seen from the host's virtual network ports. The game server VM (dune-prod) is the one players' traffic leaves through.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dune-prod"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dune-dev"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "acp-bot"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace(label_replace(label_replace(rate(node_network_receive_bytes_total{job=\"host-node\",device=~\"tap10[123]i0\"}[1m]) * 8, \"vm\", \"dune-prod\", \"device\", \"tap101i0\"), \"vm\", \"dune-dev\", \"device\", \"tap102i0\"), \"vm\", \"acp-bot\", \"device\", \"tap103i0\")",
+          "legendFormat": "{{vm}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 55,
+      "type": "row",
+      "title": "Internet (the gateway's port)",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
       "id": 37,
+      "type": "timeseries",
+      "title": "Internet traffic",
+      "description": "What crosses the gateway's internet port, in and out (1 min), from the gateway's own counters. This is the link that can limit players.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "in (download)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "out (upload)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(unifi_wan_receive_bytes_total[1m]) * 8",
+          "legendFormat": "in (download)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(unifi_wan_transmit_bytes_total[1m]) * 8",
+          "legendFormat": "out (upload)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "Internet use (share of the plan)",
+      "description": "The same traffic as a share of the 2000 Mbit/s plan. Near zero is normal; sustained high values mean the internet link is the limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 63,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none",
+            "axisSoftMax": 0.01
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "in (download)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "out (upload)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(unifi_wan_receive_bytes_total[1m]) * 8 / (2000 * 1e6)",
+          "legendFormat": "in (download)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(unifi_wan_transmit_bytes_total[1m]) * 8 / (2000 * 1e6)",
+          "legendFormat": "out (upload)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Internet latency and port drops",
+      "description": "Latency from the gateway to the internet as the gateway measures it (ms), and packets the internet port dropped or errored per second. Both share one axis; the second should sit at zero and the first stay low and flat.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 63,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency (ms)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "drops and errors per second"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e66767"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "unifi_wan_latency_ms",
+          "legendFormat": "latency (ms)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(unifi_wan_receive_dropped_total[5m]) + rate(unifi_wan_transmit_dropped_total[5m]) + rate(unifi_wan_receive_errors_total[5m]) + rate(unifi_wan_transmit_errors_total[5m])",
+          "legendFormat": "drops and errors per second",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "type": "row",
+      "title": "Network health",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 42,
       "type": "timeseries",
       "title": "Network errors and drops",
       "description": "Packets the NIC reported as errored or dropped, per second: guest eth0 and host nic0, in and out. Should sit at zero; steady non-zero values point at a cable, switch port, driver or full queue.",
@@ -1691,7 +2290,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -1835,7 +2434,7 @@
       ]
     },
     {
-      "id": 38,
+      "id": 43,
       "type": "timeseries",
       "title": "TCP retransmits",
       "description": "Share of outgoing TCP segments that had to be sent again (5 min). Rises with packet loss or a congested path; a few tenths of a percent is normal.",
@@ -1845,7 +2444,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 54,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -1939,20 +2538,20 @@
       ]
     },
     {
-      "id": 50,
+      "id": 57,
       "type": "row",
       "title": "Disks",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 80,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 39,
+      "id": 44,
       "type": "timeseries",
       "title": "Disk busy",
       "description": "Share of time the system disk had I/O in flight (5 min): guest sda and host sda. Near 100% means the disk is the limit.",
@@ -1962,7 +2561,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 81,
         "w": 8,
         "h": 8
       },
@@ -2057,7 +2656,7 @@
       ]
     },
     {
-      "id": 40,
+      "id": 45,
       "type": "timeseries",
       "title": "Disk latency",
       "description": "Average time per completed read and write (5 min). Gaps mean no I/O in the window. Sustained tens of milliseconds is a slow disk.",
@@ -2067,7 +2666,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 63,
+        "y": 81,
         "w": 8,
         "h": 8
       },
@@ -2209,7 +2808,7 @@
       ]
     },
     {
-      "id": 41,
+      "id": 46,
       "type": "timeseries",
       "title": "Disk I/O pressure",
       "description": "Share of time tasks were waiting on disk I/O (Linux pressure stall, 1 min). Zero is healthy.",
@@ -2219,7 +2818,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 63,
+        "y": 81,
         "w": 8,
         "h": 8
       },
@@ -2314,20 +2913,20 @@
       ]
     },
     {
-      "id": 51,
+      "id": 58,
       "type": "row",
       "title": "Storage and swap",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 89,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 42,
+      "id": 47,
       "type": "timeseries",
       "title": "Host storage used",
       "description": "Share used of the Proxmox thin pool that holds the VM disks (local-lvm) and of the host's root storage (local). A full thin pool freezes every VM on it.",
@@ -2337,7 +2936,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 90,
         "w": 12,
         "h": 8
       },
@@ -2432,7 +3031,7 @@
       ]
     },
     {
-      "id": 43,
+      "id": 48,
       "type": "timeseries",
       "title": "Swap activity",
       "description": "Memory moved to and from swap, bytes per second (5 min). In is a page read back from swap, out is a page written. Should be zero; sustained activity means memory pressure.",
@@ -2442,7 +3041,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 72,
+        "y": 90,
         "w": 12,
         "h": 8
       },
