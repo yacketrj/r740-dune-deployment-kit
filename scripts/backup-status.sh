@@ -86,7 +86,7 @@ render() {
   fi
   echo
   echo "  newest images on the share:"
-  for id in ${BK_VMIDS:-101 102 103 104}; do
+  for id in ${BK_VMIDS:-101 102 103}; do
     line="$(ls -t "${BK_SMB_MOUNT:-/mnt/desktop-backup}"/vm/[vc][mt]"$id"-*.age 2>/dev/null | head -n 1)"
     if [ -n "$line" ]; then
       printf '    %-5s %s  (%s, %s)\n' "$id" "$(basename -- "$line")" "$(hsize "$(stat -c %s -- "$line")")" "$(date -d "@$(stat -c %Y -- "$line")" '+%a %H:%M' 2>/dev/null)"

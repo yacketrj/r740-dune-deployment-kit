@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Changed
+- **CT 104 (The Parlor) is retired from the backups.** It was imaged once more on 2026-11-24 (`ct104-20261124-161028`, verified), then destroyed at the operator's request. `BK_VMIDS` in `backup.env.example` and the status script's default list now name 101, 102 and 103; the runbook's weekly-image and drill lists match, and its container-restore example is generic. Existing `ct104-*` images stay on the share until you delete them. The 2026-11-24 weekly run had also failed on 104 with a transient snapshot error; a re-run succeeded.
+
 ### Added
 - **Internet link monitoring from the UniFi gateway.** New `prometheus-unifi-exporter` (read-only, one endpoint, systemd credential + DynamicUser, 8 tests) feeds the gateway's internet-port counters, latency and last speed test into Prometheus. Shown as an Internet row on the host dashboard, six tiles on the Overview, and an `Internet` field on the status message (share of the 2 Gbit/s plan; falls back to the VM network if the data is missing).
 - **Network in Mbit/s, and link-use panels.** The status message shows the game server VM's network as one field in one unit (`↓ 0.00 · ↑ 0.03 Mbit/s`) instead of two fields that switched between kbit/s and Mbit/s. The host dashboard gains a "Network traffic" row: the host card's use as a share of its 1 Gbit/s speed, and traffic sent by each VM. The 7-day peak was about 36 Mbit/s, under 4% of the card. Also removes a compiled `__pycache__` file that had been committed, and ignores such files.
