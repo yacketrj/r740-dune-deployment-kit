@@ -111,7 +111,8 @@ on_err() {
   exit 1
 }
 trap 'on_err $LINENO' ERR
-fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; announce_close halted; exit 1; }
+closing_key=halted   # which closing message a failure sends; the summary stage may choose "partial"
+fail() { plog "FAILED at $STAGE: $*"; report_failure "$*"; announce_close "$closing_key"; exit 1; }
 
 # Ctrl-C / Ctrl-Z / kill / hangup: stop the whole pipeline (releasing the guest backup), remove
 # the partial file, exit. A deliberate Ctrl-C or Ctrl-Z by you is not an alert; a kill or a
@@ -121,11 +122,17 @@ announce_on=0        # this run announces (flag set and a guest in BK_ANNOUNCE_G
 announce_open=0      # players have been told something that still needs a closing message
 announce_started=0   # the backup itself has begun
 ann_pid=""
-announce_close() { # done|halted
+ann_tally=""         # results of the background "ongoing" notices, one return code per line
+announce_close() { # done|partial|halted
   [ "$announce_on" -eq 1 ] && [ "$announce_open" -eq 1 ] || return 0
   announce_open=0
   [ -z "$ann_pid" ] || kill "$ann_pid" 2>/dev/null || true
-  if [ "$1" = "done" ]; then bk_announce "done"
+  # the "ongoing" notices ran in a subshell, so add their results to this shell's counts for the audit
+  if [ -n "$ann_tally" ] && [ -r "$ann_tally" ]; then
+    BK_ANN_SENT=$((BK_ANN_SENT + $(grep -cx 0 "$ann_tally" || true)))
+    BK_ANN_FAILED=$((BK_ANN_FAILED + $(grep -cx 1 "$ann_tally" || true)))
+  fi
+  if [ "$1" = "done" ] || [ "$1" = "partial" ]; then bk_announce "$1"
   elif [ "$announce_started" -eq 1 ]; then bk_announce halted
   else bk_announce postponed
   fi
@@ -479,6 +486,8 @@ if [ "$announce_on" -eq 1 ]; then
   announce_open=1
   plog "announce: the backup starts now"
   bk_announce start
+  ann_tally="$BK_STATE_DIR/weekly-announce.tally"
+  : >"$ann_tally" 2>/dev/null || ann_tally=""
   (
     n=0
     while true; do
@@ -486,21 +495,26 @@ if [ "$announce_on" -eq 1 ]; then
       wait "$!"
       n=$((n + 1))
       bk_announce ongoing "$((n * ${BK_ANNOUNCE_EVERY_MIN:-30}))"
+      [ -z "$ann_tally" ] || echo "$BK_ANNOUNCE_LAST_RC" >>"$ann_tally"
     done
   ) &
   ann_pid=$!
 fi
+cut_short=0          # 1 when the hard stop left guests unstarted
 for idx in "${!guest_list[@]}"; do
   backup_one "${guest_list[$idx]}" || true
   # a later guest must never start after the hard stop
   if [ "$(date +%s)" -ge "$hard_stop" ] && [ $((idx + 1)) -lt "${#guest_list[@]}" ]; then
     failures+=("hard stop reached; not started: ${guest_list[*]:$((idx + 1))}")
+    cut_short=1
     break
   fi
 done
 
 STAGE="summary"
 if [ "${#failures[@]}" -gt 0 ]; then
+  # every guest was attempted and some succeeded: tell players it is incomplete, not "halted"
+  if [ "$cut_short" -eq 0 ] && [ "${#successes[@]}" -gt 0 ]; then closing_key=partial; fi
   fail "guests failed: ${failures[*]}"
 fi
 announce_close "done"

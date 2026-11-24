@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Fixed
+- **Weekly backup announcements: the audit counts every notice, and a partly failed run says so.** The 30-minute "continues" notices are sent from a background subshell, so the audit never counted them and reported a false `MISMATCH` on any run over 30 minutes (2026-11-24: 6 counted, 9 published). When every guest was attempted and only some failed, players now see "The Record Is Incomplete" instead of "The Recording Was Halted"; a run stopped early, or one where no guest succeeded, still says "halted".
+
 ### Changed
 - **CT 104 (The Parlor) is retired from the backups.** It was imaged once more on 2026-11-24 (`ct104-20261124-161028`, verified), then destroyed at the operator's request. `BK_VMIDS` in `backup.env.example` and the status script's default list now name 101, 102 and 103; the runbook's weekly-image and drill lists match, and its container-restore example is generic. Existing `ct104-*` images stay on the share until you delete them. The 2026-11-24 weekly run had also failed on 104 with a transient snapshot error; a re-run succeeded.
 
