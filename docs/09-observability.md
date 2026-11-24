@@ -287,7 +287,8 @@ delete the `host-ipmi` job.
 
 ## 5. Dashboards and burst tracking
 
-Five dashboards, provisioned in the folder "Dune" and sharing one Dune look (below). **Arrakis - Overview**
+Six dashboards, provisioned in the folder "Dune" and sharing one Dune look (below). **Arrakis - Wall** is the
+one-screen page for a TV or a phone (see "The Wall" below). **Arrakis - Overview**
 is the home page: state, players, tick rate, load, temperature, storage, alerts and queue backlog
 as tiles, four charts, and links to the others. (**Dune - Game state and players**
 shows population, map readiness, map memory, FLS health and tick rate from the console
@@ -340,6 +341,23 @@ read-only link, no data source access). The operator made only the bursts dashbo
 public; the host dashboard stays private. Treat the link as the access control and
 revoke or regenerate it if it leaks. Consider a Cloudflare rate limit on
 `/api/public/*`.
+
+### The Wall
+
+`dune-wall` is one page meant to be read in a few seconds, on a TV (`?kiosk`) or a phone (the tiles stack):
+
+- **Verdict**: STEADY, WATCH or TROUBLE. Trouble when an always-on map or the server is not ready, or the console API is silent;
+  watch when a map spent over a quarter of the last minute below 18 ticks per second.
+- **The world**: one tile per always-on map (the Sietches, the Overmap, the Deep Deserts) with READY or DOWN, and one per map for tick rate.
+- **Pressure**: arc gauges for guest CPU, guest memory, the busiest map thread and the VM disk pool, with the warning and critical marks on the arc.
+- **The day**: a lane per map showing ready or down over time, and a cell-per-10-minutes tick-rate history. An idle map writes
+  nothing to its log, so it has no tick rate; that shows as grey "No data" and is not a fault.
+- **Clocks**: how long the maps have been running, and the time since the weekly and daily backups (amber, then red when overdue).
+- **Cores**: the 60 guest vCPUs as a grid, game cores 0-39 and monitoring cores 40-59.
+
+Every dashboard now also draws three event markers over its time graphs: orange when the game maps restarted, blue when a backup
+started, red when dune-prod rebooted. They come from existing metrics (process start time, the backup timers' last trigger,
+boot time), so nothing new is collected. A stall can be matched to the 05:00 restart or the backup at a glance.
 
 ### The Dune look
 

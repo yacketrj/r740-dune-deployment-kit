@@ -35,6 +35,51 @@
           "matchAny": false,
           "queryType": "tags"
         }
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Map restarts",
+        "iconColor": "#f0912f",
+        "expr": "max(changes(namedprocess_namegroup_oldest_start_time_seconds{groupname=~\"(Survival_1|Overmap|DeepDesert_1)_p[0-9]+\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Game maps restarted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Backups",
+        "iconColor": "#86a9c4",
+        "expr": "max(changes(node_systemd_timer_last_trigger_seconds{name=~\"r740-backup-(weekly|daily).timer\"}[5m])) > 0",
+        "step": "5m",
+        "titleFormat": "Backup started",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "name": "Guest reboots",
+        "iconColor": "#ec7058",
+        "expr": "changes(node_boot_time_seconds{job=\"dune-node\"}[5m]) > 0",
+        "step": "5m",
+        "titleFormat": "dune-prod rebooted",
+        "textFormat": "",
+        "tagKeys": "",
+        "useValueForTime": false
       }
     ]
   },
@@ -59,7 +104,7 @@
   ],
   "panels": [
     {
-      "id": 117,
+      "id": 155,
       "type": "text",
       "title": "",
       "transparent": true,
@@ -80,7 +125,7 @@
       }
     },
     {
-      "id": 118,
+      "id": 156,
       "type": "row",
       "title": "Right now",
       "collapsed": false,
@@ -93,7 +138,7 @@
       }
     },
     {
-      "id": 100,
+      "id": 132,
       "type": "stat",
       "title": "Server",
       "description": "Overall state according to the console API.",
@@ -160,7 +205,7 @@
       ]
     },
     {
-      "id": 101,
+      "id": 133,
       "type": "stat",
       "title": "Players online",
       "description": "Players online now (console API).",
@@ -210,7 +255,7 @@
       ]
     },
     {
-      "id": 102,
+      "id": 134,
       "type": "stat",
       "title": "Server tick rate",
       "description": "Slowest map server over 5 minutes, in ticks per second. The target is 20; below 18 players feel rubberbanding.",
@@ -276,7 +321,7 @@
       ]
     },
     {
-      "id": 103,
+      "id": 135,
       "type": "stat",
       "title": "Busiest map thread",
       "description": "Highest main-thread CPU of any map (1.0 = one core). Above 0.9 is a burst.",
@@ -342,7 +387,7 @@
       ]
     },
     {
-      "id": 104,
+      "id": 136,
       "type": "stat",
       "title": "Guest CPU",
       "description": "Average busy share across the 60 vCPUs of the game server VM.",
@@ -408,7 +453,7 @@
       ]
     },
     {
-      "id": 105,
+      "id": 137,
       "type": "stat",
       "title": "Guest memory",
       "description": "Share of the game server VM's memory in use.",
@@ -474,7 +519,7 @@
       ]
     },
     {
-      "id": 106,
+      "id": 138,
       "type": "stat",
       "title": "Hottest sensor",
       "description": "Hottest host temperature sensor.",
@@ -540,7 +585,7 @@
       ]
     },
     {
-      "id": 107,
+      "id": 139,
       "type": "stat",
       "title": "VM disk pool used",
       "description": "Share used of the Proxmox thin pool that holds the VM disks. A full pool freezes every VM on it.",
@@ -606,7 +651,7 @@
       ]
     },
     {
-      "id": 108,
+      "id": 140,
       "type": "stat",
       "title": "Host storage used",
       "description": "Share used of the host's root storage.",
@@ -672,7 +717,7 @@
       ]
     },
     {
-      "id": 109,
+      "id": 141,
       "type": "stat",
       "title": "Alerts firing",
       "description": "Alerts firing now, not counting the two known and silenced ones (cAdvisor and RabbitMQ heartbeats).",
@@ -734,7 +779,7 @@
       ]
     },
     {
-      "id": 110,
+      "id": 142,
       "type": "stat",
       "title": "Maps ready",
       "description": "Game-server partitions reporting ready (dynamic ones may be stopped on purpose).",
@@ -784,7 +829,7 @@
       ]
     },
     {
-      "id": 111,
+      "id": 143,
       "type": "stat",
       "title": "Queue backlog",
       "description": "Messages waiting in RabbitMQ across both brokers. Zero is healthy.",
@@ -850,9 +895,9 @@
       ]
     },
     {
-      "id": 119,
+      "id": 157,
       "type": "row",
-      "title": "Last 6 hours",
+      "title": "Internet",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -863,7 +908,369 @@
       }
     },
     {
-      "id": 112,
+      "id": 144,
+      "type": "stat",
+      "title": "Internet down",
+      "description": "Download traffic through the gateway's internet port now (1 min).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: Mbit/s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ece2cf"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(unifi_wan_receive_bytes_total[1m])) * 8 / 1e6",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 145,
+      "type": "stat",
+      "title": "Internet up",
+      "description": "Upload traffic through the gateway's internet port now (1 min). This is the direction game traffic to players uses.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: Mbit/s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ece2cf"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(unifi_wan_transmit_bytes_total[1m])) * 8 / 1e6",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 146,
+      "type": "stat",
+      "title": "Internet use",
+      "description": "The busier direction as a share of the 2000 Mbit/s plan.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#ece2cf",
+                "value": null
+              },
+              {
+                "color": "#e8b64a",
+                "value": 0.5
+              },
+              {
+                "color": "#ec7058",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "((rate(unifi_wan_receive_bytes_total[1m]) + rate(unifi_wan_transmit_bytes_total[1m]) + abs(rate(unifi_wan_receive_bytes_total[1m]) - rate(unifi_wan_transmit_bytes_total[1m]))) / 2) * 8 / (2000 * 1e6)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 147,
+      "type": "stat",
+      "title": "Internet latency",
+      "description": "Latency from the gateway to the internet, as the gateway measures it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ms",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#ece2cf",
+                "value": null
+              },
+              {
+                "color": "#e8b64a",
+                "value": 30
+              },
+              {
+                "color": "#ec7058",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "unifi_wan_latency_ms",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 148,
+      "type": "stat",
+      "title": "Internet port",
+      "description": "Whether the gateway's internet port is up.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ece2cf"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "UP",
+                  "color": "#7fbf90",
+                  "index": 0
+                },
+                "0": {
+                  "text": "DOWN",
+                  "color": "#ec7058",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "unifi_wan_up",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 149,
+      "type": "stat",
+      "title": "Last speed test",
+      "description": "Download speed of the gateway's most recent speed test (Mbit/s); the upload result is on the host dashboard's Internet row.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 14,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: Mbit/s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ece2cf"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "unifi_wan_speedtest_download_mbps",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 158,
+      "type": "row",
+      "title": "Last 6 hours",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 150,
       "type": "timeseries",
       "title": "Server tick rate per map",
       "description": "Ticks per second of each map server, from the game's own log. The target is 20.",
@@ -873,7 +1280,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 14,
+        "y": 19,
         "w": 12,
         "h": 8
       },
@@ -1002,7 +1409,7 @@
       ]
     },
     {
-      "id": 113,
+      "id": 151,
       "type": "timeseries",
       "title": "Players online",
       "description": "Players online now, from the console API.",
@@ -1012,7 +1419,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 14,
+        "y": 19,
         "w": 12,
         "h": 8
       },
@@ -1066,7 +1473,7 @@
       ]
     },
     {
-      "id": 114,
+      "id": 152,
       "type": "timeseries",
       "title": "Main thread CPU per map",
       "description": "The game's main thread per map is single-threaded, so this is the limit. 1.0 means one core saturated; the red line is the 0.9 burst threshold.",
@@ -1076,7 +1483,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 27,
         "w": 12,
         "h": 8
       },
@@ -1251,7 +1658,7 @@
       ]
     },
     {
-      "id": 115,
+      "id": 153,
       "type": "timeseries",
       "title": "Host temperatures",
       "description": "Hottest and average host temperature sensor.",
@@ -1261,7 +1668,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 22,
+        "y": 27,
         "w": 12,
         "h": 8
       },
@@ -1355,32 +1762,32 @@
       ]
     },
     {
-      "id": 120,
+      "id": 159,
       "type": "row",
       "title": "Dashboards",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 35,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 116,
+      "id": 154,
       "type": "text",
       "title": "",
       "transparent": true,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 36,
         "w": 24,
         "h": 3
       },
       "options": {
         "mode": "html",
-        "content": "<div style=\"display:flex;flex-wrap:wrap\"><a href=\"/d/dune-bursts\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Performance</span><br><span style=\"color:#ada08a;font-size:12px\">Main thread, bursts, tick rate</span></a><a href=\"/d/dune-game\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Game state</span><br><span style=\"color:#ada08a;font-size:12px\">Players, readiness, memory</span></a><a href=\"/d/dune-host\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Host and VMs</span><br><span style=\"color:#ada08a;font-size:12px\">Clocks, temperatures, network, disks</span></a><a href=\"/d/dune-data\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Database and queues</span><br><span style=\"color:#ada08a;font-size:12px\">Postgres and RabbitMQ</span></a></div>",
+        "content": "<div style=\"display:flex;flex-wrap:wrap\"><a href=\"/d/dune-wall\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Wall</span><br><span style=\"color:#ada08a;font-size:12px\">One screen: verdict, maps, the day</span></a><a href=\"/d/dune-bursts\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Performance</span><br><span style=\"color:#ada08a;font-size:12px\">Main thread, bursts, tick rate</span></a><a href=\"/d/dune-game\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Game state</span><br><span style=\"color:#ada08a;font-size:12px\">Players, readiness, memory</span></a><a href=\"/d/dune-host\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Host and VMs</span><br><span style=\"color:#ada08a;font-size:12px\">Clocks, temperatures, network, disks</span></a><a href=\"/d/dune-data\" style=\"display:block;flex:1;min-width:200px;padding:10px 14px;margin:0 6px 0 0;border:1px solid #4a3b28;border-radius:3px;background:#16130f;text-decoration:none\"><span style=\"color:#d9b873;font-size:15px;letter-spacing:.06em;text-transform:uppercase\">Database and queues</span><br><span style=\"color:#ada08a;font-size:12px\">Postgres and RabbitMQ</span></a></div>",
         "code": {
           "language": "plaintext",
           "showLineNumbers": false,
