@@ -10,7 +10,7 @@ If you are here because something is broken, jump to **section 5 (alerts)** or *
 |---|---|---|---|---|
 | Database tier (optional, off in the lite profile) | newest official dump pair(s) | every 6h (04:45, 10:45, 16:45, 22:45) | desktop share | 8h |
 | Daily set | recent dump pairs, `runtime/secrets`, `.env`, host config | 05:15 | desktop share (OneDrive optional) | 26h |
-| Weekly images | full images of VM 101, 102, 103 and CT 104 | Tuesday 05:00 (warnings first, imaging from 05:30), no new image starts after 07:30 | desktop share | 8 days |
+| Weekly images | full images of VM 101, 102 and 103 | Tuesday 05:00 (warnings first, imaging from 05:30), no new image starts after 07:30 | desktop share | 8 days |
 
 - Everything is encrypted with `age` before it leaves the hypervisor. **The hypervisor holds only the public key.** The private key lives in your password manager plus a second escrow.
 - `market-bot-seed` dumps (a feature seed made every 15 minutes) are excluded. The authoritative restore point is the newest dump whose sidecar says `backup_origin: automatic` (the scheduled 04:30 job).
@@ -182,7 +182,8 @@ The last lines tell you the **restore point**: the newest automatic database dum
 
 ```bash
 age -d -i private.key vm101-YYYYMMDD-HHMMSS.vma.zst.age | zstd -dc | qmrestore - 101 --storage local-lvm --unique 0
-age -d -i private.key ct104-YYYYMMDD-HHMMSS.tar.zst.age | zstd -dc | pct restore 104 - --storage local-lvm
+# a container image (none is scheduled now; an old one such as ct104-... can still be restored this way):
+age -d -i private.key ct<ID>-YYYYMMDD-HHMMSS.tar.zst.age | zstd -dc | pct restore <ID> - --storage local-lvm
 ```
 Use `--unique 0` only to **replace** a guest that no longer exists (it keeps the original MAC and identity); use `--unique 1` for a side-by-side copy. A restored dune-prod is crash-consistent: on first boot check `dune status`, and if the database is doubtful restore the newest logical dump as in 6b.
 
@@ -199,7 +200,7 @@ Use `--unique 0` only to **replace** a guest that no longer exists (it keeps the
 |---|---|---|---|
 | Pipeline (no real key) | monthly, automated (timer) | nobody | `scripts/backup-drill.sh pipeline` |
 | Database restore | monthly | you, assisted | `scripts/backup-drill.sh db --identity <key file>` |
-| VM/CT restore | quarterly at minimum (rotate 101, 102, 103, 104; the prod image at least quarterly) | you, assisted | `scripts/backup-drill.sh vm --guest <id> --identity <key file>` |
+| VM/CT restore | quarterly at minimum (rotate 101, 102, 103; the prod image at least quarterly) | you, assisted | `scripts/backup-drill.sh vm --guest <id> --identity <key file>` |
 | Key escrow | quarterly | you | `scripts/backup-key.sh verify --identity <key file>` |
 
 For the assisted drills, make the private key available as a file for the duration of the drill only (fetch it from the password manager, run the drill, then delete the file). Use `--dry-run` first: for the **database** drill it opens the archive in RAM and checks it; for the **VM** drill it runs the read-only preflight (blackout, running backups, host and NUMA memory, and, with the guard on, one live guard check over ssh), prints the plan and a forecast, and creates nothing; it does not read the archive or the key. The database drill restores only the dump into a **throwaway** Postgres container on dune-dev (no network, size-limited tmpfs, removed afterwards), mirroring the real restore (create the `dune` role and database, then a plain `pg_restore`), and fails if more than `BK_DRILL_MAX_RESTORE_ERRORS` (default 0) errors occur or any configured row check fails. **Player data does reach dune-dev's memory during this drill**; secrets never do. The VM drill restores to a scratch VMID on a transient bridge with no uplink, removes every extra network device, refuses images that carry passthrough devices, raw host disks, host-run hooks or shares, caps memory, cores, CPU weight and disk speed, binds the guest's memory to one NUMA node and its CPUs to a few host threads (the dune-dev ones), boots it, runs your configured in-guest check, then destroys it and proves it is gone. See "How the VM restore drill protects the host and dune-prod" below. Every result is written to `evidence.log` and to the chained audit log. **An overdue drill raises an alarm.** A failed drill is a P1.

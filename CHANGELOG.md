@@ -8,6 +8,9 @@ introduced them, in Keep a Changelog style, newest first.
 
 ## Unreleased
 
+### Changed
+- **CT 104 (The Parlor) is retired from the backups.** It was imaged once more on 2026-11-24 (`ct104-20261124-161028`, verified), then destroyed at the operator's request. `BK_VMIDS` in `backup.env.example` and the status script's default list now name 101, 102 and 103; the runbook's weekly-image and drill lists match, and its container-restore example is generic. Existing `ct104-*` images stay on the share until you delete them. The 2026-11-24 weekly run had also failed on 104 with a transient snapshot error; a re-run succeeded.
+
 ### Added
 - **The Wall and event markers (`Project-Arrakis/meta`#99).** New `dune-wall` dashboard for a TV or phone: a STEADY/WATCH/TROUBLE verdict, the always-on maps as tiles, tick rate per map, arc gauges for pressure, a ready/down lane per map, a tick-rate history in 10 minute cells (idle maps show grey, not red), time-since clocks for the maps and both backups, and the 60 guest vCPUs as a grid. Every dashboard also gets orange (map restart), blue (backup) and red (dune-prod reboot) markers from existing metrics. Docs reviewed: `09-observability.md` updated ("The Wall"). Dashboards only; nothing collected is new and nothing on the game side changed.
 - **Internet link monitoring from the UniFi gateway.** New `prometheus-unifi-exporter` (read-only, one endpoint, systemd credential + DynamicUser, 8 tests) feeds the gateway's internet-port counters, latency and last speed test into Prometheus. Shown as an Internet row on the host dashboard, six tiles on the Overview, and an `Internet` field on the status message (share of the 2 Gbit/s plan; falls back to the VM network if the data is missing).
