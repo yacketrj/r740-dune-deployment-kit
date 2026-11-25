@@ -979,6 +979,33 @@ EOF
   [ "$(titles | tail -n 1)" = "The Recording Was Halted" ]
 }
 
+@test "announce: the 'continues' notices sent in the background are counted by the audit" {
+  ann_cfg "1"; ann_vzdump 5
+  printf 'BK_ANNOUNCE_AUDIT=1\nBK_ANNOUNCE_AUDIT_SETTLE_S=0\n' >>"$BK_CONFIG_DIR/backup.env"
+  export BK_ANNOUNCE_AUDIT=1
+  cat >"$BATS_TEST_TMPDIR/bin/qm" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  guest) echo '{"exitcode":0,"out-data":"no matching history\n"}' ;;
+  status) case "$2" in 101|102|103) exit 0 ;; *) exit 1 ;; esac ;;
+esac
+EOF
+  run_weekly --announce
+  [ "$status" -eq 0 ]
+  titles | grep -q "The Record Continues"
+  [[ "$output$(cat "$BK_STATE_DIR/weekly-progress.log")" == *"script sent $(titles | wc -l) ok / 0 failed"* ]]
+}
+
+@test "announce: when only some guests fail, the closing message says the record is incomplete" {
+  ann_cfg "1"
+  sed -i 's#^BK_VMIDS=.*#BK_VMIDS="101 102"#' "$BK_CONFIG_DIR/backup.env"
+  touch "$BATS_TEST_TMPDIR/fail-102"
+  run_weekly --announce
+  [ "$status" -eq 1 ]
+  [ "$(titles | tail -n 1)" = "The Record Is Incomplete" ]
+  ! titles | grep -qE "The Record Is Sealed|The Recording Was Halted"
+}
+
 pop_ssh() { # POPULATION_LINE ("" = unreadable): make the game host answer `dune status`
   cat >"$BATS_TEST_TMPDIR/bin/ssh" <<EOS
 #!/usr/bin/env bash

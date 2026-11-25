@@ -118,7 +118,7 @@ bk_pool_headroom() { # min_free_gb [max_pct]
 # cannot be sent is logged and NEVER fails the caller. Limits: title <= 80 chars, body <= 500.
 # Every text can be replaced with BK_ANNOUNCE_TEXT_<KEY>_TITLE / _BODY (KEY in upper case).
 
-# Set BK_ANN_TITLE and BK_ANN_BODY for KEY (lead|start|ongoing|done|halted|postponed) and N
+# Set BK_ANN_TITLE and BK_ANN_BODY for KEY (lead|start|ongoing|done|partial|halted|postponed) and N
 # (minutes: until the start for "lead", elapsed so far for "ongoing").
 bk_announce_text() { # key [n]
   local key="${1:?key}" n="${2:-0}" up unit
@@ -140,6 +140,10 @@ bk_announce_text() { # key [n]
     done)
       BK_ANN_TITLE="The Record Is Sealed"
       BK_ANN_BODY="The Mentats have sealed the record of Arrakis. The sands run true once more. Thank you for your patience."
+      ;;
+    partial)
+      BK_ANN_TITLE="The Record Is Incomplete"
+      BK_ANN_BODY="The Mentats have finished their work, but part of the record could not be sealed. The sands run true once more. Nothing is needed from you."
       ;;
     halted)
       BK_ANN_TITLE="The Recording Was Halted"
@@ -238,7 +242,7 @@ bk_announce_audit() {
     return 0
   fi
   titles=""
-  for spec in "lead 30" "start 0" "ongoing 30" "done 0" "halted 0" "postponed 0"; do
+  for spec in "lead 30" "start 0" "ongoing 30" "done 0" "partial 0" "halted 0" "postponed 0"; do
     read -r key n <<<"$spec"
     bk_announce_text "$key" "$n" && titles+="$BK_ANN_TITLE"$'\n'
   done

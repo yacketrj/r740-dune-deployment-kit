@@ -6,7 +6,7 @@
 #                                            (sends nothing; always safe)
 #   backup-announce.sh status                is the announcement channel configured?
 #   backup-announce.sh send KEY [N] --yes    send ONE real in-game banner to ALL players now
-#                                            (KEY: lead start ongoing done halted postponed test;
+#                                            (KEY: lead start ongoing done partial halted postponed test;
 #                                             N = minutes, for lead/ongoing). Refuses without --yes.
 #
 # The backup job (backup-weekly.sh --announce) uses the same messages: warnings 30, 15, 5 and 1
@@ -32,7 +32,7 @@ case "$cmd" in
   print)
     echo "Messages players will see (title <= 80 characters, body <= 500; banner shown for ${BK_ANNOUNCE_DURATION_S:-40} seconds):"
     echo
-    for spec in "lead 30" "lead 15" "lead 5" "lead 1" "start 0" "ongoing 30" "ongoing 60" "done 0" "halted 0" "postponed 0"; do
+    for spec in "lead 30" "lead 15" "lead 5" "lead 1" "start 0" "ongoing 30" "ongoing 60" "done 0" "partial 0" "halted 0" "postponed 0"; do
       read -r k m <<<"$spec"
       bk_announce_text "$k" "$m"
       label="$k"
