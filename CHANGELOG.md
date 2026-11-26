@@ -9,6 +9,7 @@ introduced them, in Keep a Changelog style, newest first.
 ## Unreleased
 
 ### Fixed
+- **Dashboards and the partition alert show the Sietch names players see.** They showed the game database's old partition labels, which do not change when a Sietch is renamed. The metrics exporter now reads each instance's display name from the console (read-only, same key, once a minute) and publishes `dune_partition_info`; the Wall, the Game dashboard and the "partition not ready" alert use it, falling back to the database label. Existing series are unchanged, and history shows the current name. Docs reviewed: `09-observability.md` updated.
 - **Weekly backup announcements: the audit counts every notice, and a partly failed run says so.** The 30-minute "continues" notices are sent from a background subshell, so the audit never counted them and reported a false `MISMATCH` on any run over 30 minutes (2026-11-24: 6 counted, 9 published). When every guest was attempted and only some failed, players now see "The Record Is Incomplete" instead of "The Recording Was Halted"; a run stopped early, or one where no guest succeeded, still says "halted".
 
 ### Changed

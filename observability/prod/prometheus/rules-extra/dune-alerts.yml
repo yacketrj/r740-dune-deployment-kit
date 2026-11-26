@@ -26,7 +26,7 @@ groups:
         for: 3m
         labels: {severity: critical}
         annotations:
-          summary: "{{ $labels.map }} partition {{ $labels.partition }} ({{ $labels.label }}) is not ready"
+          summary: '{{ $labels.map }} partition {{ $labels.partition }} ({{ with printf "dune_partition_info{partition=''%s''}" $labels.partition | query }}{{ . | first | label "name" }}{{ else }}{{ $labels.label }}{{ end }}) is not ready'
           description: "An always-on partition has been not ready for over 3 minutes."
 
       - alert: DuneFlsCheckFailing

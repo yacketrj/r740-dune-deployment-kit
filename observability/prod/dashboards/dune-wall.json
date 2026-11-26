@@ -609,8 +609,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "dune_partition_ready{partition=~\"1|2|8|36|37\"}",
-          "legendFormat": "{{label}} \u00b7 {{map}}",
+          "expr": "max by (map, partition) (dune_partition_ready{partition=~\"1|2|8|36|37\"}) * on(partition) group_left(name) (0 * topk by (partition) (1, max_over_time(timestamp(dune_partition_info)[1d:1m] @ end())) + 1)",
+          "legendFormat": "{{name}} \u00b7 {{map}}",
           "refId": "A"
         }
       ]
@@ -1097,8 +1097,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "dune_partition_ready{partition=~\"1|2|8|36|37\"}",
-          "legendFormat": "{{label}} \u00b7 {{map}}",
+          "expr": "max by (map, partition) (dune_partition_ready{partition=~\"1|2|8|36|37\"}) * on(partition) group_left(name) (0 * topk by (partition) (1, max_over_time(timestamp(dune_partition_info)[1d:1m] @ end())) + 1)",
+          "legendFormat": "{{name}} \u00b7 {{map}}",
           "refId": "A"
         }
       ]
