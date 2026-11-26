@@ -1039,8 +1039,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Survival_1 p1 Abbir"
+              "id": "byRegexp",
+              "options": "/^Survival_1 p1 /"
             },
             "properties": [
               {
@@ -1054,8 +1054,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "Survival_1 p37 Alraab"
+              "id": "byRegexp",
+              "options": "/^Survival_1 p37 /"
             },
             "properties": [
               {
@@ -1069,8 +1069,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "DeepDesert_1 p8 PvE"
+              "id": "byRegexp",
+              "options": "/^DeepDesert_1 p8 /"
             },
             "properties": [
               {
@@ -1084,8 +1084,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "DeepDesert_1 p36 PvP"
+              "id": "byRegexp",
+              "options": "/^DeepDesert_1 p36 /"
             },
             "properties": [
               {
@@ -1099,8 +1099,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "Overmap p2 Overland"
+              "id": "byRegexp",
+              "options": "/^Overmap p2 /"
             },
             "properties": [
               {
@@ -1131,8 +1131,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "dune_partition_ready{map=~\"Survival_1|Overmap|DeepDesert_1\"}",
-          "legendFormat": "{{map}} p{{partition}} {{label}}",
+          "expr": "max by (map, partition) (dune_partition_ready{map=~\"Survival_1|Overmap|DeepDesert_1\"}) * on(partition) group_left(name) (0 * topk by (partition) (1, max_over_time(timestamp(dune_partition_info)[1d:1m] @ end())) + 1)",
+          "legendFormat": "{{map}} p{{partition}} {{name}}",
           "refId": "A"
         }
       ]

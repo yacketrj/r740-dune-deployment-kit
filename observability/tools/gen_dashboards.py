@@ -53,7 +53,7 @@ def target(expr, legend="", ref="A", instant=False):
 def color_overrides(mapping):
     return [
         {
-            "matcher": {"id": "byName", "options": name},
+            "matcher": {"id": "byRegexp" if name.startswith("/") else "byName", "options": name},
             "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": c}}],
         }
         for name, c in mapping.items()
@@ -149,7 +149,15 @@ EVENT_ANNOTATIONS = [
     _event("Guest reboots", theme.BAD, 'changes(node_boot_time_seconds{job="dune-node"}[5m]) > 0', "dune-prod rebooted"),
 ]
 
-ALWAYS_PARTS = 'partition=~"1|2|8|36|37"'  # Abbir, Overland, PvE, PvP, Alraab: the maps that are running all the time
+ALWAYS_PARTS = 'partition=~"1|2|8|36|37"'  # two Sietches, the Overmap, two Deep Deserts: the maps that are running all the time
+
+
+def named(expr):
+    """Add the name players see (`name`) to per-partition series. The newest name of the last day applies to the whole
+    range, so a renamed Sietch keeps one line instead of splitting into an old and a new one. The database label is
+    dropped for the same reason: it changes for a moment around some restarts."""
+    return ('max by (map, partition) (%s) * on(partition) group_left(name) (0 * topk by (partition) (1, '
+            'max_over_time(timestamp(dune_partition_info)[1d:1m] @ end())) + 1)' % expr)
 
 
 NAV_LINKS = [{"type": "dashboards", "tags": ["dune"], "asDropdown": False, "includeVars": False, "keepTime": True,
@@ -161,8 +169,8 @@ CONTAINER_COLORS = {"dune-server-survival-1": BLUE, "dune-server-survival-1-37":
 TITLE_COLORS = {
     "Map memory used (share of limit)": CONTAINER_COLORS,
     "Swap used by map containers": CONTAINER_COLORS,
-    "Always-on partitions ready": {"Survival_1 p1 Abbir": BLUE, "Survival_1 p37 Alraab": ORANGE, "DeepDesert_1 p8 PvE": AQUA,
-                                   "DeepDesert_1 p36 PvP": YELLOW, "Overmap p2 Overland": MAGENTA},
+    "Always-on partitions ready": {"/^Survival_1 p1 /": BLUE, "/^Survival_1 p37 /": ORANGE, "/^DeepDesert_1 p8 /": AQUA,
+                                   "/^DeepDesert_1 p36 /": YELLOW, "/^Overmap p2 /": MAGENTA},
     "FLS checks": {"directorHeartbeat": BLUE, "gatewayDbMonitoring": ORANGE, "maxCapacityDeclaration": AQUA, "populationDeclaration": YELLOW},
     "Connections by state": {"active": BLUE, "idle": AQUA, "idle in transaction": ORANGE,
                              "idle in transaction (aborted)": theme.BAD, "disabled": MUTED, "fastpath function call": VIOLET},
@@ -470,7 +478,7 @@ def game():
                 12, 12, 12, 8, unit="bytes", mn=0))
     p.append(ts("Always-on partitions ready",
                 "Survival, Overmap and Deep Desert partitions: 1 = ready, 0 = not (dynamic Deep Desert may be stopped on purpose).",
-                [target("dune_partition_ready{%s}" % always, "{{map}} p{{partition}} {{label}}")],
+                [target(named("dune_partition_ready{%s}" % always), "{{map}} p{{partition}} {{name}}")],
                 0, 20, 12, 8, mn=0, mx=1.2, decimals=0))
     p.append(ts("FLS checks",
                 "1 = OK for each Funcom FLS declaration check. Funcom outages show here.",
@@ -751,7 +759,7 @@ def wall():
                    20, 0, 4, 7, unit="celsius", decimals=0,
                    steps=[(None, "#2a2217"), (75, theme.WARN), (85, theme.BAD)], value_size=56))
     p.append(tiles("The world", "Each always-on map: Sietches (Survival_1), the Overmap and the Deep Deserts.",
-                   parts, "{{label}} \u00b7 {{map}}", 0, 7, 24, 5, decimals=0, graph=False,
+                   named(parts), "{{name}} \u00b7 {{map}}", 0, 7, 24, 5, decimals=0, graph=False,
                    steps=[(None, theme.BAD), (1, theme.OK)], words={1: ("READY", theme.OK), 0: ("DOWN", theme.BAD)}, value_size=30))
     p.append(tiles("Tick rate by map", "Ticks per second of each map server with its last 6 hours behind it. Target 20; below 18 is rubberbanding. A map that is idle writes nothing to its log and shows no tile.",
                    "dune:game_tick_rate:hz > 0", "{{server}}", 0, 12, 24, 6, unit="hertz", decimals=1,
@@ -767,7 +775,7 @@ def wall():
                   'pve_disk_usage_bytes{id="storage/DA-1/local-lvm"} / pve_disk_size_bytes{id="storage/DA-1/local-lvm"}',
                   18, 18, 6, 6, warn=0.8, red=0.9))
     p.append(lanes("state-timeline", "Map state over time", "Green while the map is ready, red while it is down. Orange lines mark map restarts and blue lines backups on every graph.",
-                   [target(parts, "{{label}} \u00b7 {{map}}")], 0, 24, 24, 7,
+                   [target(named(parts), "{{name}} \u00b7 {{map}}")], 0, 24, 24, 7,
                    steps=[(None, theme.BAD), (1, theme.OK)], mappings={1: ("Ready", theme.OK), 0: ("Down", theme.BAD)}))
     p.append(lanes("status-history", "Tick rate through the day",
                    "One row per map, one cell per 10 minutes: green is a healthy 19.5 ticks per second or more, amber 18 to 19.5, red below 18, grey no data (an idle map writes nothing to its log, so grey is not a fault). Set the time range to 24 hours or 7 days to see when stalls cluster.",

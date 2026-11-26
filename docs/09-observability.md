@@ -159,6 +159,14 @@ Series: `dune_players_online`, `dune_population_capacity`, `dune_server_ready`,
 and read 0 by design; any alert on readiness must be limited to the always-on maps
 (Survival, Overmap, Deep Desert). The third dashboard, "Dune - Game state and
 players", is private; population is deliberately not on the public bursts dashboard.
+
+**Sietch names.** The `label` on the partition series is the game database's partition
+label, which keeps its old value after a Sietch is renamed. The adapter therefore also
+publishes `dune_partition_info{partition,name}` with the display name players see
+(from `/api/maps/combat-state`, once a minute; the database label if there is none).
+Dashboards join on it and apply the newest name of the last day to the whole range, so
+allow up to a minute after a rename. Tests:
+`python3 -m unittest discover -s observability/prod/dune-api-exporter`.
 Undo: `docker compose -f docker-compose.dune-api.yml down`, delete the key in the
 console and the key file, remove the job.
 
